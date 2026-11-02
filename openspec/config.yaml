@@ -1,0 +1,29 @@
+schema: spec-driven
+
+context: |
+  Tech stack: TypeScript (.mts, Node 22, node:test), AWS (Lambda, DynamoDB on-demand, SSM,
+  SNS, EventBridge Scheduler, one small EC2 instance), Terraform, discord.js for the
+  always-connected bot, Claude on AWS Bedrock.
+  Domain: guild tooling for World of Warcraft: Forever (Blizzard's Classic+). Forever has no
+  Blizzard roster or character API, and addons cannot read the combat log or message other
+  players inside instances. In-game guild data comes from the Guild OS addon (MIT,
+  github.com/danielcosta42/guildos) through its SavedVariables file on the operator's
+  Windows PC (jetragon), parsed by a reader in this repo.
+  The repository is public: no tokens, private channel IDs or member personal data in code,
+  tests or fixtures.
+  No mutation testing (Stryker) in this repository: the operator exempted it on Nov 2, 2026,
+  so every task's gate is none.
+
+rules:
+  tasks:
+    - >-
+      Every task must be completable in ONE pull request. Where the built-in guidance says
+      "small enough to complete in one session", THIS RULE SUPERSEDES IT; a session can
+      produce several PRs, so session-sizing is too coarse. If one PR cannot take a task from
+      Todo to Done, split it into separate tasks.
+    - >-
+      Number tasks so each maps to exactly one Linear ticket (one ticket = one PR).
+    - >-
+      Annotate every task with (depends on: <ids>) when it has prerequisites,
+      (complexity: mechanical|standard|judgment) and (gate: mutation|none). Use no other
+      annotation keys.
