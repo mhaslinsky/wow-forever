@@ -11,6 +11,8 @@ context: |
   Windows PC (jetragon), parsed by a reader in this repo.
   The repository is public: no tokens, private channel IDs or member personal data in code,
   tests or fixtures.
+  No mutation testing (Stryker) in this repository: the operator exempted it on Nov 2, 2026,
+  so every task's gate is none.
 
 rules:
   tasks:
