@@ -20,8 +20,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run build:alarm-forwarder
-      - run: npm run build:gateway
+      - run: npm run build
       - run: npm test
   terraform:
     runs-on: ubuntu-latest
