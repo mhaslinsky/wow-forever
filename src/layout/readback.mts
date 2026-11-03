@@ -158,6 +158,7 @@ export function readback(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
   const rows: PermissionRow[] = [];
   const errors = snapshotErrors(snapshot);
   const inventory: ReturnType<typeof untracked> = [];
+  const staleChannelIds = new Set<string>();
   let findings: ReadbackFinding[] = [];
   const result = () => ({
     rows,
@@ -184,9 +185,18 @@ export function readback(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
     const values = Object.values(ids[kind]);
     if (new Set(values).size !== values.length)
       errors.push(`Duplicate ${kind} binding`);
-    for (const [key, id] of Object.entries(ids[kind]))
+    for (const [key, id] of Object.entries(ids[kind])) {
       if (!snapshot[kind].some((entry) => entry.id === id))
         errors.push(`Missing bound ${kind}: ${key}`);
+      else if (
+        kind === "channels" &&
+        !layout.channels.some((channel) => channel.key === key)
+      ) {
+        // Saved channel IDs cannot make undeclared channels count as managed.
+        staleChannelIds.add(id);
+        delete ids.channels[key];
+      }
+    }
   }
   for (const role of snapshot.roles) {
     if (
@@ -270,7 +280,12 @@ export function readback(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
           );
     }
   }
-  inventory.push(...untracked(layout, snapshot, ids));
+  inventory.push(
+    ...untracked(layout, snapshot, ids).filter(
+      (entry) => entry.kind !== "channel" || !staleChannelIds.has(entry.id),
+    ),
+    ...Array.from(staleChannelIds, (id) => ({ kind: "channel" as const, id })),
+  );
   findings = ignoredGrantFindings(layout, snapshot, ids);
   return result();
 }

@@ -84,6 +84,7 @@ for (const [scenario, target, allow] of [
   ["partial", "member", view | flags.SendMessages | flags.Connect],
   ["integration", "", view],
   ["live grant", "", view],
+  ["stale", "", 0n],
 ] as const) {
   test(`readback: ${scenario}`, () => {
     const { layout, snapshot, ids } = applied();
@@ -120,8 +121,10 @@ for (const [scenario, target, allow] of [
     if (scenario === "live grant") {
       layout.roles[2].permissions.ViewChannel = false;
       layout.ignore.channels.push(live.name);
-      snapshot.channels.push({ ...live, id: "external", overwrites: [] });
     }
+    if (scenario === "stale") ids.channels.stale = "external";
+    if (scenario === "live grant" || scenario === "stale")
+      snapshot.channels.push({ ...live, id: "external", overwrites: [] });
     const result = readback(layout, snapshot, ids);
     const errors = result.errors.join(" ");
     assert.equal(result.ok, scenario === "clean");
@@ -134,5 +137,7 @@ for (const [scenario, target, allow] of [
       assert.match(errors, /undeclared role can view private channel/);
     if (scenario === "partial")
       assert.match(errors, /member\/send:.*member\/connect:/);
+    if (scenario === "stale")
+      assert.deepEqual(result.untracked, [{ kind: "channel", id: "external" }]);
   });
 }
