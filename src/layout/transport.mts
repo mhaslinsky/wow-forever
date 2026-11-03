@@ -6,7 +6,7 @@ import {
   RESTEvents,
   type RequestMethod,
 } from "@discordjs/rest";
-import type { APIGuildForumTag, APIRole, ChannelType } from "discord.js";
+import { type APIGuildForumTag, type APIRole, ChannelType } from "discord.js";
 import { normalizeSnapshot } from "./normalize.mts";
 import type { Overwrite, Snapshot, Tag } from "./types.mts";
 
@@ -205,19 +205,36 @@ export async function fetchSnapshot(
         position: role.position,
         ...(role.tags?.bot_id ? { applicationId: role.tags.bot_id } : {}),
       })),
-      channels: channels.map((channel) => ({
-        id: channel.id,
-        name: channel.name,
-        type: channel.type,
-        parent: channel.parent_id,
-        topic: channel.topic ?? "",
-        position: channel.position,
-        tags: decodeTags(channel.available_tags ?? []),
-        overwrites: (channel.permission_overwrites ?? []).map((entry) => ({
-          ...entry,
-          type: entry.type === 0 ? "role" : "member",
-        })),
-      })),
+      channels: channels.map((channel) => {
+        // Missing lists could erase preserved overwrites or tags during replacement.
+        if (!Array.isArray(channel.permission_overwrites))
+          throw new LayoutTransportError(
+            "snapshot",
+            "Channel permissions are missing",
+          );
+        if (
+          (channel.type === ChannelType.GuildForum ||
+            channel.type === ChannelType.GuildMedia) &&
+          !Array.isArray(channel.available_tags)
+        )
+          throw new LayoutTransportError(
+            "snapshot",
+            "Channel tags are missing",
+          );
+        return {
+          id: channel.id,
+          name: channel.name,
+          type: channel.type,
+          parent: channel.parent_id,
+          topic: channel.topic ?? "",
+          position: channel.position,
+          tags: decodeTags(channel.available_tags ?? []),
+          overwrites: channel.permission_overwrites.map((entry) => ({
+            ...entry,
+            type: entry.type === 0 ? "role" : "member",
+          })),
+        };
+      }),
     });
   } catch (error) {
     if (error instanceof LayoutTransportError) throw error;

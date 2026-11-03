@@ -203,3 +203,40 @@ test("snapshot refuses mismatched identities and missing inventories", async () 
       error instanceof LayoutTransportError && error.kind === "snapshot",
   );
 });
+
+test("snapshot rejects missing channel lists and accepts explicit empty lists", async () => {
+  for (const [type, permission_overwrites, available_tags, valid] of [
+    [0, undefined, undefined, false],
+    [15, [], undefined, false],
+    [16, [], undefined, false],
+    [0, [], undefined, true],
+    [15, [], [], true],
+    [16, [], [], true],
+  ] as const) {
+    const channel = {
+      id: "channel",
+      name: "channel",
+      type,
+      position: 0,
+      permission_overwrites,
+      available_tags,
+    };
+    const pending = fetchSnapshot(
+      {
+        request: async (_method, route) => {
+          if (route === "/oauth2/applications/@me") return { id: "app" };
+          if (route === "/guilds/guild") return { id: "guild" };
+          return route.endsWith("/roles") ? [] : [channel];
+        },
+      },
+      { guildId: "guild", applicationId: "app" },
+    );
+    if (valid) assert.equal((await pending).channels.length, 1);
+    else
+      await assert.rejects(
+        pending,
+        (error: unknown) =>
+          error instanceof LayoutTransportError && error.kind === "snapshot",
+      );
+  }
+});
