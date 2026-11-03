@@ -5,6 +5,24 @@ data "aws_iam_policy_document" "budget_publish" {
     resources = [aws_sns_topic.alerts.arn]
     principals {
       type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_account_id]
+    }
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:cloudwatch:us-east-1:${var.aws_account_id}:alarm:*"]
+    }
+  }
+  statement {
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+    principals {
+      type        = "Service"
       identifiers = ["budgets.amazonaws.com"]
     }
     condition {
