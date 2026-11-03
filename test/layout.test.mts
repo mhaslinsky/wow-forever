@@ -164,16 +164,18 @@ test("protective overwrites add no allow bits", () => {
           overwrite("guild", allow.toString(), deny.toString()),
           overwrite("member", deny.toString(), allow.toString()),
         ];
+        const before = structuredClone(entries);
         const result = protectiveOverwrite(
           { type, everyoneId: "guild", overwrites: entries },
           { overwrites: entries },
         );
         for (const entry of result) {
-          const previous = entries.find(
+          const previous = before.find(
             (before) => before.id === entry.id && before.type === entry.type,
           );
           equal(BigInt(entry.allow) & ~BigInt(previous?.allow ?? "0"), 0n);
         }
+        deepEqual(entries, before);
       },
     ),
   );
@@ -194,7 +196,6 @@ test("adoption requires consent and rejects ambiguous roles or channels", () => 
   snapshot.roles.push({ ...snapshot.roles[2], id: "duplicate-role" });
   throws(() => adoptionCandidates(layout, snapshot, empty), /Ambiguous/);
 });
-
 test("unknown overwrites and channels block plans until ignored", () => {
   const server = applied(),
     { layout, snapshot, ids } = server,
@@ -391,7 +392,6 @@ test("undeclared Administrator blocks; explicit removal keeps Member hidden", ()
   }
   equal(BigInt(member.permissions) & flags.Administrator, 0n);
 });
-
 test("operator capabilities survive removals and protection preserves visibility", () => {
   const layout = fixture(),
     server = model(),
