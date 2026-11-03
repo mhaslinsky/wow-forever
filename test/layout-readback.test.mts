@@ -8,7 +8,8 @@ import { parseLayout, plan, readback } from "../src/layout/index.mts";
 import { model } from "./layout-model.mts";
 
 const flags = discord.PermissionFlagsBits;
-
+const view = flags.ViewChannel;
+const partial = view | flags.SendMessages | flags.Connect;
 function applied() {
   const layout = parseLayout(
     readFileSync(new URL("./fixtures/layout.yaml", import.meta.url), "utf8"),
@@ -19,20 +20,17 @@ function applied() {
   plan(layout, server.snapshot, server.ids).operations.forEach(server.apply);
   return { layout, ...server };
 }
-
 function oracle(base: bigint, overwrites: Overwrite[], roleId: string): bigint {
   if (base & flags.Administrator) return discord.PermissionsBitField.All;
-  let permissions = base;
+  let bits = base;
   for (const target of new Set(["guild", roleId])) {
     const entry = overwrites.find(
       (entry) => entry.type === "role" && entry.id === target,
     );
-    if (entry)
-      permissions = (permissions & ~BigInt(entry.deny)) | BigInt(entry.allow);
+    if (entry) bits = (bits & ~BigInt(entry.deny)) | BigInt(entry.allow);
   }
-  return permissions & flags.ViewChannel ? permissions : 0n;
+  return bits & flags.ViewChannel ? bits : 0n;
 }
-
 test("generated readback rows agree with an independent oracle", () => {
   const permission = fc
     .subarray(Object.values(flags))
@@ -74,70 +72,70 @@ test("generated readback rows agree with an independent oracle", () => {
     { seed: 333, numRuns: 40 },
   );
 });
-
-const view = flags.ViewChannel;
-for (const [scenario, target, allow] of [
+for (const [scenario, target, allow, reason, inventory] of [
   ["clean", "", 0n],
   ["Member", "member", view],
   ["everyone", "everyone", view],
   ["overwrite", "", view],
-  ["partial", "member", view | flags.SendMessages | flags.Connect],
-  ["integration", "", view],
-  ["live grant", "", view],
-  ["stale", "", 0n],
+  ["partial", "member", partial, /member\/send:.*member\/connect:/],
+  ["integration", "", view, /undeclared role can view private channel/],
+  ["live grant", "", view, /ignored channel visible through a guild grant/],
+  ["stale", "", 0n, undefined, "channel"],
+  ["role", "", 0n, undefined, "role,overwrite"],
+  ["ignored", "", 0n],
 ] as const) {
   test(`readback: ${scenario}`, () => {
     const { layout, snapshot, ids } = applied();
     const live = snapshot.channels[0];
-    if (target) {
-      const overwrite = live.overwrites.find(
-        (entry) => entry.id === ids.roles[target],
-      );
-      assert.ok(overwrite);
-      overwrite.allow = allow.toString();
-      overwrite.deny = "0";
-    }
+    if (target)
+      Object.assign(live.overwrites[target === "member" ? 1 : 0], {
+        allow: allow.toString(),
+        deny: "0",
+      });
     if (scenario === "partial") {
       layout.channels[0].type = "category";
       live.type = discord.ChannelType.GuildCategory;
       layout.channels[0].access.operator.connect = true;
       layout.channels[0].access.member.view = true;
     }
-    if (scenario === "integration") {
+    const extraRole = ["integration", "role", "ignored"].includes(scenario);
+    const ignored = scenario === "ignored";
+    if (extraRole) {
       snapshot.roles.push({
         ...snapshot.roles[2],
         id: scenario,
-        managed: true,
+        permissions: allow.toString(),
+        managed: scenario === "integration",
       });
-      layout.ignore.overwrites.push("Member");
+      if (scenario !== "integration") ids.roles.stale = scenario;
+      else layout.ignore.overwrites.push("Member");
     }
-    if (scenario === "overwrite" || scenario === "integration")
+    if (scenario === "overwrite" || extraRole)
       live.overwrites.push({
         id: scenario,
         type: scenario === "overwrite" ? "member" : "role",
         allow: allow.toString(),
         deny: "0",
       });
-    if (scenario === "live grant") {
+    if (scenario === "live grant")
       layout.roles[2].permissions.ViewChannel = false;
+    if (scenario === "live grant" || ignored)
       layout.ignore.channels.push(live.name);
+    if (ignored)
+      for (const kind of ["roles", "overwrites"] as const)
+        layout.ignore[kind].push("Member");
+    if (scenario === "stale" || ignored) {
+      ids.channels.stale = "external";
+      snapshot.channels.push({ ...live, id: "external" });
     }
-    if (scenario === "stale") ids.channels.stale = "external";
-    if (scenario === "live grant" || scenario === "stale")
+    if (scenario === "live grant")
       snapshot.channels.push({ ...live, id: "external", overwrites: [] });
     const result = readback(layout, snapshot, ids);
-    const errors = result.errors.join(" ");
-    assert.equal(result.ok, scenario === "clean");
-    if (scenario === "live grant")
-      assert.equal(
-        result.findings[0]?.reason,
-        "ignored channel visible through a guild grant",
-      );
-    if (scenario === "integration")
-      assert.match(errors, /undeclared role can view private channel/);
-    if (scenario === "partial")
-      assert.match(errors, /member\/send:.*member\/connect:/);
-    if (scenario === "stale")
-      assert.deepEqual(result.untracked, [{ kind: "channel", id: "external" }]);
+    if (reason) assert.match(JSON.stringify(result), reason);
+    assert.equal(result.ok, scenario === "clean" || ignored);
+    assert.equal(
+      result.untracked.map((entry) => entry.kind).join(),
+      inventory ?? "",
+    );
   });
 }
