@@ -186,6 +186,22 @@ export function model() {
       const positions = entries
         .map((entry) => entry.position)
         .sort((left, right) => left - right);
+      if (new Set(positions).size !== positions.length) {
+        const siblings =
+          kind === "reorderRoles"
+            ? snapshot.roles
+            : snapshot.channels.filter(
+                (entry) =>
+                  entry.parent === live(operation.channelKeys[0]).parent,
+              );
+        const occupied = new Set(
+          siblings
+            .filter((entry) => !entries.some((target) => target === entry))
+            .map((entry) => entry.position),
+        );
+        for (let index = 0, slot = 0; index < positions.length; slot++)
+          if (!occupied.has(slot)) positions[index++] = slot;
+      }
       entries.forEach((entry, index) => {
         entry.position = positions[index];
       });

@@ -138,9 +138,11 @@ export function decodeTags(
   }));
 }
 export function wireOverwrites(entries: Overwrite[]) {
-  return entries.map((entry) => ({
-    ...entry,
-    type: entry.type === "role" ? 0 : 1,
+  return entries.map(({ id, type, allow, deny }) => ({
+    id,
+    allow,
+    deny,
+    type: type === "role" ? 0 : 1,
   }));
 }
 export function wireTags(tags: (Tag & { id?: string })[]) {
