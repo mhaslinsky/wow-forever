@@ -11,6 +11,7 @@ import {
   inspectPlan,
   planBinding,
 } from "../src/layout/executor.mts";
+import { validateLayout } from "../src/layout/schema.mts";
 import { emptyState, loadState, withStateLock } from "../src/layout/state.mts";
 import type { DiscordPort } from "../src/layout/transport.mts";
 import {
@@ -78,6 +79,12 @@ async function fixture(context: TestContext, seeded = false) {
       throw new LayoutTransportError("rate_limit", "Limited", 429, 51);
     if (io.mutations === io.failMutation)
       throw new Error("Interrupted request");
+    if (method === "PATCH" && route.endsWith("/roles")) {
+      const positions = body as { id: string; position: number }[];
+      server.reorderRoles(positions);
+      if (positions.length) equal(operations.shift()?.kind, "reorderRoles");
+      return server.snapshot.roles;
+    }
     const operation = operations.shift();
     ok(operation, "No unplanned mutation");
     if (
@@ -87,20 +94,16 @@ async function fixture(context: TestContext, seeded = false) {
       const overwrites = (
         body as { permission_overwrites: { id: string; deny: string }[] }
       ).permission_overwrites;
-      ok(
-        BigInt(overwrites.find((entry) => entry.id === "guild")?.deny ?? "0") &
-          1024n,
-      );
+      if (!operation.channel.access.everyone.view)
+        ok(
+          BigInt(
+            overwrites.find((entry) => entry.id === "guild")?.deny ?? "0",
+          ) & 1024n,
+        );
     }
     server.apply(operation);
-    if (
-      operation.kind === "reorderRoles" ||
-      operation.kind === "reorderChannels"
-    ) {
-      const live =
-        operation.kind === "reorderRoles"
-          ? server.snapshot.roles
-          : server.snapshot.channels;
+    if (operation.kind === "reorderChannels") {
+      const live = server.snapshot.channels;
       for (const entry of body as { id: string; position: number }[]) {
         const target = live.find((target) => target.id === entry.id);
         ok(target);
@@ -151,9 +154,9 @@ async function fixture(context: TestContext, seeded = false) {
   return { options, server, review, io };
 }
 
-for (const position of [1, 100])
-  test(`role order checks operator ceiling ${position} before mutation`, async (context) => {
-    const { server, options, review, io } = await fixture(context);
+for (const position of [1, 2, 100])
+  test(`two new roles converge below operator position ${position}`, async (context) => {
+    const { server, options, review } = await fixture(context);
     server.snapshot.roles[1].position = position;
     options.layout.roles.push({
       ...options.layout.roles[2],
@@ -164,12 +167,86 @@ for (const position of [1, 100])
       options.layout.channels[0].access.member;
     const planned = await review();
     const result = await applyLayout(options);
-    if (position === 1) {
-      equal(io.mutations, 0);
-      match(result.error ?? "", /server owner.*drag.*Operator.*top/i);
-    } else equal(result.ok, true, JSON.stringify(result));
-    equal(planned.ok, position !== 1, JSON.stringify(planned));
+    equal(result.ok, true, JSON.stringify(result));
+    equal(planned.ok, true, JSON.stringify(planned));
   });
+
+test("role above the operator refuses only when it must move or change", async (context) => {
+  const { server, options, review, io } = await fixture(context, true);
+  server.snapshot.roles[1].position = 1;
+  server.snapshot.roles[2].position = 2;
+  options.layout.roles.push({
+    ...options.layout.roles[2],
+    key: "scout",
+    name: "Scout",
+  });
+  options.layout.channels[0].access.scout =
+    options.layout.channels[0].access.member;
+  const planned = await review();
+  match(planned.errors.join("; "), /server owner.*drag.*Operator.*top/i);
+  const result = await applyLayout(options);
+  match(result.error ?? "", /server owner.*drag.*Operator.*top/i);
+  equal(io.mutations, 0);
+  options.layout.roles.pop();
+  delete options.layout.channels[0].access.scout;
+  equal((await review()).operations.length, 0);
+  equal((await applyLayout(options)).ok, true);
+  equal(io.mutations, 0);
+  options.layout.roles[2].name = "Changed above operator";
+  equal((await review()).ok, false);
+  match(
+    (await applyLayout(options)).error ?? "",
+    /server owner.*drag.*Operator.*top/i,
+  );
+  equal(io.mutations, 0);
+});
+
+test("gate step-2 layout at operator position 2 converges and a second apply makes no mutations", async (context) => {
+  const { server, options, review, io } = await fixture(context);
+  const gate = validateLayout(
+    JSON.parse(
+      fs.readFileSync(
+        new URL("./fixtures/gate-step2.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+  Object.assign(options.layout, gate);
+  Object.assign(server.snapshot.roles[1], {
+    name: "Forever Guild Operator",
+    position: 2,
+  });
+  server.snapshot.roles.push({
+    ...server.snapshot.roles[0],
+    id: "bot",
+    name: "Forever Guild Bot",
+    position: 1,
+    managed: true,
+    applicationId: "bot-app",
+  });
+  server.ids.roles["baseline-role-1"] = "bot";
+  const baseline = structuredClone(gate);
+  baseline.roles = baseline.roles.filter((role) => role.kind !== "managed");
+  baseline.channels = baseline.channels.filter((channel) =>
+    channel.key.startsWith("baseline-"),
+  );
+  for (const channel of baseline.channels) {
+    delete channel.access.member;
+    delete channel.access.officer;
+  }
+  server.run(baseline);
+  await withStateLock(options.statePath, (locked) =>
+    locked.write({ ...locked.read(), ids: server.ids }),
+  );
+  const planned = await review();
+  equal(planned.ok, true, JSON.stringify(planned));
+  const first = await applyLayout(options);
+  equal(first.ok, true, JSON.stringify(first));
+  equal((await review()).operations.length, 0);
+  const before = io.mutations;
+  equal((await applyLayout(options)).ok, true);
+  equal(io.mutations, before);
+});
 
 test("live unnamed permission bits adopt, converge and survive writes", async (context) => {
   const setup = await fixture(context, true);
@@ -306,7 +383,7 @@ test("tied role positions converge in one apply", async (context) => {
   equal((await applyLayout(options)).ok, true);
   equal(
     server.snapshot.roles.find((entry) => entry.id === "fixed")?.position,
-    2,
+    3,
   );
   const before = setup.io.mutations;
   await setup.review();

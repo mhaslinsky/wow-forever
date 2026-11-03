@@ -99,7 +99,7 @@ export type ReplacementOverwrite =
   | ({ kind: "compiled" } & CompiledOverwrite)
   | { kind: "preserved"; overwrite: Overwrite };
 
-/** Stable keys resolve after creates; reorder targets contain managed siblings only. */
+/** Stable keys resolve after creates; role order preserves unmanaged ranks. */
 export type Operation =
   | { kind: "createRole" | "updateRole"; role: Role }
   | {

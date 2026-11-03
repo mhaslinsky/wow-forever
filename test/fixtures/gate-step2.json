@@ -1,0 +1,450 @@
+{
+  "roles": [
+    {
+      "key": "everyone",
+      "name": "@everyone",
+      "kind": "everyone",
+      "permissions": {}
+    },
+    {
+      "key": "baseline-role-1",
+      "name": "Forever Guild Bot",
+      "kind": "observed",
+      "permissions": {}
+    },
+    {
+      "key": "operator",
+      "name": "Forever Guild Operator",
+      "kind": "operator",
+      "permissions": {
+        "Administrator": true
+      }
+    },
+    {
+      "key": "member",
+      "name": "Gate Member",
+      "kind": "managed",
+      "permissions": {}
+    },
+    {
+      "key": "officer",
+      "name": "Gate Officer",
+      "kind": "managed",
+      "permissions": {}
+    }
+  ],
+  "channels": [
+    {
+      "key": "baseline-channel-0",
+      "name": "Text Channels",
+      "type": "category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "baseline-channel-1",
+      "name": "Voice Channels",
+      "type": "category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "baseline-channel-2",
+      "name": "general",
+      "type": "text",
+      "parent": "baseline-channel-0",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "baseline-channel-3",
+      "name": "General",
+      "type": "voice",
+      "parent": "baseline-channel-1",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "baseline-channel-4",
+      "name": "alerts",
+      "type": "text",
+      "parent": "baseline-channel-0",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "public-category",
+      "name": "Gate Public",
+      "type": "category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "officer-category",
+      "name": "Gate Officers",
+      "type": "category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        },
+        "member": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": true,
+          "manageThreads": true
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "public-chat",
+      "name": "gate-public-chat",
+      "type": "text",
+      "parent": "public-category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "officer-chat",
+      "name": "gate-officer-chat",
+      "type": "text",
+      "parent": "officer-category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "member": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        }
+      },
+      "tags": []
+    },
+    {
+      "key": "forum",
+      "name": "gate-forum",
+      "type": "forum",
+      "parent": "public-category",
+      "topic": "",
+      "access": {
+        "everyone": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "baseline-role-1": {
+          "view": false,
+          "send": false,
+          "connect": false,
+          "manageThreads": false
+        },
+        "operator": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        },
+        "member": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": false
+        },
+        "officer": {
+          "view": true,
+          "send": true,
+          "connect": false,
+          "manageThreads": true
+        }
+      },
+      "tags": [
+        {
+          "key": "open",
+          "name": "Gate Open",
+          "moderated": false
+        },
+        {
+          "key": "review",
+          "name": "Gate Review",
+          "moderated": false
+        }
+      ]
+    }
+  ],
+  "ignore": {
+    "roles": [],
+    "channels": [],
+    "overwrites": []
+  }
+}

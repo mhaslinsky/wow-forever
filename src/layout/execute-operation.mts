@@ -1,6 +1,6 @@
 import type { APIRole } from "discord.js";
 import { discordTypes } from "./inventory.mts";
-import { reorderPositions } from "./ordering.mts";
+import { reorderPositions, roleOrder } from "./ordering.mts";
 import { rolePermissions } from "./permissions.mts";
 import type { LayoutState, LockedState, UncertainCreate } from "./state.mts";
 import type { DiscordPort, Target } from "./transport.mts";
@@ -185,46 +185,43 @@ export async function executeOperation(
       retainTags(state, operation.channelKey, operation.tags, response);
       break;
     }
-    case "reorderRoles":
+    case "reorderRoles": {
+      let snapshot = await fetchSnapshot(port, target);
+      const targets = operation.roleKeys.map(roleId);
+      let body = roleOrder(targets, snapshot);
+      const operator = snapshot.roles.find(
+        (role) => role.applicationId === target.applicationId,
+      );
+      if (!operator) throw new Error("Missing operator role");
+      // Creates can leave ties that need compaction before distinct rank targets fit.
+      if (body.length >= operator.position) {
+        await port.request("PATCH", `${guildRoute}/roles`, []);
+        snapshot = await fetchSnapshot(port, target);
+        body = roleOrder(targets, snapshot);
+      }
+      await port.request("PATCH", `${guildRoute}/roles`, body);
+      break;
+    }
     case "reorderChannels": {
       const snapshot = await fetchSnapshot(port, target);
-      const entries =
-        operation.kind === "reorderRoles"
-          ? operation.roleKeys.map((key) =>
-              snapshot.roles.find((entry) => entry.id === roleId(key)),
-            )
-          : operation.channelKeys.map((key) =>
-              snapshot.channels.find((entry) => entry.id === channelId(key)),
-            );
+      const entries = operation.channelKeys.map((key) =>
+        snapshot.channels.find((entry) => entry.id === channelId(key)),
+      );
       const targets = entries.map((entry) => {
         if (!entry) throw new Error("Missing reorder target");
         return entry;
       });
-      const siblings =
-        operation.kind === "reorderRoles"
-          ? snapshot.roles
-          : snapshot.channels.filter(
-              (entry) =>
-                entry.parent ===
-                (operation.parentKey ? channelId(operation.parentKey) : null),
-            );
-      const operator = snapshot.roles.find(
-        (entry) => entry.applicationId === target.applicationId,
+      const siblings = snapshot.channels.filter(
+        (entry) =>
+          entry.parent ===
+          (operation.parentKey ? channelId(operation.parentKey) : null),
       );
-      const positions = reorderPositions(
-        targets,
-        siblings,
-        operation.kind === "reorderRoles" ? operator?.position : undefined,
-      );
+      const positions = reorderPositions(targets, siblings);
       const body = targets.map((entry, index) => ({
         id: entry.id,
         position: positions[index],
       }));
-      await port.request(
-        "PATCH",
-        `${guildRoute}/${operation.kind === "reorderRoles" ? "roles" : "channels"}`,
-        body,
-      );
+      await port.request("PATCH", `${guildRoute}/channels`, body);
       break;
     }
     case "removeOverwrite":

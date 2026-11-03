@@ -5,7 +5,7 @@ import {
   discordTypes,
   untracked,
 } from "./inventory.mts";
-import { comparePosition, reorderPositions } from "./ordering.mts";
+import { comparePosition } from "./ordering.mts";
 import {
   compilePermissions,
   normalizeOverwrites,
@@ -115,11 +115,6 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       else roleCreates.push({ kind: "createRole", role });
       continue;
     }
-    if (
-      role.kind === "managed" &&
-      (comparePosition(live, operator, "role") >= 0 || live.managed)
-    )
-      errors.push(`Uneditable role: ${role.key}`);
     const { allow, managed } = rolePermissions(role);
     const current = BigInt(live.permissions) & managed;
     const removed = current & ~allow;
@@ -132,6 +127,13 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
         live.color !== role.color ||
         live.hoist !== role.hoist ||
         live.mentionable !== role.mentionable);
+    if (role.kind === "managed" && (removed || added || fieldsChanged)) {
+      if (comparePosition(live, operator, "role") >= 0)
+        errors.push(
+          `Server owner: drag ${operator.name} to the top of the role list.`,
+        );
+      else if (live.managed) errors.push(`Uneditable role: ${role.key}`);
+    }
     if (removed || fieldsChanged)
       removals.push({
         kind: "updateRole",
@@ -343,25 +345,19 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       "role",
     )
   ) {
-    // Check new roles at Discord's initial position before any creates run.
-    const targets = roleKeys.map(
-      (key) => liveRole(key) ?? { id: roleId(key), position: 1 },
-    );
-    const siblings = [
-      ...new Map(
-        [...snapshot.roles, ...targets].map((role) => [role.id, role]),
-      ).values(),
-    ];
-    try {
-      const positions = reorderPositions(targets, siblings, operator.position);
-      if (positions.some((position) => position >= operator.position))
-        throw new Error("Role order exceeds the operator ceiling");
-    } catch {
+    const above = snapshot.roles
+      .filter((role) => comparePosition(role, operator, "role") >= 0)
+      .sort((left, right) => comparePosition(left, right, "role"))
+      .flatMap((role) =>
+        roleKeys.filter((key) => liveRole(key)?.id === role.id),
+      );
+    const below = roleKeys.filter((key) => !above.includes(key));
+    if (!equal(roleKeys, [...below, ...above]))
       errors.push(
         `Server owner: drag ${operator.name} to the top of the role list.`,
       );
-    }
-    reorders.push({ kind: "reorderRoles", roleKeys });
+    else if (below.length)
+      reorders.push({ kind: "reorderRoles", roleKeys: below });
   }
   for (const parentKey of [
     undefined,
