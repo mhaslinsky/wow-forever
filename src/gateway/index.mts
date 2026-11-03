@@ -24,6 +24,9 @@ async function main() {
     }),
   );
   const token = tokenValue(result.Parameter?.Value);
+  const instance = process.env.GATEWAY_INSTANCE_ID;
+  if (!instance || !/^i-[a-f0-9]+$/.test(instance))
+    throw new Error("INSTANCE_NOT_CONFIGURED");
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -39,7 +42,15 @@ async function main() {
       await cloudwatch.send(
         new PutMetricDataCommand({
           Namespace: "wow-forever/gateway",
-          MetricData: [{ MetricName: name, Value: 1, Unit: "Count" }],
+          MetricData: [
+            {
+              MetricName: name,
+              Value: 1,
+              Unit: "Count",
+              Timestamp: new Date(),
+              Dimensions: [{ Name: "InstanceId", Value: instance }],
+            },
+          ],
         }),
       );
     },

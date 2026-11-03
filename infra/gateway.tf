@@ -1,16 +1,7 @@
 locals { gateway_name = "wow-forever-gateway" }
 
-data "aws_ami" "gateway" {
-  owners             = ["amazon"]
-  include_deprecated = true
-  filter {
-    name   = "image-id"
-    values = ["ami-0345f7445d5f4145d"]
-  }
-  filter {
-    name   = "name"
-    values = ["al2023-ami-2023.*-arm64"]
-  }
+data "aws_ssm_parameter" "gateway_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 }
 data "aws_vpc" "gateway" { default = true }
 data "aws_subnets" "gateway" {
@@ -56,15 +47,20 @@ resource "aws_iam_role" "gateway" {
   name               = local.gateway_name
   assume_role_policy = data.aws_iam_policy_document.gateway_assume.json
 }
-resource "aws_iam_role_policy_attachment" "gateway_ssm" {
-  role       = aws_iam_role.gateway.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
 resource "aws_iam_instance_profile" "gateway" {
   name = local.gateway_name
   role = aws_iam_role.gateway.name
 }
 data "aws_iam_policy_document" "gateway" {
+  statement {
+    actions = [
+      "ssm:UpdateInstanceInformation", "ssm:ListAssociations", "ssm:ListInstanceAssociations",
+      "ssm:DescribeAssociation", "ssm:GetDocument", "ssm:DescribeDocument",
+      "ssm:UpdateAssociationStatus", "ssm:UpdateInstanceAssociationStatus", "ssm:PutInventory",
+      "ssm:GetDeployablePatchSnapshotForInstance", "ec2messages:*", "ssmmessages:*"
+    ]
+    resources = ["*"]
+  }
   statement {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.secrets["discord_bot_token"].arn]
@@ -92,8 +88,8 @@ data "aws_iam_policy_document" "gateway" {
     resources = ["${aws_s3_bucket.gateway.arn}/artifacts/gateway/*"]
   }
   statement {
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.gateway.arn}:*"]
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:DescribeLogGroups"]
+    resources = [aws_cloudwatch_log_group.gateway.arn, "${aws_cloudwatch_log_group.gateway.arn}:*"]
   }
 }
 resource "aws_iam_role_policy" "gateway" {
@@ -105,7 +101,8 @@ resource "aws_cloudwatch_log_group" "gateway" {
   retention_in_days = 14
 }
 resource "aws_instance" "gateway" {
-  ami                         = data.aws_ami.gateway.id
+  ami = data.aws_ssm_parameter.gateway_ami.value
+  lifecycle { ignore_changes = [ami] }
   instance_type               = "t4g.nano"
   subnet_id                   = sort(data.aws_subnets.gateway.ids)[0]
   associate_public_ip_address = true
@@ -119,8 +116,9 @@ resource "aws_instance" "gateway" {
     encrypted   = true
   }
   user_data = join("\n", ["#cloud-config", yamlencode({
-    packages = ["nodejs22", "amazon-cloudwatch-agent"]
-    users    = [{ name = "gateway", system = true, shell = "/sbin/nologin" }]
+    package_update = true
+    packages       = ["nodejs22", "amazon-cloudwatch-agent"]
+    users          = [{ name = "gateway", system = true, shell = "/sbin/nologin" }]
     write_files = [
       {
         path    = "/etc/systemd/system/wow-forever-gateway.service"
@@ -129,46 +127,53 @@ resource "aws_instance" "gateway" {
           Description=Discord gateway
           After=network-online.target
           Wants=network-online.target
+          ConditionPathExists=/opt/wow-forever-gateway/index.mjs
           [Service]
           User=gateway
+          EnvironmentFile=/opt/wow-forever-gateway/environment
+          LogsDirectory=wow-forever-gateway
           ExecStart=/usr/bin/node-22 /opt/wow-forever-gateway/index.mjs
           Restart=always
           RestartSec=10
           NoNewPrivileges=true
           ProtectSystem=strict
           ProtectHome=true
-          StandardOutput=append:/var/log/wow-forever-gateway.log
-          StandardError=append:/var/log/wow-forever-gateway.log
+          StandardOutput=append:/var/log/wow-forever-gateway/gateway.log
+          StandardError=append:/var/log/wow-forever-gateway/gateway.log
           [Install]
           WantedBy=multi-user.target
         UNIT
       },
       {
+        path    = "/opt/wow-forever-gateway/bootstrap.mts"
+        content = file("${path.module}/../scripts/gateway-bootstrap.mts")
+      },
+      {
         path = "/opt/aws/amazon-cloudwatch-agent/etc/gateway.json"
         content = jsonencode({ logs = { logs_collected = { files = { collect_list = [{
-          file_path = "/var/log/wow-forever-gateway.log", log_group_name = aws_cloudwatch_log_group.gateway.name, log_stream_name = "{instance_id}"
+          file_path = "/var/log/wow-forever-gateway/gateway.log", log_group_name = aws_cloudwatch_log_group.gateway.name, log_stream_name = "{instance_id}"
         }] } } } })
       },
       {
         path    = "/etc/logrotate.d/wow-forever-gateway"
-        content = "/var/log/wow-forever-gateway.log {\n daily\n rotate 3\n size 10M\n copytruncate\n missingok\n}\n"
+        content = "/var/log/wow-forever-gateway/gateway.log {\n daily\n rotate 3\n size 10M\n copytruncate\n missingok\n}\n"
       }
     ]
     runcmd = [
       ["install", "-d", "-m", "0755", "/opt/wow-forever-gateway"],
-      ["touch", "/var/log/wow-forever-gateway.log"],
       ["systemctl", "daemon-reload"],
-      ["systemctl", "enable", "wow-forever-gateway"],
+      ["/usr/bin/node-22", "--experimental-strip-types", "/opt/wow-forever-gateway/bootstrap.mts", aws_s3_bucket.gateway.id],
       ["/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl", "-a", "fetch-config", "-m", "ec2", "-c", "file:/opt/aws/amazon-cloudwatch-agent/etc/gateway.json", "-s"]
     ]
   })])
   tags       = { Name = local.gateway_name }
-  depends_on = [aws_iam_role_policy.gateway, aws_iam_role_policy_attachment.gateway_ssm]
+  depends_on = [aws_iam_role_policy.gateway]
 }
 resource "aws_cloudwatch_metric_alarm" "gateway_silence" {
   alarm_name          = "wow-forever-gateway-silence"
   namespace           = "wow-forever/gateway"
   metric_name         = "Heartbeat"
+  dimensions          = { InstanceId = aws_instance.gateway.id }
   statistic           = "Sum"
   period              = 60
   evaluation_periods  = 10
@@ -177,18 +182,6 @@ resource "aws_cloudwatch_metric_alarm" "gateway_silence" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = [aws_sns_topic.alerts.arn]
-}
-resource "aws_sqs_queue" "alarm_forwarder_failures" {
-  name                      = "wow-forever-alarm-forwarder-failures"
-  message_retention_seconds = 1209600
-  sqs_managed_sse_enabled   = true
-}
-resource "aws_lambda_function_event_invoke_config" "alarm_forwarder" {
-  function_name = aws_lambda_function.alarm_forwarder.function_name
-  destination_config {
-    on_failure { destination = aws_sqs_queue.alarm_forwarder_failures.arn }
-  }
-  depends_on = [aws_iam_role_policy.alarm_forwarder]
 }
 output "gateway_instance_id" { value = aws_instance.gateway.id }
 output "gateway_artifact_bucket" { value = aws_s3_bucket.gateway.id }

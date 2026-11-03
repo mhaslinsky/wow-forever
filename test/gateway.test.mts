@@ -159,6 +159,9 @@ test("silence alarm requires ten missing minute periods and resets after heartbe
   const alarm = parsed.resource.aws_cloudwatch_metric_alarm.gateway_silence[0];
   assert.equal(alarm.namespace, "wow-forever/gateway");
   assert.equal(alarm.metric_name, "Heartbeat");
+  assert.deepEqual(alarm.dimensions, {
+    InstanceId: `\${aws_instance.gateway.id}`,
+  });
   assert.equal(alarm.period, 60);
   assert.equal(alarm.statistic, "Sum");
   assert.equal(alarm.threshold, 1);

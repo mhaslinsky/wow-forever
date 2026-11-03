@@ -2,6 +2,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { setTimeout } from "node:timers/promises";
+import { type UnitStatus, waitForGateway } from "./gateway-readiness.mts";
 
 const [instance, bucket, profile = "aidb-personal"] = process.argv.slice(2);
 if (
@@ -39,40 +41,111 @@ const commands = [
   "systemctl restart wow-forever-gateway",
   "systemctl is-active --quiet wow-forever-gateway",
 ];
-const sent = JSON.parse(
+function runCommand(commands: string[]): string {
+  const sent = JSON.parse(
+    aws(
+      "ssm",
+      "send-command",
+      "--instance-ids",
+      instance,
+      "--document-name",
+      "AWS-RunShellScript",
+      "--parameters",
+      JSON.stringify({ commands }),
+    ),
+  );
+  const commandId: unknown = sent.Command?.CommandId;
+  if (typeof commandId !== "string" || !commandId)
+    throw new Error("SSM returned no command ID");
   aws(
     "ssm",
-    "send-command",
-    "--instance-ids",
-    instance,
-    "--document-name",
-    "AWS-RunShellScript",
-    "--parameters",
-    JSON.stringify({ commands }),
-  ),
-);
-const commandId: unknown = sent.Command?.CommandId;
-if (typeof commandId !== "string" || !commandId)
-  throw new Error("SSM returned no command ID");
-aws(
-  "ssm",
-  "wait",
-  "command-executed",
-  "--command-id",
-  commandId,
-  "--instance-id",
-  instance,
-);
-const result = JSON.parse(
-  aws(
-    "ssm",
-    "get-command-invocation",
+    "wait",
+    "command-executed",
     "--command-id",
     commandId,
     "--instance-id",
     instance,
-  ),
+  );
+  const result = JSON.parse(
+    aws(
+      "ssm",
+      "get-command-invocation",
+      "--command-id",
+      commandId,
+      "--instance-id",
+      instance,
+    ),
+  );
+  if (result.Status !== "Success" || result.ResponseCode !== 0)
+    throw new Error(
+      `Gateway SSM command failed: ${result.Status}: ${result.StandardErrorContent}`,
+    );
+  if (typeof result.StandardOutputContent !== "string")
+    throw new Error("SSM returned no command output");
+  return result.StandardOutputContent;
+}
+const restartTime = runCommand([...commands, "date -u +%Y-%m-%dT%H:%M:%S.%3NZ"])
+  .trim()
+  .split("\n")
+  .at(-1);
+if (!restartTime) throw new Error("Instance returned no restart timestamp");
+const restartedAt = Date.parse(restartTime);
+if (!Number.isFinite(restartedAt))
+  throw new Error("Instance returned invalid restart timestamp");
+await waitForGateway({
+  restartedAt,
+  unit: async () =>
+    Object.fromEntries(
+      runCommand([
+        "systemctl show wow-forever-gateway --property=ActiveState,SubState,NRestarts",
+      ])
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=")),
+    ) as UnitStatus,
+  heartbeat: async () => {
+    const result = JSON.parse(
+      aws(
+        "cloudwatch",
+        "get-metric-statistics",
+        "--namespace",
+        "wow-forever/gateway",
+        "--metric-name",
+        "Heartbeat",
+        "--dimensions",
+        `Name=InstanceId,Value=${instance}`,
+        "--start-time",
+        new Date(restartedAt).toISOString(),
+        "--end-time",
+        new Date().toISOString(),
+        "--period",
+        "60",
+        "--statistics",
+        "Sum",
+      ),
+    );
+    if (!Array.isArray(result.Datapoints))
+      throw new Error("CloudWatch returned no datapoint list");
+    return result.Datapoints.filter(
+      (point: { Sum?: number }) =>
+        typeof point.Sum === "number" && point.Sum >= 1,
+    ).map((point: { Timestamp: string }) => Date.parse(point.Timestamp));
+  },
+  now: Date.now,
+  pause: () => setTimeout(5_000),
+});
+execFileSync(
+  "aws",
+  [
+    "s3",
+    "cp",
+    "-",
+    `s3://${bucket}/artifacts/gateway/latest.json`,
+    "--region",
+    "us-east-1",
+    "--profile",
+    profile,
+  ],
+  { input: JSON.stringify({ digest }), stdio: ["pipe", "inherit", "inherit"] },
 );
-if (result.Status !== "Success" || result.ResponseCode !== 0)
-  throw new Error("Gateway deployment failed");
 console.log("Gateway deployed");
