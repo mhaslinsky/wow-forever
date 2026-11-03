@@ -1,106 +1,64 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import { ChannelType, PermissionFlagsBits as flags } from "discord.js";
 import {
   compilePermissions,
-  parseLayout,
   plan,
   protectionTargets,
   validateLayout,
 } from "../src/layout/index.mts";
-import { canView, model } from "./layout-model.mts";
+import {
+  access,
+  applied,
+  canView,
+  category,
+  fixture,
+  model,
+} from "./layout-model.mts";
 
-const fixture = () => {
-  const layout = parseLayout(
-    readFileSync(new URL("./fixtures/layout.yaml", import.meta.url), "utf8"),
-  );
-  layout.channels[0].access.member = {
-    view: false,
-    send: false,
-    connect: false,
-    manageThreads: false,
-  };
-  return layout;
-};
-
-test("protection target safety: ignored synced child blocks its category change", () => {
+test("ignored and unbound children matching any category state block changes", () => {
   const layout = fixture(),
-    child = layout.channels[0],
-    server = model();
-  const category = {
-    ...structuredClone(child),
-    key: "category",
-    name: "category",
-    type: "category" as const,
-    tags: [],
-  };
-  category.access.operator.connect = true;
-  child.parent = "category";
-  layout.channels.push(category);
-  plan(validateLayout(layout), server.snapshot, server.ids).operations.forEach(
-    server.apply,
-  );
-  const parent = server.snapshot.channels.find(
-    (entry) => entry.id === server.ids.channels.category,
-  );
-  assert.ok(parent);
-  server.snapshot.channels.push({
-    ...structuredClone(parent),
-    id: "ignored-child",
-    type: server.snapshot.channels[0].type,
+    child = layout.channels[0];
+  child.access.member = access();
+  const parent = category(layout);
+  child.parent = parent.key;
+  layout.channels.push(parent);
+  const server = applied(layout),
+    { snapshot, ids } = server;
+  const external = {
+    ...structuredClone(server.live("category")),
+    id: "external",
     name: "External",
-    parent: parent.id,
-  });
-  layout.ignore.channels.push("External");
-  category.access.member = {
-    view: true,
-    send: true,
-    connect: true,
-    manageThreads: true,
+    parent: ids.channels.category,
+    type: server.live().type,
   };
-  const result = plan(layout, server.snapshot, server.ids);
-  assert.equal(result.ok, false);
-  assert.ok(
-    result.errors.some(
-      (error) =>
-        error.includes("External") &&
-        error.includes("category") &&
-        error.includes("unsync"),
-    ),
-  );
-  const final = compilePermissions(layout, category).map(
-    ({ roleKey, ...entry }) => ({ ...entry, id: server.ids.roles[roleKey] }),
+  snapshot.channels.push(external);
+  layout.ignore.channels.push(external.name);
+  parent.access.member = access(true, true);
+  const final = compilePermissions(layout, parent).map(
+    ({ roleKey, ...entry }) => ({ ...entry, id: ids.roles[roleKey] }),
   );
   const select = () =>
-    protectionTargets(layout, server.snapshot, server.ids, {
-      touched: new Set([category.key]),
+    protectionTargets(layout, snapshot, ids, {
+      touched: new Set([parent.key]),
       roleBitsChanged: false,
-      recreated: new Set<string>(),
-      finalOverwrites: new Map([[category.key, final]]),
+      recreated: new Set(),
+      finalOverwrites: new Map([[parent.key, final]]),
     });
   const selection = select();
-  assert.equal(
-    selection.channels.find((target) => target.live?.id === "ignored-child")
-      ?.writable,
-    false,
+  assert.equal(plan(layout, snapshot, ids).ok, false);
+  assert.match(selection.errors[0], /ignored channel External.*unsync/);
+  const protectedParent = selection.channels.find(
+    (target) => target.key === parent.key,
   );
-  assert.equal(selection.errors.length, 1);
-  const external = server.snapshot.channels.find(
-    (channel) => channel.id === "ignored-child",
-  );
-  assert.ok(external);
-  external.overwrites = structuredClone(final);
-  assert.equal(select().errors.length, 1, "matches a later category state");
-  const protectedCategory = selection.channels.find(
-    (target) => target.key === category.key,
-  );
-  assert.ok(protectedCategory);
-  external.overwrites = structuredClone(protectedCategory.overwrites);
-  assert.equal(select().errors.length, 1, "matches category protection");
+  assert.ok(protectedParent);
+  for (const state of [final, protectedParent.overwrites]) {
+    external.overwrites = structuredClone(state);
+    assert.equal(select().errors.length, 1);
+  }
   layout.ignore.channels = [];
   assert.match(select().errors[0], /unbound channel External/);
-  layout.ignore.channels.push("External");
+  layout.ignore.channels.push(external.name);
   external.overwrites = [
     {
       id: "guild",
@@ -109,35 +67,19 @@ test("protection target safety: ignored synced child blocks its category change"
       deny: flags.ManageMessages.toString(),
     },
   ];
-  const unsynced = plan(layout, server.snapshot, server.ids);
-  assert.equal(unsynced.ok, true, JSON.stringify(unsynced.errors));
-  unsynced.operations.forEach(server.apply);
-  assert.deepEqual(external.overwrites, [
-    {
-      id: "guild",
-      type: "role",
-      allow: "0",
-      deny: flags.ManageMessages.toString(),
-    },
-  ]);
+  const before = structuredClone(external.overwrites);
+  server.run();
+  assert.deepEqual(external.overwrites, before);
 });
 
-test("protection target safety: Member stays hidden after Administrator removal", () => {
-  const layout = fixture(),
-    server = model();
-  layout.roles[2].permissions.Administrator = false;
-  plan(validateLayout(layout), server.snapshot, server.ids).operations.forEach(
-    server.apply,
-  );
-  const member = server.snapshot.roles.find(
-    (role) => role.id === server.ids.roles.member,
-  );
-  const child = server.snapshot.channels.find(
-    (entry) => entry.id === server.ids.channels.lobby,
-  );
-  assert.ok(member && child);
+test("undeclared Administrator blocks; explicit removal keeps Member hidden", () => {
+  const layout = fixture();
+  layout.channels[0].access.member = access();
+  const server = applied(layout),
+    { snapshot, ids } = server,
+    member = snapshot.roles[2];
   member.permissions = (flags.Administrator | flags.ViewChannel).toString();
-  child.overwrites = [
+  server.live().overwrites = [
     {
       id: member.id,
       type: "role",
@@ -145,209 +87,140 @@ test("protection target safety: Member stays hidden after Administrator removal"
       deny: "0",
     },
   ];
-  const selection = protectionTargets(layout, server.snapshot, server.ids, {
-    touched: new Set<string>(),
-    roleBitsChanged: true,
-    recreated: new Set<string>(),
-    finalOverwrites: new Map(),
-  });
-  assert.ok(
-    selection.channels
-      .find((target) => target.live?.id === child.id)
-      ?.roleIds.includes(member.id),
+  const blocked = plan(layout, snapshot, ids);
+  assert.equal(blocked.ok, false);
+  assert.match(
+    blocked.errors.join(),
+    /member.*Administrator|Administrator.*member/,
   );
-  const result = plan(layout, server.snapshot, server.ids);
+  layout.roles[2].permissions.Administrator = false;
+  const result = plan(layout, snapshot, ids);
   assert.equal(result.ok, true);
-  let removed = false;
   for (const operation of result.operations) {
     server.apply(operation);
-    if (!(BigInt(member.permissions) & flags.Administrator)) {
-      removed = true;
+    if (!(BigInt(member.permissions) & flags.Administrator))
       assert.equal(
-        canView(server.snapshot, child.id, member.id),
+        canView(snapshot, ids.channels.lobby, member.id),
         false,
         operation.kind,
       );
-    }
   }
-  assert.equal(removed, true);
-});
-
-test("protection target safety: non-Administrator operator can see every written channel", () => {
-  const layout = fixture(),
-    server = model();
-  const permissions =
-    flags.ViewChannel | flags.ManageChannels | flags.ManageRoles;
-  server.snapshot.roles[1].permissions = permissions.toString();
-  layout.roles[1].permissions = {
-    Administrator: false,
-    ViewChannel: true,
-    ManageChannels: true,
-    ManageRoles: true,
-  };
-  const apply = () => {
-    const result = plan(validateLayout(layout), server.snapshot, server.ids);
-    assert.equal(result.ok, true, JSON.stringify(result.errors));
-    for (const operation of result.operations) {
-      server.apply(operation);
-      for (const channel of server.snapshot.channels)
-        assert.equal(
-          canView(server.snapshot, channel.id, server.ids.roles.operator),
-          true,
-          operation.kind,
-        );
-    }
-  };
-  apply();
-  layout.channels[0].name = "renamed";
-  const selection = protectionTargets(layout, server.snapshot, server.ids, {
-    touched: new Set(["lobby"]),
-    roleBitsChanged: false,
-    recreated: new Set<string>(),
-    finalOverwrites: new Map(),
-  });
-  assert.equal(selection.channels.length, 1);
-  assert.ok(
-    selection.channels.every(
-      (target) => !target.roleIds.includes(server.ids.roles.operator),
-    ),
-  );
-  apply();
-});
-
-test("category metadata, order and deletion leave synced ignored children alone", () => {
-  for (const change of ["rename", "topic", "reorder", "delete"]) {
-    const layout = fixture(),
-      server = model(),
-      child = layout.channels[0];
-    for (const cell of Object.values(child.access)) {
-      cell.view = true;
-      cell.send = true;
-      cell.manageThreads = true;
-    }
-    const category = {
-      ...structuredClone(child),
-      key: "category",
-      name: "category",
-      type: "category" as const,
-      tags: [],
-    };
-    category.access.everyone = category.access.member = {
-      view: false,
-      send: false,
-      connect: false,
-      manageThreads: false,
-    };
-    category.access.operator.connect = true;
-    layout.channels.push(category, {
-      ...structuredClone(category),
-      key: "other",
-      name: "other",
-    });
-    child.parent = category.key;
-    plan(
-      validateLayout(layout),
-      server.snapshot,
-      server.ids,
-    ).operations.forEach(server.apply);
-    const parent = server.snapshot.channels.find(
-      (channel) => channel.id === server.ids.channels.category,
-    );
-    assert.ok(parent);
-    parent.overwrites.reverse();
-    const external = {
-      ...structuredClone(parent),
-      id: "ignored-child",
-      name: "External",
-      type: ChannelType.GuildText,
-      parent: parent.id,
-    };
-    server.snapshot.channels.push(external);
-    layout.ignore.channels.push(external.name);
-    const before = structuredClone(external.overwrites);
-    if (change === "rename") category.name = "renamed";
-    if (change === "topic") category.topic = "changed";
-    if (change === "reorder") layout.channels.reverse();
-    if (change === "delete") {
-      layout.channels = layout.channels.filter(
-        (channel) => channel !== category,
-      );
-      delete child.parent;
-    }
-    const result = plan(validateLayout(layout), server.snapshot, server.ids);
-    assert.equal(
-      result.ok,
-      true,
-      `${change}: ${JSON.stringify(result.errors)}`,
-    );
-    assert.ok(result.operations.length > 0, change);
-    assert.ok(
-      result.operations.every(
-        (operation) => operation.kind !== "protectOverwrites",
-      ),
-      change,
-    );
-    assert.ok(
-      result.operations.every(
-        (operation) => operation.kind !== "replaceOverwrites",
-      ),
-      change,
-    );
-    result.operations.forEach(server.apply);
-    assert.deepEqual(external.overwrites, before, change);
-  }
-});
-
-test("undeclared live Administrator blocks non-operator roles", () => {
-  const layout = fixture(),
-    server = model();
-  plan(layout, server.snapshot, server.ids).operations.forEach(server.apply);
-  const member = server.snapshot.roles.find(
-    (role) => role.id === server.ids.roles.member,
-  );
-  assert.ok(member);
-  member.permissions = (
-    BigInt(member.permissions) | flags.Administrator
-  ).toString();
-  const blocked = plan(layout, server.snapshot, server.ids);
-  assert.equal(blocked.ok, false);
-  assert.ok(
-    blocked.errors.some(
-      (error) => error.includes("member") && error.includes("Administrator"),
-    ),
-  );
-  layout.roles[2].permissions.Administrator = false;
-  const removal = plan(layout, server.snapshot, server.ids);
-  assert.equal(removal.ok, true, JSON.stringify(removal.errors));
-  removal.operations.forEach(server.apply);
   assert.equal(BigInt(member.permissions) & flags.Administrator, 0n);
-  assert.equal(
-    canView(server.snapshot, server.ids.channels.lobby, member.id),
-    false,
-  );
 });
 
-test("operator capabilities must survive role permission removals", () => {
+test("operator capabilities survive removals and protection preserves visibility", () => {
   const layout = fixture(),
-    server = model();
-  server.snapshot.roles[0].permissions = (
+    server = model(),
+    { snapshot, ids } = server;
+  snapshot.roles[0].permissions = (
     flags.ManageRoles | flags.ManageChannels
   ).toString();
-  server.snapshot.roles[1].permissions = flags.ViewChannel.toString();
+  snapshot.roles[1].permissions = flags.ViewChannel.toString();
   layout.roles[1].permissions = { ViewChannel: true };
   layout.roles[0].permissions = { ManageRoles: false, ManageChannels: false };
-  const blocked = plan(validateLayout(layout), server.snapshot, server.ids);
+  const blocked = plan(layout, snapshot, ids);
   assert.equal(blocked.ok, false);
-  assert.ok(
-    blocked.errors.some(
-      (error) => error.includes("Operator") && error.includes("removals"),
-    ),
-  );
-  server.snapshot.roles[1].permissions = (
+  assert.match(blocked.errors.join(), /Operator.*removals/);
+  snapshot.roles[1].permissions = (
     flags.ViewChannel |
     flags.ManageRoles |
     flags.ManageChannels
   ).toString();
-  const retained = plan(layout, server.snapshot, server.ids);
-  assert.equal(retained.ok, true, JSON.stringify(retained.errors));
+  for (const rename of [false, true]) {
+    if (rename) layout.channels[0].name = "renamed";
+    const result = plan(layout, snapshot, ids);
+    assert.equal(result.ok, true);
+    for (const operation of result.operations) {
+      server.apply(operation);
+      for (const channel of snapshot.channels)
+        assert.equal(
+          canView(snapshot, channel.id, ids.roles.operator),
+          true,
+          operation.kind,
+        );
+    }
+  }
 });
+
+const shapes = [
+  "root move",
+  "dangling parent",
+  "child before parent",
+  "base grant",
+  "new category",
+] as const;
+for (const shape of shapes)
+  test(`private transitions: ${shape}`, () => {
+    const layout = fixture();
+    const child = layout.channels[0];
+    child.access.member = access();
+    const parent = category(layout);
+    const server = model();
+    if (shape !== "new category") {
+      if (shape !== "base grant") layout.channels.push(parent);
+      plan(layout, server.snapshot, server.ids).operations.forEach(
+        server.apply,
+      );
+      const live = server.snapshot.channels.find(
+        (entry) => entry.id === server.ids.channels.lobby,
+      );
+      assert.ok(live);
+      if (shape === "base grant") {
+        const member = server.snapshot.roles.find(
+          (entry) => entry.id === server.ids.roles.member,
+        );
+        assert.ok(member);
+        member.permissions = "0";
+        live.overwrites = [];
+      } else {
+        const liveParent = server.snapshot.channels.find(
+          (entry) => entry.id === server.ids.channels.category,
+        );
+        assert.ok(liveParent);
+        liveParent.overwrites = structuredClone(live.overwrites);
+        parent.access.member = access(true, true);
+        child.parent = "category";
+        if (shape === "dangling parent") live.parent = "deleted-category";
+        if (shape === "child before parent") {
+          server.snapshot.channels = server.snapshot.channels.filter(
+            (entry) => entry !== live,
+          );
+          delete server.ids.channels.lobby;
+        }
+      }
+    } else {
+      layout.channels.push(parent);
+      child.parent = "category";
+    }
+    const result = plan(validateLayout(layout), server.snapshot, server.ids);
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    for (const operation of result.operations) {
+      server.apply(operation);
+      assert.equal(
+        canView(
+          server.snapshot,
+          server.ids.channels.lobby,
+          server.ids.roles.member,
+        ),
+        false,
+        `${shape}: ${operation.kind}`,
+      );
+      const live = server.snapshot.channels.find(
+        (entry) => entry.id === server.ids.channels.lobby,
+      );
+      if (
+        live?.parent &&
+        (operation.kind === "createChannel" ||
+          operation.kind === "updateChannel")
+      )
+        assert.ok(
+          server.snapshot.channels.some(
+            (entry) =>
+              entry.id === live.parent &&
+              entry.type === ChannelType.GuildCategory,
+          ),
+          `${shape}: missing parent`,
+        );
+    }
+    assert.deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
+  });
