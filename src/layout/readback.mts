@@ -28,7 +28,7 @@ export function effectivePermissions(
   everyoneId: string,
   roleId: string,
 ): PermissionsBitField {
-  const permissions = new PermissionsBitField(base);
+  const permissions = new PermissionsBitField(base & PermissionsBitField.All);
   if (permissions.has(flags.Administrator))
     return new PermissionsBitField(PermissionsBitField.All);
   for (const id of roleId === everyoneId
@@ -37,7 +37,10 @@ export function effectivePermissions(
     const entry = overwrites.find(
       (overwrite) => overwrite.type === "role" && overwrite.id === id,
     );
-    if (entry) permissions.remove(BigInt(entry.deny)).add(BigInt(entry.allow));
+    if (entry)
+      permissions
+        .remove(BigInt(entry.deny) & PermissionsBitField.All)
+        .add(BigInt(entry.allow) & PermissionsBitField.All);
   }
   return permissions.has(flags.ViewChannel, false)
     ? permissions
