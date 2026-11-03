@@ -7,7 +7,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "erasableSyntaxOnly": true,
-    "types": ["node"]
+    "types": ["node"],
+    "verbatimModuleSyntax": true
   },
   "include": ["**/*.mts"],
   "exclude": ["node_modules", "coverage"]

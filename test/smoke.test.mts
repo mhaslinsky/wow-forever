@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("the runner discovers TypeScript tests", () => {
+test("placeholder smoke test", () => {
   assert.equal(true, true);
 });

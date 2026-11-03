@@ -9,7 +9,7 @@
   "scripts": {
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test '**/*.test.mts'"
+    "test": "node scripts/run-tests.mts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.3",
