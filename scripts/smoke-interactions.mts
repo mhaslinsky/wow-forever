@@ -351,8 +351,13 @@ if (
     process.exitCode = checks.some((result) => result.status === "failed")
       ? 1
       : 0;
-  } catch {
-    console.error("Smoke could not run; check arguments and connectivity");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const token = process.env.DISCORD_BOT_TOKEN;
+    // The reason is the useful part; only the bot token must never be echoed.
+    console.error(
+      `Smoke could not run: ${token ? message.replaceAll(token, "[bot token]") : message}`,
+    );
     process.exitCode = 1;
   }
 }
