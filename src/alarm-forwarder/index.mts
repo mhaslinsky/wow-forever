@@ -13,6 +13,12 @@ function clampForDiscord(content: string) {
 }
 
 function formatAlarm(rawMessage: string, subject?: string) {
+  const budgetName = rawMessage.match(/^Budget Name:\s*(.+)$/m)?.[1];
+  const budgetLimit = rawMessage.match(/^Budgeted Amount:\s*(.+)$/m)?.[1];
+  const actualSpend = rawMessage.match(/^ACTUAL Amount:\s*(.+)$/m)?.[1];
+  if (budgetName && budgetLimit && actualSpend) {
+    return `:bell: **${budgetName}**\nBudget: ${budgetLimit}\nActual spend: ${actualSpend}`;
+  }
   let alarm: {
     AlarmName?: string;
     NewStateValue?: string;
@@ -53,24 +59,35 @@ export function createHandler(
   post: typeof fetch = fetch,
 ) {
   async function postToDiscord(content: string) {
-    const url = await readWebhook();
-    if (!url || url === "None") {
-      throw new Error(
-        `no webhook configured in SSM - alarm NOT delivered: ${content}`,
-      );
+    let value: string | undefined;
+    try {
+      value = await readWebhook();
+    } catch {
+      throw new Error("SSM webhook read failed");
     }
-    const response = await post(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: clampForDiscord(content) }),
-      signal: AbortSignal.timeout(8000),
-    });
+    if (!value || value === "None") throw new Error("Webhook not configured");
+    let url: URL;
+    try {
+      url = new URL(value);
+      if (url.protocol !== "https:" && url.protocol !== "http:")
+        throw new Error();
+    } catch {
+      throw new Error("Invalid webhook URL");
+    }
+    url.searchParams.set("wait", "true");
+    let response: Response;
+    try {
+      response = await post(url.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: clampForDiscord(content) }),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch {
+      throw new Error("Webhook transport failed");
+    }
     // Fetch resolves HTTP errors, so rejection must fail the invocation for retries.
-    if (!response.ok) {
-      throw new Error(
-        `webhook returned ${response.status} ${response.statusText} - alarm NOT delivered`,
-      );
-    }
+    if (!response.ok) throw new Error(`webhook returned ${response.status}`);
   }
 
   return async (event: {

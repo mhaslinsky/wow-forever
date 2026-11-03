@@ -25,12 +25,11 @@ resource "aws_iam_role" "alarm_forwarder" {
   assume_role_policy = data.aws_iam_policy_document.alarm_forwarder_assume.json
 }
 
-resource "aws_iam_role_policy_attachment" "alarm_forwarder_logs" {
-  role       = aws_iam_role.alarm_forwarder.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
 data "aws_iam_policy_document" "alarm_forwarder" {
+  statement {
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.alarm_forwarder.arn}:*"]
+  }
   statement {
     sid       = "ReadWebhook"
     actions   = ["ssm:GetParameter"]
@@ -41,6 +40,11 @@ data "aws_iam_policy_document" "alarm_forwarder" {
     sid       = "DecryptSecureString"
     actions   = ["kms:Decrypt"]
     resources = [data.aws_kms_key.ssm.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.us-east-1.amazonaws.com"]
+    }
   }
 }
 
@@ -77,7 +81,6 @@ resource "aws_lambda_function" "alarm_forwarder" {
   depends_on = [
     aws_cloudwatch_log_group.alarm_forwarder,
     aws_iam_role_policy.alarm_forwarder,
-    aws_iam_role_policy_attachment.alarm_forwarder_logs,
   ]
 }
 
