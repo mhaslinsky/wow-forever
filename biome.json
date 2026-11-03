@@ -32,7 +32,11 @@
   },
   "overrides": [
     {
-      "includes": ["src/data/index.mts", "test/data-local.test.mts"],
+      "includes": [
+        "src/data/index.mts",
+        "test/data-local.test.mts",
+        "src/interactions/index.mts"
+      ],
       "linter": {
         "rules": {
           "style": {
