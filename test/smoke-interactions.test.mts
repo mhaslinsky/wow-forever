@@ -44,7 +44,7 @@ test("smoke fails when either public URL policy statement is missing", async () 
 test("explicit skips stay skipped and missing prerequisites fail", async () => {
   assert.equal(
     statuses(await runSmoke(options, { http, aws })),
-    "passed,passed,passed,skipped,skipped,skipped,skipped",
+    "passed,passed,passed,skipped,skipped,skipped,skipped,skipped",
   );
   assert.equal(
     statuses(
@@ -53,7 +53,14 @@ test("explicit skips stay skipped and missing prerequisites fail", async () => {
         { http, aws },
       ),
     ),
-    "passed,passed,passed,failed,failed,failed,failed",
+    "passed,passed,passed,failed,failed,failed,failed,failed",
+  );
+});
+test("untrusted stale request never reports freshness verified", async () => {
+  const results = await runSmoke(options, { http, aws });
+  assert.equal(
+    results[1].detail,
+    "rejected (signature or freshness, not isolated)",
   );
 });
 test("production claims policy allows PutItem only, never GetItem or UpdateItem", () => {
@@ -63,16 +70,10 @@ test("production claims policy allows PutItem only, never GetItem or UpdateItem"
   assert.equal(error, null);
   const statements = parsed.data.aws_iam_policy_document.interactions[0]
     .statement as { actions: string[]; resources: string[] }[];
-  assert.deepEqual(
-    statements.flatMap((statement) => statement.actions).sort(),
-    [
-      "logs:CreateLogStream",
-      "logs:PutLogEvents",
-      "ssm:GetParameter",
-      "kms:Decrypt",
-      "lambda:InvokeFunction",
-      "dynamodb:PutItem",
-    ].sort(),
+  const actions = statements.flatMap((statement) => statement.actions);
+  assert.equal(
+    actions.sort().join(","),
+    "dynamodb:PutItem,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
   );
   assert.deepEqual(statements.at(-1)?.resources, [
     `\${aws_dynamodb_table.claims.arn}`,
@@ -81,6 +82,19 @@ test("production claims policy allows PutItem only, never GetItem or UpdateItem"
     {
       role: `\${aws_iam_role.interactions.id}`,
       policy: `\${data.aws_iam_policy_document.interactions.json}`,
+    },
+  ]);
+  const fixture = JSON.parse(
+    readFileSync("test/interactions-smoke-fixture.md", "utf8")
+      .split("```json\n")[1]
+      .split("\n```")[0],
+  );
+  assert.deepEqual(fixture.Statement, [
+    {
+      Effect: "Allow",
+      Action: ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"],
+      Resource:
+        "arn:aws:dynamodb:us-east-1:ACCOUNT_ID:table/wow-forever-claims-fixture",
     },
   ]);
 });

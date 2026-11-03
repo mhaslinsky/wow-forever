@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -99,10 +99,14 @@ export async function runSmoke(
   ports: SmokePorts = livePorts,
 ): Promise<Check[]> {
   const checks: Check[] = [];
-  const check = async (name: string, operation: () => Promise<void>) => {
+  const check = async (
+    name: string,
+    operation: () => Promise<void>,
+    detail = "Verified",
+  ) => {
     try {
       await operation();
-      checks.push({ name, status: "passed", detail: "Verified" });
+      checks.push({ name, status: "passed", detail });
     } catch (error) {
       checks.push({
         name,
@@ -124,22 +128,26 @@ export async function runSmoke(
     if (response.status !== 401)
       throw new Error(`Expected 401, received ${response.status}`);
   });
-  await check("stale timestamp", async () => {
-    const { privateKey } = generateKeyPairSync("ed25519");
-    const timestamp = String(Math.floor(Date.now() / 1000) - 600);
-    const signature = sign(
-      null,
-      Buffer.from(`${timestamp}{"type":1}`),
-      privateKey,
-    ).toString("hex");
-    const response = await post({
-      "x-signature-timestamp": timestamp,
-      "x-signature-ed25519": signature,
-    });
-    await response.body?.cancel();
-    if (response.status !== 401)
-      throw new Error(`Expected 401, received ${response.status}`);
-  });
+  await check(
+    "untrusted stale request",
+    async () => {
+      const { privateKey } = generateKeyPairSync("ed25519");
+      const timestamp = String(Math.floor(Date.now() / 1000) - 600);
+      const signature = sign(
+        null,
+        Buffer.from(`${timestamp}{"type":1}`),
+        privateKey,
+      ).toString("hex");
+      const response = await post({
+        "x-signature-timestamp": timestamp,
+        "x-signature-ed25519": signature,
+      });
+      await response.body?.cancel();
+      if (response.status !== 401)
+        throw new Error(`Expected 401, received ${response.status}`);
+    },
+    "rejected (signature or freshness, not isolated)",
+  );
   await check("function URL policy", async () => {
     const policy = await ports.aws([
       "lambda",
@@ -185,7 +193,7 @@ export async function runSmoke(
         throw new Error("Discord did not confirm the endpoint");
     });
   }
-  for (const scenario of ["slow", "watchdog", "duplicate"]) {
+  for (const scenario of ["freshness", "slow", "watchdog", "duplicate"]) {
     const name = `fixture ${scenario}`;
     if (options.skipFixtures) {
       checks.push({ name, status: "skipped", detail: "Flag set" });
@@ -235,6 +243,29 @@ export async function runSmoke(
         .export({ type: "spki", format: "der" })
         .subarray(-32)
         .toString("hex");
+      if (scenario === "freshness") {
+        for (const offset of [0, -600]) {
+          const timestamp = String(Math.floor(Date.now() / 1000) + offset);
+          const response = (await invoke({
+            smoke: "http",
+            publicKey: key,
+            request: {
+              body,
+              headers: {
+                "x-signature-timestamp": timestamp,
+                "x-signature-ed25519": sign(
+                  null,
+                  Buffer.from(timestamp + body),
+                  privateKey,
+                ).toString("hex"),
+              },
+            },
+          })) as { statusCode?: number };
+          if (response.statusCode !== (offset === 0 ? 200 : 401))
+            throw new Error("Fixture freshness response differs");
+        }
+        return;
+      }
       const started = (await invoke({
         smoke: "start",
         scenario,
@@ -257,7 +288,10 @@ export async function runSmoke(
           replies?: number;
           content?: string;
         };
-        if (state.completed === (scenario === "duplicate" ? 2 : 1)) {
+        if (
+          state.completed === (scenario === "duplicate" ? 2 : 1) &&
+          (scenario !== "duplicate" || (state.replies ?? 0) > 0)
+        ) {
           if (
             state.work !== 1 ||
             state.replies !== 1 ||
@@ -308,7 +342,6 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const started = process.hrtime.bigint();
   try {
     const checks = await runSmoke(parseOptions(process.argv.slice(2)));
     for (const result of checks)
@@ -321,26 +354,5 @@ if (
   } catch {
     console.error("Smoke could not run; check arguments and connectivity");
     process.exitCode = 1;
-  } finally {
-    try {
-      await execute(
-        process.execPath,
-        [
-          join(homedir(), ".codex/bin/cairn-emit.mts"),
-          "component-run",
-          "--kind",
-          "helper",
-          "--name",
-          "smoke-interactions.mts",
-          "--duration-ms",
-          String(Number((process.hrtime.bigint() - started) / 1_000_000n)),
-          "--exit-code",
-          String(process.exitCode ?? 0),
-        ],
-        { timeout: 2500 },
-      );
-    } catch {
-      console.error("Smoke telemetry unavailable");
-    }
   }
 }

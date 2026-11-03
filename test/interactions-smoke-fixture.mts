@@ -12,15 +12,11 @@ import { createHandler } from "../src/interactions/index.mts";
 
 const dynamo = new DynamoDBClient({ maxAttempts: 1 });
 const lambda = new LambdaClient({ maxAttempts: 1 });
-const table = () => {
-  const name = process.env.CLAIMS_TABLE;
-  if (!name) throw new Error("Missing CLAIMS_TABLE");
-  return name;
-};
+const table = "wow-forever-claims-fixture";
 async function observe(runId: string, counter: string, content?: string) {
   await dynamo.send(
     new UpdateItemCommand({
-      TableName: table(),
+      TableName: table,
       Key: { pk: { S: `smoke#${runId}` } },
       UpdateExpression: `SET expiresAt = :ttl${content === undefined ? "" : ", #content = :content"} ADD #counter :one`,
       ExpressionAttributeNames: {
@@ -54,7 +50,7 @@ function dependencies(publicKey: string): Ports {
       try {
         await dynamo.send(
           new PutItemCommand({
-            TableName: table(),
+            TableName: table,
             Item: { pk: { S: key }, expiresAt: { N: String(expiresAt) } },
             ConditionExpression: "attribute_not_exists(pk) OR expiresAt < :now",
             ExpressionAttributeValues: {
@@ -100,12 +96,15 @@ const routes: Route[] = ["slow", "watchdog", "duplicate"].map((scenario) => ({
 }));
 type FixtureEvent =
   | { smoke: "start"; scenario: string; request: HttpEvent; publicKey: string }
+  | { smoke: "http"; request: HttpEvent; publicKey: string }
   | { smoke: "status"; runId: string }
   | { __worker: true; interaction: Interaction };
 export async function handler(
   event: FixtureEvent,
   context: { getRemainingTimeInMillis(): number },
 ) {
+  if (process.env.CLAIMS_TABLE !== table)
+    throw new Error("Wrong fixture table");
   if ("__worker" in event) {
     await createHandler(dependencies(""), routes)(event, context);
     await observe(event.interaction.id, "completed");
@@ -114,7 +113,7 @@ export async function handler(
   if (event.smoke === "status") {
     const { Item } = await dynamo.send(
       new GetItemCommand({
-        TableName: table(),
+        TableName: table,
         Key: { pk: { S: `smoke#${event.runId}` } },
         ConsistentRead: true,
       }),
@@ -126,11 +125,12 @@ export async function handler(
       content: Item?.content?.S,
     };
   }
+  const http = createHandler(dependencies(event.publicKey), routes);
+  if (event.smoke === "http") return http(event.request, context);
   if (!["slow", "watchdog", "duplicate"].includes(event.scenario))
     throw new Error("Unknown fixture scenario");
   const runId: string = JSON.parse(event.request.body ?? "").id;
   if (!runId) throw new Error("Missing fixture id");
-  const http = createHandler(dependencies(event.publicKey), routes);
   const replies = await Promise.all(
     Array.from({ length: event.scenario === "duplicate" ? 2 : 1 }, () =>
       http(event.request, context),
