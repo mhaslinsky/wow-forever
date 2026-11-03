@@ -46,22 +46,24 @@ export function effectivePermissions(
 function access(
   permissions: PermissionsBitField,
   type: keyof typeof discordTypes,
+  requireAll = true,
 ): Access {
+  // Denied access must reject even one granted bit in a permission bundle.
+  const has = (mask: bigint) =>
+    requireAll ? permissions.has(mask, false) : permissions.any(mask, false);
   return {
-    view: permissions.has(flags.ViewChannel, false),
-    send: permissions.has(
+    view: has(flags.ViewChannel),
+    send: has(
       flags.SendMessages |
         flags.SendMessagesInThreads |
         (type === "voice"
           ? 0n
           : flags.CreatePublicThreads | flags.CreatePrivateThreads),
-      false,
     ),
     connect:
       (type === "voice" || type === "category") &&
-      permissions.has(flags.Connect | flags.Speak, false),
-    manageThreads:
-      type !== "voice" && permissions.has(flags.ManageThreads, false),
+      has(flags.Connect | flags.Speak),
+    manageThreads: type !== "voice" && has(flags.ManageThreads),
   };
 }
 
@@ -117,8 +119,6 @@ function ignoredGrantFindings(
 ): ReadbackFinding[] {
   const findings: ReadbackFinding[] = [];
   const everyone = snapshot.roles.find((role) => role.id === snapshot.guildId);
-  const everyoneGrant = layout.roles.find((role) => role.kind === "everyone")
-    ?.permissions.ViewChannel;
   if (!everyone) return findings;
   for (const channel of snapshot.channels) {
     if (
@@ -130,16 +130,12 @@ function ignoredGrantFindings(
       const liveRole = snapshot.roles.find(
         (entry) => entry.id === ids.roles[role.key],
       );
-      if (!liveRole || (!everyoneGrant && !role.permissions.ViewChannel))
-        continue;
+      if (!liveRole) continue;
       const everyoneBits = BigInt(everyone.permissions);
       const roleBits = BigInt(liveRole.permissions);
       const base = everyoneBits | roleBits;
-      const withoutGrant =
-        (everyoneGrant ? everyoneBits & ~flags.ViewChannel : everyoneBits) |
-        (role.permissions.ViewChannel
-          ? roleBits & ~flags.ViewChannel
-          : roleBits);
+      // Live grants can drift from the layout and expose ignored channels.
+      const withoutGrant = base & ~flags.ViewChannel;
       const visible = (bits: bigint) =>
         effectivePermissions(
           bits,
@@ -222,11 +218,25 @@ export function readback(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       errors.push(`Missing channel or wrong type: ${channel.key}`);
       continue;
     }
-    if (
-      Object.values(channel.access).some((entry) => !entry.view) &&
-      live.overwrites.some((entry) => entry.type === "member")
-    )
-      errors.push(`Member overwrite in private channel: ${channel.key}`);
+    if (Object.values(channel.access).some((entry) => !entry.view)) {
+      if (live.overwrites.some((entry) => entry.type === "member"))
+        errors.push(`Member overwrite in private channel: ${channel.key}`);
+      // Ignored integration overwrites can expose channels to members holding that role.
+      for (const liveRole of snapshot.roles) {
+        if (layout.roles.some((role) => ids.roles[role.key] === liveRole.id))
+          continue;
+        const permissions = effectivePermissions(
+          BigInt(everyone.permissions) | BigInt(liveRole.permissions),
+          live.overwrites,
+          snapshot.guildId,
+          liveRole.id,
+        );
+        if (permissions.has(flags.ViewChannel, false))
+          errors.push(
+            `undeclared role can view private channel: ${channel.key}/${liveRole.id}`,
+          );
+      }
+    }
     for (const role of layout.roles) {
       const liveRole = snapshot.roles.find(
         (entry) => entry.id === ids.roles[role.key],
@@ -239,15 +249,14 @@ export function readback(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
         errors.push(`Missing expected access: ${channel.key}/${role.key}`);
         continue;
       }
-      const actual = access(
-        effectivePermissions(
-          BigInt(everyone.permissions) | BigInt(liveRole.permissions),
-          live.overwrites,
-          snapshot.guildId,
-          liveRole.id,
-        ),
-        channel.type,
+      const permissions = effectivePermissions(
+        BigInt(everyone.permissions) | BigInt(liveRole.permissions),
+        live.overwrites,
+        snapshot.guildId,
+        liveRole.id,
       );
+      const actual = access(permissions, channel.type);
+      const anyAccess = access(permissions, channel.type, false);
       rows.push({
         channelKey: channel.key,
         roleKey: role.key,
@@ -255,9 +264,9 @@ export function readback(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
         expected: { ...expected },
       });
       for (const key of Object.keys(actual) as (keyof Access)[])
-        if (actual[key] !== expected[key])
+        if (expected[key] ? !actual[key] : anyAccess[key])
           errors.push(
-            `${channel.key}/${role.key}/${key}: expected ${expected[key]}, got ${actual[key]}`,
+            `${channel.key}/${role.key}/${key}: expected ${expected[key] ? "all bits" : "no bits"}, got ${anyAccess[key] ? "some bits" : "no bits"}`,
           );
     }
   }
