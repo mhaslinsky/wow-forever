@@ -65,6 +65,7 @@ test("heartbeat follows readiness and records resumed and re-identified gaps", a
 test("handler and metric failures are reported without stopping later events", async () => {
   const client = new Client({ intents: [] });
   const logs: Record<string, unknown>[] = [];
+  const metrics: string[] = [];
   let calls = 0;
   let reported!: () => void;
   const report = new Promise<void>((resolve) => {
@@ -78,7 +79,7 @@ test("handler and metric failures are reported without stopping later events", a
       },
     },
     async (name) => {
-      assert.equal(name, "HandlerError");
+      metrics.push(name);
       throw new Error("private metric");
     },
     (record) => {
@@ -88,6 +89,7 @@ test("handler and metric failures are reported without stopping later events", a
   );
   client.emit("shardReconnecting", 0);
   await report;
+  assert.deepEqual(metrics, ["HandlerError"]);
   client.emit("shardReconnecting", 0);
   assert.equal(calls, 2);
   assert.ok(logs.some((record) => record.event === "handler_failed"));
@@ -114,7 +116,6 @@ test("silence alarm requires ten missing minute periods", () => {
   for (const key of Object.keys(expected))
     assert.deepEqual(alarm[key], expected[key]);
 });
-
 test("gateway IAM scope limits token reads, decryption and metric writes", () => {
   const role = parsed.resource.aws_iam_role.gateway[0];
   assert.equal(role.managed_policy_arns, undefined);

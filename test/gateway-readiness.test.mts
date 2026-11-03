@@ -37,7 +37,6 @@ test("readiness rejects inactive, crash-looping, malformed and missing-heartbeat
     if (mode === "no-heartbeat") assert.equal(time, 210_001);
   }
 });
-
 test("deployment enables the unit before restarting it", () => {
   const commands = gateway.gatewayDeployCommands("bucket", "key", "digest");
   assert.ok(commands.includes("systemctl enable wow-forever-gateway"));
