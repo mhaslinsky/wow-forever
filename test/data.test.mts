@@ -345,3 +345,16 @@ test("conditional writes expose WRITE_CONFLICT without the SDK item image", asyn
 test("system principals reject fact write permissions at construction", () => {
   assert.throws(() => principals.systemPrincipal("fact"), /INVALID_JOB_KINDS/);
 });
+
+test("one role id for Member and Officer is rejected", () => {
+  assert.throws(
+    () =>
+      createPrincipalFactory({
+        guildId: "guild",
+        memberRoleId: "same",
+        officerRoleId: "same",
+        jobs: {},
+      }),
+    /INVALID_ROLE_CONFIG/,
+  );
+});

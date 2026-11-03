@@ -35,6 +35,13 @@ export function createPrincipalFactory(config: {
   const guildId = config.guildId;
   const memberRoleId = config.memberRoleId;
   const officerRoleId = config.officerRoleId;
+  if (
+    !guildId ||
+    !memberRoleId ||
+    !officerRoleId ||
+    memberRoleId === officerRoleId
+  )
+    throw new Error("INVALID_ROLE_CONFIG");
   const jobs = new Map(
     Object.entries(config.jobs).map(([name, kinds]) => [name, [...kinds]]),
   );
