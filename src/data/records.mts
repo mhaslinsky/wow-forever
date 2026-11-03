@@ -1,4 +1,4 @@
-export const KIND_POLICY = {
+export const KIND_POLICY = Object.freeze({
   candidate: "Officer",
   officerNote: "Officer",
   lootDecision: "Officer",
@@ -9,10 +9,10 @@ export const KIND_POLICY = {
   lootAward: "Member",
   wishlist: "Member",
   fact: "Owner",
-} as const;
+} as const);
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
-const CODECS = {
+const CODECS = Object.freeze({
   candidate: { prefix: "CANDIDATE", fields: ["name"] },
   officerNote: { prefix: "OFFICER_NOTE", fields: ["text"] },
   member: { prefix: "MEMBER", fields: ["name"] },
@@ -29,7 +29,7 @@ const CODECS = {
   },
   wishlist: { prefix: "WISHLIST", fields: ["item"] },
   fact: { prefix: "FACT", fields: ["text"] },
-} as const;
+} as const);
 type Fields<Current extends Kind> = (typeof CODECS)[Current]["fields"][number];
 export type GuildRecord = {
   [Current in Kind]: Key & { kind: Current; ownerId: string } & Record<

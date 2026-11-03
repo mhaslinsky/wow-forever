@@ -32,7 +32,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/data/**"],
+      "includes": ["src/data/index.mts", "test/data-local.test.mts"],
       "linter": {
         "rules": {
           "style": {

@@ -78,7 +78,6 @@ export function createPrincipalFactory(config: {
       event: {
         guildId: string;
         userId: string;
-        currentRoleIds?: readonly string[];
       },
       fetchCurrentMember: (
         guildId: string,
@@ -92,9 +91,6 @@ export function createPrincipalFactory(config: {
       >,
     ): Promise<Principal<"user">> {
       if (event.guildId !== guildId) return user(event.userId, "", []);
-      if (event.currentRoleIds !== undefined) {
-        return user(event.userId, event.guildId, event.currentRoleIds);
-      }
       try {
         const member = await fetchCurrentMember(event.guildId, event.userId);
         return user(

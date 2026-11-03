@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
 import { createPrincipalFactory } from "../src/auth/index.mts";
-import { createDataAccess, type StoragePort } from "../src/data/index.mts";
+import {
+  createDataAccess,
+  type QueryCursor,
+  type StoragePort,
+} from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
 
 export const principals = createPrincipalFactory({
@@ -25,7 +29,7 @@ export const candidate = {
   name: "Synthetic",
 } as const;
 
-function fixture(items: unknown[]) {
+function fixture(items: unknown[], overrides: Partial<StoragePort> = {}) {
   const writes: GuildRecord[] = [];
   let invalid = 0;
   const storage: StoragePort = {
@@ -42,11 +46,15 @@ function fixture(items: unknown[]) {
     query: async (_partition, _index, cursor) =>
       cursor
         ? { items: items.slice(1) }
-        : { items: items.slice(0, 1), cursor: { pk: "page", sk: "next" } },
+        : {
+            items: items.slice(0, 1),
+            cursor: { pk: "page", sk: "next" } as unknown as QueryCursor,
+          },
     batch: async () => items,
     put: async (item) => {
       writes.push(item);
     },
+    ...overrides,
   };
   return {
     data: createDataAccess(storage, () => {
@@ -55,6 +63,13 @@ function fixture(items: unknown[]) {
     writes,
     invalid: () => invalid,
   };
+}
+
+function failing(name: string) {
+  const fail = async (): Promise<never> => {
+    throw Object.assign(new Error("private SDK item image"), { name });
+  };
+  return fixture([], { get: fail, put: fail }).data.forUser(officer);
 }
 
 test("member candidate reads equal missing; officer receives candidate; unknown kinds are denied", async () => {
@@ -125,6 +140,8 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
             "valid",
             "unknown",
             "prefix",
+            "skPrefix",
+            "emptyId",
             "missing",
             "malformed",
             "extra",
@@ -144,6 +161,14 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
           ),
           ...(record.defect === "unknown" ? { kind: "future" } : {}),
           ...(record.defect === "prefix" ? { pk: `MEMBER#disguised` } : {}),
+          ...(record.defect === "skPrefix"
+            ? {
+                sk: `${record.kind === "member" ? "CANDIDATE" : "MEMBER"}#${index}`,
+              }
+            : {}),
+          ...(record.defect === "emptyId"
+            ? { sk: `${prefixes[record.kind]}#` }
+            : {}),
           ...(record.defect === "missing" ? { ownerId: undefined } : {}),
           ...(record.defect === "malformed"
             ? { [fields[record.kind][0]]: 42 }
@@ -158,7 +183,8 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
           const role = requiredRole[generated.kind];
           const allowed =
             role === "Owner"
-              ? item.ownerId === "asker"
+              ? item.ownerId === "asker" &&
+                (roles.includes("Member") || roles.includes("Officer"))
               : roles.includes("Officer") ||
                 (role === "Member" && roles.includes("Member"));
           if (!allowed) return [];
@@ -196,15 +222,27 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
 });
 
 test("current Member-only evidence revokes a cached Officer; missing evidence fails closed", async () => {
-  const cached = officer;
   const data = fixture([candidate]).data;
-  assert.equal((await data.forUser(cached).get(candidate)).length, 1);
+  assert.equal((await data.forUser(officer).get(candidate)).length, 1);
+  type GatewayEvent = Parameters<typeof principals.fromGateway>[0];
+  const excludedRole: Exclude<"currentRoleIds", keyof GatewayEvent> =
+    "currentRoleIds";
+  assert.equal(excludedRole, "currentRoleIds");
+  let fetches = 0;
+  const event = {
+    guildId: "guild",
+    userId: "asker",
+    currentRoleIds: ["officer-role"],
+  };
   const current = await principals.fromGateway(
-    { guildId: "guild", userId: "asker", currentRoleIds: ["member-role"] },
-    async () => {
-      throw new Error("cache must not be used");
+    event,
+    async (guildId, userId) => {
+      fetches++;
+      assert.deepEqual([guildId, userId], ["guild", "asker"]);
+      return { userId, roleIds: ["member-role"] };
     },
   );
+  assert.equal(fetches, 1);
   assert.deepEqual(await data.forUser(current).get(candidate), []);
   for (const fetchMember of [
     async () => undefined,
@@ -223,6 +261,27 @@ test("current Member-only evidence revokes a cached Officer; missing evidence fa
     async () => ({ userId: "asker", roleIds: ["officer-role"] }),
   );
   assert.equal((await data.forUser(fresh).get(candidate)).length, 1);
+});
+
+test("paginated GSI queries preserve the exact opaque cursor", async () => {
+  const cursor = {
+    pk: "page",
+    sk: "next",
+    gsi1pk: "index",
+    gsi1sk: "position",
+  } as unknown as QueryCursor;
+  const cursors: (QueryCursor | undefined)[] = [];
+  const { data } = fixture([], {
+    query: async (_partition, index, received) => {
+      assert.equal(index, true);
+      cursors.push(received);
+      return received ? { items: [candidate] } : { items: [], cursor };
+    },
+  });
+  assert.deepEqual(await data.forUser(officer).lookup("index"), [candidate]);
+  assert.equal(cursors.length, 2);
+  assert.equal(cursors[0], undefined);
+  assert.equal(cursors[1], cursor);
 });
 
 test("write policy enforces officer recording, self ownership, fact stamping and declared jobs", async () => {
@@ -277,15 +336,12 @@ test("malformed records emit a metric; storage failures expose only fixed codes"
   ]);
   assert.deepEqual(await data.forUser(officer).query("partition"), []);
   assert.equal(invalid(), 3);
-  const fail = async (): Promise<never> => {
-    throw new Error("private SDK item image");
-  };
-  const api = createDataAccess({
-    get: fail,
-    query: fail,
-    batch: fail,
-    put: fail,
-  }).forUser(officer);
+  const api = failing("Error");
   await assert.rejects(api.get(candidate), /^Error: DATA_UNAVAILABLE$/);
   await assert.rejects(api.write(candidate), /^Error: DATA_UNAVAILABLE$/);
+});
+
+test("conditional writes expose WRITE_CONFLICT without the SDK item image", async () => {
+  const api = failing("ConditionalCheckFailedException");
+  await assert.rejects(api.write(candidate), /^Error: WRITE_CONFLICT$/);
 });

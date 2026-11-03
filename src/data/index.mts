@@ -20,13 +20,17 @@ import {
   type RecordInput,
 } from "./records.mts";
 
+declare const cursorBrand: unique symbol;
+export type QueryCursor = Readonly<Record<string, string>> & {
+  readonly [cursorBrand]: true;
+};
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
   query(
     partition: string,
     index: boolean,
-    cursor?: Key,
-  ): Promise<{ items: unknown[]; cursor?: Key }>;
+    cursor?: QueryCursor,
+  ): Promise<{ items: unknown[]; cursor?: QueryCursor }>;
   batch(keys: readonly Key[]): Promise<unknown[]>;
   put(item: GuildRecord): Promise<void>;
 };
@@ -39,7 +43,9 @@ function canSee(principal: Principal, item: GuildRecord): boolean {
   if (actor.mode === "system") return true;
   const required = KIND_POLICY[item.kind];
   return required === "Owner"
-    ? Boolean(actor.userId) && item.ownerId === actor.userId
+    ? actor.roles.includes("Member") &&
+        Boolean(actor.userId) &&
+        item.ownerId === actor.userId
     : actor.roles.includes(required);
 }
 
@@ -93,7 +99,7 @@ export function createDataAccess(
     async function query(partition: string, index: boolean) {
       return read(async () => {
         const items: unknown[] = [];
-        let cursor: Key | undefined;
+        let cursor: QueryCursor | undefined;
         do {
           const page = await storage.query(partition, index, cursor);
           items.push(...page.items);
@@ -132,7 +138,12 @@ export function createDataAccess(
         if (!allowed) throw new Error("WRITE_DENIED");
         try {
           await storage.put(item);
-        } catch {
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.name === "ConditionalCheckFailedException"
+          )
+            throw new Error("WRITE_CONFLICT");
           throw new Error("DATA_UNAVAILABLE");
         }
       },
@@ -148,15 +159,14 @@ export function createDynamoDataAccess(config: {
   tableName: string;
   region: string;
   endpoint?: string;
+  localCredentials?: boolean;
 }) {
   const client = DynamoDBDocumentClient.from(
     new DynamoDBClient({
       region: config.region,
-      ...(config.endpoint
-        ? {
-            endpoint: config.endpoint,
-            credentials: { accessKeyId: "local", secretAccessKey: "local" },
-          }
+      ...(config.endpoint ? { endpoint: config.endpoint } : {}),
+      ...(config.localCredentials === true
+        ? { credentials: { accessKeyId: "local", secretAccessKey: "local" } }
         : {}),
     }),
   );
@@ -185,7 +195,7 @@ export function createDynamoDataAccess(config: {
       );
       return {
         items: result.Items ?? [],
-        cursor: result.LastEvaluatedKey as Key | undefined,
+        cursor: result.LastEvaluatedKey as QueryCursor | undefined,
       };
     },
     async batch(keys) {

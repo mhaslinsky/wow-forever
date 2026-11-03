@@ -5,9 +5,9 @@ import {
   DeleteTableCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
-import { createPrincipalFactory } from "../auth/index.mts";
-import { createDynamoDataAccess } from "./index.mts";
-import { recordKey } from "./records.mts";
+import { createPrincipalFactory } from "../src/auth/index.mts";
+import { createDynamoDataAccess } from "../src/data/index.mts";
+import { recordKey } from "../src/data/records.mts";
 
 const endpoint = process.env.DYNAMODB_LOCAL_ENDPOINT;
 test(
@@ -59,6 +59,7 @@ test(
         tableName,
         region: "us-east-1",
         endpoint,
+        localCredentials: true,
       });
       const member = data.forUser(actor("member"));
       const officer = data.forUser(actor("officer"));
@@ -79,8 +80,13 @@ test(
       assert.deepEqual(await member.get(candidate), []);
       assert.deepEqual(await officer.get(candidate), [candidate]);
       assert.deepEqual(await member.query(candidate.pk), []);
+      const deadline = Date.now() + 10_000;
+      let indexed = await officer.lookup("CANDIDATE#ALL");
+      while (indexed.length === 0 && Date.now() < deadline) {
+        indexed = await officer.lookup("CANDIDATE#ALL");
+      }
+      assert.deepEqual(indexed, [candidate]);
       assert.deepEqual(await member.lookup("CANDIDATE#ALL"), []);
-      assert.deepEqual(await officer.lookup("CANDIDATE#ALL"), [candidate]);
       assert.deepEqual(
         await member.batch([candidate, publicItem, publicItem]),
         [publicItem],
