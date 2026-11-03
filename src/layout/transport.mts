@@ -1,5 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import childProcess from "node:child_process";
-import { REST, type RESTOptions, type RequestMethod } from "@discordjs/rest";
+import {
+  RateLimitError,
+  REST,
+  RESTEvents,
+  type RequestMethod,
+} from "@discordjs/rest";
 import type { APIGuildForumTag, APIRole, ChannelType } from "discord.js";
 import { normalizeSnapshot } from "./normalize.mts";
 import type { Overwrite, Snapshot, Tag } from "./types.mts";
@@ -15,18 +21,33 @@ export type DiscordPort = {
 export type Target = { guildId: string; applicationId: string };
 
 export class LayoutTransportError extends Error {
-  readonly kind: "keychain" | "http" | "network" | "identity" | "snapshot";
+  readonly kind:
+    | "keychain"
+    | "http"
+    | "network"
+    | "identity"
+    | "snapshot"
+    | "rate_limit";
   readonly status?: number;
+  readonly retryAfterMs?: number;
 
   constructor(
-    kind: "keychain" | "http" | "network" | "identity" | "snapshot",
+    kind:
+      | "keychain"
+      | "http"
+      | "network"
+      | "identity"
+      | "snapshot"
+      | "rate_limit",
     message: string,
     status?: number,
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = "LayoutTransportError";
     this.kind = kind;
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -44,7 +65,11 @@ export function keychainToken(): string {
           "wow-forever",
           "-w",
         ],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 10_000,
+        },
       )
       .trim();
   } catch {
@@ -55,36 +80,47 @@ export function keychainToken(): string {
   return token;
 }
 
-export function discordTransport(
-  token: string,
-  options: Partial<RESTOptions> = {},
-): DiscordPort {
-  const rest = new REST({ ...options, version: "10", retries: 0 }).setToken(
-    token,
-  );
+export function discordTransport(token: string): DiscordPort {
+  if (!token.trim())
+    throw new LayoutTransportError("keychain", "Operator token is missing");
+  const responses = new AsyncLocalStorage<{ status?: number }>();
+  const rest = new REST({
+    api: "https://discord.com/api",
+    authPrefix: "Bot",
+    version: "10",
+    retries: 0,
+    rejectOnRateLimit: () => true,
+  }).setToken(token);
+  rest.on(RESTEvents.Response, (_request, response) => {
+    const current = responses.getStore();
+    if (current) current.status = response.status;
+  });
   return {
-    async request(method, route, body) {
-      try {
-        return await rest.request({
-          method: method as RequestMethod,
-          fullRoute: route,
-          body,
-        });
-      } catch (error) {
-        const status =
-          error &&
-          typeof error === "object" &&
-          "status" in error &&
-          typeof error.status === "number"
-            ? error.status
-            : undefined;
-        // Upstream errors may contain the token in response or request details.
-        throw new LayoutTransportError(
-          status === undefined ? "network" : "http",
-          `Discord ${method} failed`,
-          status,
-        );
-      }
+    request(method, route, body) {
+      const response: { status?: number } = {};
+      return responses.run(response, async () => {
+        try {
+          return await rest.request({
+            method: method as RequestMethod,
+            fullRoute: route,
+            body,
+          });
+        } catch (error) {
+          if (error instanceof RateLimitError)
+            throw new LayoutTransportError(
+              "rate_limit",
+              "Discord rate limited",
+              429,
+              error.retryAfter,
+            );
+          // Upstream errors may contain the token in response or request details.
+          throw new LayoutTransportError(
+            response.status === undefined ? "network" : "http",
+            `Discord ${method} failed`,
+            response.status,
+          );
+        }
+      });
     },
   };
 }

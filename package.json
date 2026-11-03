@@ -21,7 +21,8 @@
     "esbuild": "^0.28.2",
     "fast-check": "^4.10.2",
     "hcl2-parser": "^1.0.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "undici": "6.29.1"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.1161.0",
