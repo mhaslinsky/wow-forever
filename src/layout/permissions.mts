@@ -107,7 +107,7 @@ export function normalizeBits(value: string | number | bigint): string {
   if (typeof value === "string" && !/^\d+$/.test(value))
     throw new Error("Invalid permission bitfield");
   const bits = BigInt(value);
-  if (bits < 0n || (bits & ~allBits) !== 0n)
+  if (bits < 0n || bits >= 1n << 64n)
     throw new Error("Invalid permission bits");
   return bits.toString();
 }
@@ -191,8 +191,8 @@ export function protectiveOverwrite(
   ]) {
     const bit = candidates.find((bit) => (BigInt(candidate.deny) & bit) === 0n);
     if (bit === undefined) {
-      if (BigInt(candidate.allow) === 0n) continue;
-      candidate.allow = "0";
+      if ((BigInt(candidate.allow) & allBits) === 0n) continue;
+      candidate.allow = (BigInt(candidate.allow) & ~allBits).toString();
       return normalizeOverwrites(result);
     }
     candidate.allow = (BigInt(candidate.allow) & ~bit).toString();

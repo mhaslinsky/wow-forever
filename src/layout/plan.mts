@@ -1,4 +1,4 @@
-import { PermissionFlagsBits as flags } from "discord.js";
+import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
 import {
   adoptionCandidates,
   bindings,
@@ -170,8 +170,23 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       .map((channel) => channel.key),
   );
   const replacement = (channel: Channel): ReplacementOverwrite[] => {
-    const compiled = compilePermissions(layout, channel);
-    const preserved = (liveChannel(channel.key)?.overwrites ?? []).filter(
+    const live = liveChannel(channel.key)?.overwrites ?? [];
+    const unknown = (bits: string) => BigInt(bits) & ~PermissionsBitField.All;
+    // Discord can add permission bits before discord.js names them.
+    const compiled = compilePermissions(layout, channel).map((entry) => {
+      const previous = live.find(
+        (overwrite) =>
+          overwrite.type === "role" && overwrite.id === roleId(entry.roleKey),
+      );
+      return {
+        ...entry,
+        allow: (
+          BigInt(entry.allow) | unknown(previous?.allow ?? "0")
+        ).toString(),
+        deny: (BigInt(entry.deny) | unknown(previous?.deny ?? "0")).toString(),
+      };
+    });
+    const preserved = live.filter(
       (entry) =>
         (entry.type === "member" && !recreated.has(channel.key)) ||
         (entry.type === "role" &&
@@ -186,6 +201,24 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
         kind: "preserved" as const,
         overwrite: { ...overwrite },
       })),
+      ...live
+        .filter(
+          (entry) =>
+            !preserved.includes(entry) &&
+            !compiled.some(
+              (target) =>
+                entry.type === "role" && roleId(target.roleKey) === entry.id,
+            ) &&
+            (unknown(entry.allow) !== 0n || unknown(entry.deny) !== 0n),
+        )
+        .map((entry) => ({
+          kind: "preserved" as const,
+          overwrite: {
+            ...entry,
+            allow: unknown(entry.allow).toString(),
+            deny: unknown(entry.deny).toString(),
+          },
+        })),
     ];
   };
   const finalOverwrites = (channel: Channel) =>
