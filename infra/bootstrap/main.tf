@@ -1,13 +1,13 @@
 terraform {
-  # Enable after the initial local-state apply; see infra/README.md.
-  # backend "s3" {
-  #   bucket = "wow-forever-tfstate-414700437904"
-  #   key = "bootstrap/terraform.tfstate"
-  #   region = "us-east-1"
-  #   profile = "aidb-personal"
-  #   encrypt = true
-  #   use_lockfile = true
-  # }
+  # State moved here after the initial local-state apply; see infra/README.md.
+  backend "s3" {
+    bucket       = "wow-forever-tfstate-414700437904"
+    key          = "bootstrap/terraform.tfstate"
+    region       = "us-east-1"
+    profile      = "aidb-personal"
+    encrypt      = true
+    use_lockfile = true
+  }
   required_version = ">= 1.15.0"
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 6.0" }
