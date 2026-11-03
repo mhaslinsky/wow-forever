@@ -103,3 +103,23 @@ test("silence alarm requires ten missing minute periods", () => {
   assert.equal(alarm.evaluation_periods, 10);
   assert.equal(alarm.datapoints_to_alarm, 10);
 });
+
+test("gateway IAM scope limits token reads, decryption and metric writes", () => {
+  const [parsed, error] = hcl.parseToObject(
+    readFileSync("infra/gateway.tf", "utf8"),
+  );
+  assert.equal(error, null);
+  const expected = JSON.parse(`[
+{"actions":["ssm:UpdateInstanceInformation","ssm:ListAssociations","ssm:ListInstanceAssociations","ssm:DescribeAssociation","ssm:GetDocument","ssm:DescribeDocument","ssm:UpdateAssociationStatus","ssm:UpdateInstanceAssociationStatus","ssm:PutInventory","ssm:GetDeployablePatchSnapshotForInstance","ec2messages:*","ssmmessages:*"],"resources":["*"]},
+{"actions":["ssm:GetParameter"],"resources":["\${aws_ssm_parameter.secrets[\\"discord_bot_token\\"].arn}"]},
+{"actions":["kms:Decrypt"],"resources":["\${data.aws_kms_key.ssm.arn}"],"condition":[{"test":"StringEquals","variable":"kms:ViaService","values":["ssm.us-east-1.amazonaws.com"]}]},
+{"actions":["cloudwatch:PutMetricData"],"resources":["*"],"condition":[{"test":"StringEquals","variable":"cloudwatch:namespace","values":["wow-forever/gateway"]}]},
+{"actions":["s3:ListBucket"],"resources":["\${aws_s3_bucket.gateway.arn}"]},
+{"actions":["s3:GetObject"],"resources":["\${aws_s3_bucket.gateway.arn}/artifacts/gateway/*"]},
+{"actions":["logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams","logs:DescribeLogGroups"],"resources":["\${aws_cloudwatch_log_group.gateway.arn}","\${aws_cloudwatch_log_group.gateway.arn}:*"]}
+]`);
+  assert.deepEqual(
+    parsed.data.aws_iam_policy_document.gateway[0].statement,
+    expected,
+  );
+});
