@@ -18,3 +18,7 @@ The three SecureString parameters start as `None`. Set their real values out of 
 The monthly budget covers the whole account and sends actual-spend notifications at 80 and 100 percent of the configured amount (default $25). Budget data can be delayed. Budget alerts also go straight to the operator's email, so they arrive even when the Discord webhook is unset or failing. Other alarms on the topic reach Discord only.
 
 Applied on 2026-11-03 in account 414700437904. A test invoke loaded the bundle, read the placeholder through SSM and KMS, and failed with "Webhook not configured", which is the expected result until the webhook value is set.
+
+## Rollback
+
+Deletion protection blocks `terraform destroy` for the DynamoDB table. Removal takes two applies: set `deletion_protection_enabled = false` and apply, then remove the table resource and apply again. Point-in-time recovery (PITR) retains 35 days of restore points.

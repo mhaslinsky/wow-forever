@@ -105,6 +105,8 @@ export function createPrincipalFactory(config: {
     systemPrincipal(jobName: string): Principal<"system"> {
       const kinds = jobs.get(jobName);
       if (!kinds) throw new Error("UNKNOWN_JOB");
+      // Facts belong to a user, so jobs cannot declare writes to them.
+      if (kinds.includes("fact")) throw new Error("INVALID_JOB_KINDS");
       const principal = Object.freeze({}) as Principal<"system">;
       authorities.set(
         principal,

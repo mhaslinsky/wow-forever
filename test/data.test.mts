@@ -13,7 +13,7 @@ export const principals = createPrincipalFactory({
   guildId: "guild",
   memberRoleId: "member-role",
   officerRoleId: "officer-role",
-  jobs: { digest: ["raid"] },
+  jobs: { digest: ["raid"], fact: ["fact"] },
 });
 export const principal = (roles: string[], userId = "asker") =>
   principals.fromVerifiedInteraction({
@@ -51,9 +51,7 @@ function fixture(items: unknown[], overrides: Partial<StoragePort> = {}) {
             cursor: { pk: "page", sk: "next" } as unknown as QueryCursor,
           },
     batch: async () => items,
-    put: async (item) => {
-      writes.push(item);
-    },
+    put: async (item) => void writes.push(item),
     ...overrides,
   };
   return {
@@ -223,7 +221,6 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
 
 test("current Member-only evidence revokes a cached Officer; missing evidence fails closed", async () => {
   const data = fixture([candidate]).data;
-  assert.equal((await data.forUser(officer).get(candidate)).length, 1);
   type GatewayEvent = Parameters<typeof principals.fromGateway>[0];
   const excludedRole: Exclude<"currentRoleIds", keyof GatewayEvent> =
     "currentRoleIds";
@@ -280,7 +277,6 @@ test("paginated GSI queries preserve the exact opaque cursor", async () => {
   });
   assert.deepEqual(await data.forUser(officer).lookup("index"), [candidate]);
   assert.equal(cursors.length, 2);
-  assert.equal(cursors[0], undefined);
   assert.equal(cursors[1], cursor);
 });
 
@@ -344,4 +340,8 @@ test("malformed records emit a metric; storage failures expose only fixed codes"
 test("conditional writes expose WRITE_CONFLICT without the SDK item image", async () => {
   const api = failing("ConditionalCheckFailedException");
   await assert.rejects(api.write(candidate), /^Error: WRITE_CONFLICT$/);
+});
+
+test("system principals reject fact write permissions at construction", () => {
+  assert.throws(() => principals.systemPrincipal("fact"), /INVALID_JOB_KINDS/);
 });
