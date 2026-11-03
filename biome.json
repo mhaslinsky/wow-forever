@@ -32,6 +32,16 @@
   },
   "overrides": [
     {
+      "includes": ["test/interactions-smoke-fixture.mts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": [
         "src/data/index.mts",
         "test/data-local.test.mts",
