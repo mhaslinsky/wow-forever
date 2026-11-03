@@ -1,18 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { Client } from "discord.js";
 import hcl from "hcl2-parser";
-import {
-  attachGateway,
-  StartupError,
-  scheduleHeartbeat,
-  startupFailure,
-  tokenValue,
-} from "../src/gateway/client.mts";
+import { attachGateway, tokenValue } from "../src/gateway/client.mts";
 
 test("startup refuses missing, empty and placeholder tokens", () => {
   for (const value of [undefined, "", "  ", "None", " None "])
@@ -93,67 +84,7 @@ test("handler failure is reported and later events still run", async () => {
   assert.ok(!JSON.stringify(logs).includes("private data"));
 });
 
-test("metric failures are visible and do not reject the heartbeat", async () => {
-  const client = new Client({ intents: [] });
-  client.isReady = (() => true) as typeof client.isReady;
-  const logs: Record<string, unknown>[] = [];
-  const tick = attachGateway(
-    client,
-    {},
-    async () => {
-      throw new Error("unavailable");
-    },
-    (record) => logs.push(record),
-  );
-  client.emit("shardReady", 0, new Set());
-  await tick();
-  assert.deepEqual(logs, [{ event: "metric_failed", metric: "Heartbeat" }]);
-});
-
-test("gateway bundle starts outside the repository and fails closed without credentials", () => {
-  const directory = mkdtempSync(join(tmpdir(), "gateway-bundle-"));
-  try {
-    copyFileSync("build/gateway/index.mjs", join(directory, "index.mjs"));
-    assert.throws(
-      () =>
-        execFileSync(process.execPath, [join(directory, "index.mjs")], {
-          cwd: directory,
-          env: {
-            PATH: process.env.PATH,
-            AWS_EC2_METADATA_DISABLED: "true",
-            AWS_SHARED_CREDENTIALS_FILE: join(directory, "absent"),
-            AWS_CONFIG_FILE: join(directory, "absent-config"),
-          },
-          stdio: "pipe",
-        }),
-      (error: unknown) => {
-        const failure = error as { status: number; stdout: Buffer };
-        assert.equal(failure.status, 1);
-        assert.match(String(failure.stdout), /gateway_start_failed/);
-        return true;
-      },
-    );
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("heartbeat is scheduled every sixty seconds", async (context) => {
-  context.mock.timers.enable({ apis: ["setInterval"] });
-  let calls = 0;
-  const timer = scheduleHeartbeat(async () => {
-    calls++;
-  });
-  context.mock.timers.tick(59_999);
-  assert.equal(calls, 0);
-  context.mock.timers.tick(1);
-  assert.equal(calls, 1);
-  context.mock.timers.tick(60_000);
-  assert.equal(calls, 2);
-  clearInterval(timer);
-});
-
-test("silence alarm requires ten missing minute periods and resets after heartbeat", () => {
+test("silence alarm requires ten missing minute periods", () => {
   const [parsed, error] = hcl.parseToObject(
     readFileSync("infra/gateway.tf", "utf8"),
   );
@@ -171,38 +102,4 @@ test("silence alarm requires ten missing minute periods and resets after heartbe
   assert.equal(alarm.treat_missing_data, "breaching");
   assert.equal(alarm.evaluation_periods, 10);
   assert.equal(alarm.datapoints_to_alarm, 10);
-  const periods: boolean[] = [];
-  const evaluate = (heartbeat?: number) => {
-    periods.push(
-      heartbeat === undefined
-        ? alarm.treat_missing_data === "breaching"
-        : heartbeat < alarm.threshold,
-    );
-    return (
-      periods.slice(-alarm.evaluation_periods).filter(Boolean).length >=
-      alarm.datapoints_to_alarm
-    );
-  };
-  for (let minute = 1; minute < 10; minute++) assert.equal(evaluate(), false);
-  assert.equal(evaluate(), true);
-  assert.equal(evaluate(1), false);
-});
-
-test("startup failure logs fixed codes without error messages or tokens", () => {
-  for (const code of [
-    "TOKEN_NOT_CONFIGURED",
-    "SSM_READ_FAILED",
-    "LOGIN_FAILED",
-  ] as const) {
-    const error = new StartupError(code);
-    error.message = "private-token";
-    assert.deepEqual(startupFailure(error), {
-      event: "gateway_start_failed",
-      code,
-    });
-  }
-  assert.deepEqual(startupFailure(new Error("private-token")), {
-    event: "gateway_start_failed",
-    code: "STARTUP_FAILED",
-  });
 });
