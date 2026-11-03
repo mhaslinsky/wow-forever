@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "outDir": "build/alarm-forwarder",
+    "rootDir": "src/alarm-forwarder"
+  },
+  "include": ["src/alarm-forwarder/index.mts"]
+}
