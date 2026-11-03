@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { Client } from "discord.js";
 import hcl from "hcl2-parser";
@@ -106,9 +106,32 @@ test("silence alarm requires ten missing minute periods", () => {
 
 test("gateway IAM scope limits token reads, decryption and metric writes", () => {
   const [parsed, error] = hcl.parseToObject(
-    readFileSync("infra/gateway.tf", "utf8"),
+    globSync("infra/*.tf")
+      .map((path) => readFileSync(path, "utf8"))
+      .join("\n"),
   );
   assert.equal(error, null);
+  const role = parsed.resource.aws_iam_role.gateway[0];
+  assert.equal(role.managed_policy_arns, undefined);
+  assert.equal(role.inline_policy, undefined);
+  const targets = new Set([
+    `\${aws_iam_role.gateway.id}`,
+    `\${aws_iam_role.gateway.name}`,
+    role.name,
+    "wow-forever-gateway",
+  ]);
+  const policies = (kind: string) =>
+    (
+      Object.values(parsed.resource[kind] ?? {}).flat() as { role: string }[]
+    ).filter((policy) => targets.has(policy.role));
+  assert.deepEqual(policies("aws_iam_role_policy_attachment"), []);
+  assert.deepEqual(policies("aws_iam_role_policy_attachments_exclusive"), []);
+  assert.deepEqual(policies("aws_iam_role_policy"), [
+    {
+      role: `\${aws_iam_role.gateway.id}`,
+      policy: `\${data.aws_iam_policy_document.gateway.json}`,
+    },
+  ]);
   const expected = JSON.parse(`[
 {"actions":["ssm:UpdateInstanceInformation","ssm:ListAssociations","ssm:ListInstanceAssociations","ssm:DescribeAssociation","ssm:GetDocument","ssm:DescribeDocument","ssm:UpdateAssociationStatus","ssm:UpdateInstanceAssociationStatus","ssm:PutInventory","ssm:GetDeployablePatchSnapshotForInstance","ec2messages:*","ssmmessages:*"],"resources":["*"]},
 {"actions":["ssm:GetParameter"],"resources":["\${aws_ssm_parameter.secrets[\\"discord_bot_token\\"].arn}"]},
