@@ -1,3 +1,4 @@
+import { ChannelType } from "discord.js";
 import { normalizeBits, normalizeOverwrites } from "./permissions.mts";
 import type { LiveChannel, LiveRole, Snapshot } from "./types.mts";
 
@@ -29,12 +30,21 @@ export function normalizeSnapshot(
       mentionable: role.mentionable ?? false,
       managed: role.managed ?? false,
     })),
-    channels: snapshot.channels.map((channel) => ({
-      ...channel,
-      topic: channel.topic ?? "",
-      parent: channel.parent ?? null,
-      tags: (channel.tags ?? []).map((tag) => ({ ...tag })),
-      overwrites: normalizeOverwrites(channel.overwrites),
-    })),
+    channels: snapshot.channels
+      .filter(
+        (channel) =>
+          ![
+            ChannelType.AnnouncementThread,
+            ChannelType.PublicThread,
+            ChannelType.PrivateThread,
+          ].includes(channel.type),
+      )
+      .map((channel) => ({
+        ...channel,
+        topic: channel.topic ?? "",
+        parent: channel.parent ?? null,
+        tags: (channel.tags ?? []).map((tag) => ({ ...tag })),
+        overwrites: normalizeOverwrites(channel.overwrites),
+      })),
   };
 }

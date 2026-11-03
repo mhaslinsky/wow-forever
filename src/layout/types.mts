@@ -94,6 +94,11 @@ export type IdMap = {
 export type State = { schemaVersion: 1; guildId: string; ids: IdMap };
 export type CompiledOverwrite = Omit<Overwrite, "id"> & { roleKey: string };
 
+/** The executor writes preserved entries byte for byte. */
+export type ReplacementOverwrite =
+  | ({ kind: "compiled" } & CompiledOverwrite)
+  | { kind: "preserved"; overwrite: Overwrite };
+
 /** Stable keys resolve after creates; reorder targets contain managed siblings only. */
 export type Operation =
   | { kind: "createRole" | "updateRole"; role: Role }
@@ -107,7 +112,7 @@ export type Operation =
   | {
       kind: "replaceOverwrites";
       channelKey: string;
-      overwrites: CompiledOverwrite[];
+      overwrites: ReplacementOverwrite[];
     }
   | {
       kind: "setForumTags";
