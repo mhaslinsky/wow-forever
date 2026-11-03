@@ -204,6 +204,7 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       ...live
         .filter(
           (entry) =>
+            (entry.type !== "member" || !recreated.has(channel.key)) &&
             !preserved.includes(entry) &&
             !compiled.some(
               (target) =>
