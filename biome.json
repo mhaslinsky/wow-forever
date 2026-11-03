@@ -9,7 +9,37 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "patterns": [
+              {
+                "group": [
+                  "@aws-sdk/client-dynamodb",
+                  "@aws-sdk/client-dynamodb/**",
+                  "@aws-sdk/lib-dynamodb",
+                  "@aws-sdk/lib-dynamodb/**"
+                ],
+                "message": "Use the authorized operations in src/data."
+              }
+            ]
+          }
+        }
+      }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/data/index.mts", "test/data-local.test.mts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    }
+  ]
 }
