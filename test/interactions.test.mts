@@ -15,6 +15,7 @@ import type {
 import {
   commandDefinitions,
   message,
+  pause,
   signatureValid,
   timestampFresh,
 } from "../src/interactions/core.mts";
@@ -106,13 +107,20 @@ function harness() {
       ).toString("hex"),
     },
   });
-  const worker = (routes: readonly Route[] = fixtures) =>
+  const worker = (routes: readonly Route[] = fixtures, limit = 60_000) =>
     createWorker(ports, routes)(
       interaction(),
-      () => 60_000 - (clock.now() - 1_800_000_000_000),
+      () => limit - (clock.now() - 1_800_000_000_000),
     );
   return { clock, calls, replies, ports, event, worker };
 }
+const paidRoute = (calls: string[]): Route => ({
+  ...fixtures[1],
+  handler: async () => {
+    calls.push("paid");
+    return message("Completed");
+  },
+});
 test("cryptographic acceptance equals the independent Ed25519 oracle", () => {
   fc.assert(
     fc.property(
@@ -187,41 +195,28 @@ test("missing or malformed signatures do no work; raw base64 and header casing a
   const http = createHttp(setup.ports, fixtures);
   for (const signature of [undefined, "", "ab", "g".repeat(128)]) {
     const event = setup.event();
-    assert.equal(
-      (
-        await http({
-          ...event,
-          headers: { ...event.headers, "x-signature-ed25519": signature },
-        })
-      ).statusCode,
-      401,
-    );
+    const rejected = await http({
+      ...event,
+      headers: { ...event.headers, "x-signature-ed25519": signature },
+    });
+    assert.equal(rejected.statusCode, 401);
   }
-  assert.equal(
-    signatureValid(Buffer.from("{}"), "00".repeat(64), "1", "bad"),
-    false,
-  );
-  assert.equal(
-    signatureValid(Buffer.from("{}"), "00".repeat(64), "1", publicKey),
-    false,
-  );
+  for (const key of ["bad", publicKey])
+    assert.equal(
+      signatureValid(Buffer.from("{}"), "00".repeat(64), "1", key),
+      false,
+    );
   assert.deepEqual(setup.calls, []);
   const event = setup.event(' { "type": 1 } ');
-  assert.equal(
-    JSON.parse(
-      (
-        await http({
-          body: Buffer.from(event.body).toString("base64"),
-          isBase64Encoded: true,
-          headers: {
-            "X-Signature-Timestamp": event.headers["x-signature-timestamp"],
-            "X-Signature-Ed25519": event.headers["x-signature-ed25519"],
-          },
-        })
-      ).body,
-    ).type,
-    1,
-  );
+  const pong = await http({
+    body: Buffer.from(event.body).toString("base64"),
+    isBase64Encoded: true,
+    headers: {
+      "X-Signature-Timestamp": event.headers["x-signature-timestamp"],
+      "X-Signature-Ed25519": event.headers["x-signature-ed25519"],
+    },
+  });
+  assert.equal(JSON.parse(pong.body).type, 1);
   assert.equal((await http(setup.event("null"))).statusCode, 400);
   assert.equal((await http(setup.event("{"))).statusCode, 400);
 });
@@ -273,19 +268,26 @@ test("SSM and invoke deadlines cancel requests within the HTTP budget", async ()
     assert.equal(signal?.aborted, true);
   }
 });
+test("autocomplete failure returns empty choices", async () => {
+  const setup = harness();
+  const routes = [
+    {
+      ...fixtures[5],
+      handler: async () => {
+        throw new Error("Unavailable");
+      },
+    },
+  ];
+  const event = setup.event(JSON.stringify(interaction(4, "fixture-fast")));
+  const response = await createHttp(setup.ports, routes)(event);
+  assert.deepEqual(JSON.parse(response.body), {
+    type: 8,
+    data: { choices: [] },
+  });
+});
 test("worker claims cooldown before work, edits completion and deduplicates", async () => {
   const setup = harness();
-  const routes = fixtures.map((route) =>
-    route.name === "fixture-slow"
-      ? {
-          ...route,
-          handler: async () => {
-            setup.calls.push("paid");
-            return message("Completed");
-          },
-        }
-      : route,
-  );
+  const routes = [paidRoute(setup.calls)];
   await setup.worker(routes);
   await setup.worker(routes);
   assert.deepEqual(setup.calls, [
@@ -309,15 +311,7 @@ test("cooldown denial and unavailable store prevent paid work", async () => {
       }
       return claim(key, ...rest);
     };
-    await setup.worker([
-      {
-        ...fixtures[1],
-        handler: async () => {
-          setup.calls.push("paid");
-          return message("Completed");
-        },
-      },
-    ]);
+    await setup.worker([paidRoute(setup.calls)]);
     assert.ok(!setup.calls.includes("paid"));
     assert.equal(
       setup.replies[0]?.content,
@@ -325,19 +319,46 @@ test("cooldown denial and unavailable store prevent paid work", async () => {
     );
   }
 });
-test("worker waits for acknowledgement, then uses a follow-up when absent", async () => {
-  for (const absent of [false, true]) {
+test("acknowledgement budget preserves slow follow-ups after absent or unknown probes", async () => {
+  for (const probe of ["early", "absent", "error", "slow"]) {
     const setup = harness();
     const discord = setup.ports.discord;
     let gets = 0;
-    setup.ports.discord = async (...args) =>
-      args[1] === "GET" && (absent || gets++ === 0) ? 404 : discord(...args);
+    setup.ports.discord = async (...args) => {
+      if (args[1] === "GET") {
+        if (probe === "slow") return new Promise<never>(() => {});
+        if (probe === "error") return 503;
+        if (probe === "absent" || gets++ === 0) return 404;
+      }
+      if (args[1] === "POST") await pause(setup.clock, 1000, args[3]);
+      return discord(...args);
+    };
     const work = setup.worker();
     await flush();
     assert.equal(setup.replies.length, 0);
-    await setup.clock.advance(absent ? 3000 : 250);
+    await setup.clock.advance(probe === "early" ? 250 : 4000);
     await work;
-    assert.equal(setup.replies[0]?.method, absent ? "POST" : "PATCH");
+    const method = probe === "early" ? "PATCH" : "POST";
+    assert.deepEqual(setup.replies, [{ method, content: "Completed" }]);
+    assert.ok(!setup.calls.includes("reported"));
+  }
+});
+test("unknown interaction claim replies on error or watchdog expiry", async () => {
+  for (const hangs of [false, true]) {
+    const setup = harness();
+    setup.ports.claim = async () => {
+      if (hangs) return new Promise<never>(() => {});
+      throw new Error("Claim unavailable");
+    };
+    const routes = [paidRoute(setup.calls)];
+    const work = setup.worker(routes, hangs ? 4500 : 60_000);
+    await flush();
+    if (hangs) await setup.clock.advance(500);
+    await work;
+    const content = hangs ? "Request timed out" : "Request failed";
+    assert.deepEqual(setup.replies, [{ method: "PATCH", content }]);
+    assert.ok(!setup.calls.includes("paid"));
+    assert.ok(setup.calls.includes("reported"));
   }
 });
 test("watchdog aborts unfinished work and drops late completion", async () => {
@@ -435,14 +456,9 @@ test("Discord client crosses real HTTP with cancellation and safe follow-ups", a
       assert.deepEqual(body.allowed_mentions.parse, []);
       return fetch(`http://127.0.0.1:${address.port}`, options);
     });
+    const signal = new AbortController().signal;
     assert.equal(
-      await client(
-        interaction(),
-        "POST",
-        "Completed",
-        new AbortController().signal,
-        true,
-      ),
+      await client(interaction(), "POST", "Completed", signal, true),
       200,
     );
   } finally {
@@ -455,14 +471,13 @@ test("production bundle imports in isolation and excludes all fixture commands",
     const bundle = readFileSync("build/interactions/index.mjs", "utf8");
     for (const fixture of fixtures) assert.ok(!bundle.includes(fixture.name));
     copyFileSync("build/interactions/index.mjs", join(directory, "index.mjs"));
+    const script =
+      'import assert from "node:assert/strict"; const module = await import("./index.mjs"); assert.equal(typeof module.handler, "function");';
+    const options = { cwd: directory, env: { ...process.env, NODE_PATH: "" } };
     execFileSync(
       process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        'import assert from "node:assert/strict"; const module = await import("./index.mjs"); assert.equal(typeof module.handler, "function");',
-      ],
-      { cwd: directory, env: { ...process.env, NODE_PATH: "" } },
+      ["--input-type=module", "-e", script],
+      options,
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

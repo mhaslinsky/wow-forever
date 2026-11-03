@@ -97,7 +97,12 @@ export function createHttp(ports: Ports, routes: readonly Route[]) {
             },
       );
     } catch {
-      return response(200, message("Request unavailable"));
+      return response(
+        200,
+        interaction.type === 4
+          ? { type: 8, data: { choices: [] } }
+          : message("Request unavailable"),
+      );
     }
   };
 }

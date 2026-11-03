@@ -8,50 +8,56 @@ export function createWorker(ports: Ports, routes: readonly Route[]) {
       throw new Error("Unknown worker route");
     const work = new AbortController();
     let won = false;
-    let owned = false;
+    let owned: boolean | undefined;
     let final: Promise<void> | undefined;
     const finish = (content: string): Promise<void> => {
-      if (won || !owned) return final ?? Promise.resolve();
+      // A failed claim cannot prove a duplicate; only false suppresses replies.
+      if (won || owned === false) return final ?? Promise.resolve();
       won = true;
       work.abort();
       final = (async () => {
         try {
+          // Reserve the reply deadline before waiting for Discord's acknowledgement.
+          const outerBudget = Math.min(5000, remaining() - 500);
           await bounded(
             ports.clock,
-            Math.min(3500, remaining() - 500),
+            outerBudget,
             new AbortController().signal,
             async (signal) => {
               const end =
-                ports.clock.now() +
-                Math.min(3000, Math.max(0, remaining() - 2500));
+                ports.clock.now() + Math.min(3000, outerBudget - 2000);
               let exists = false;
-              do {
-                const status = await bounded(
-                  ports.clock,
-                  500,
-                  signal,
-                  (requestSignal) =>
-                    ports.discord(
-                      interaction,
-                      "GET",
-                      undefined,
-                      requestSignal,
-                      false,
-                    ),
-                );
+              while (ports.clock.now() < end) {
+                let status: number;
+                try {
+                  status = await bounded(
+                    ports.clock,
+                    Math.min(500, end - ports.clock.now()),
+                    signal,
+                    (requestSignal) =>
+                      ports.discord(
+                        interaction,
+                        "GET",
+                        undefined,
+                        requestSignal,
+                        false,
+                      ),
+                  );
+                } catch {
+                  break;
+                }
                 if (status === 200) {
                   exists = true;
                   break;
                 }
-                if (status !== 404)
-                  throw new Error("Acknowledgement check failed");
+                if (status !== 404) break;
                 if (ports.clock.now() >= end) break;
                 await pause(
                   ports.clock,
                   Math.min(250, end - ports.clock.now()),
                   signal,
                 );
-              } while (ports.clock.now() < end);
+              }
               const status = await bounded(
                 ports.clock,
                 2000,
@@ -81,6 +87,7 @@ export function createWorker(ports: Ports, routes: readonly Route[]) {
       releaseWatchdog = resolve;
     });
     const cancel = ports.clock.schedule(Math.max(0, remaining() - 4000), () => {
+      if (owned === undefined) ports.report();
       watchdogDone = finish("Request timed out");
       work.abort();
       releaseWatchdog?.();

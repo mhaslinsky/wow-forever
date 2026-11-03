@@ -74,16 +74,19 @@ export type Reply =
       type: 9;
       data: { custom_id: string; title: string; components: unknown[] };
     };
-export interface Route {
+interface RouteDefinition {
   type: 2 | 3 | 4 | 5;
   name: string;
   description?: string;
   options?: unknown[];
-  mode: "fast" | "slow";
   visibility: "public" | "ephemeral";
-  cooldownSeconds?: number;
   handler(interaction: Interaction, signal: AbortSignal): Promise<Reply>;
 }
+export type Route = RouteDefinition &
+  (
+    | { mode: "fast"; cooldownSeconds?: never }
+    | { mode: "slow"; cooldownSeconds?: number }
+  );
 export const registry: readonly Route[] = [];
 export function commandDefinitions(routes: readonly Route[] = registry) {
   return routes
