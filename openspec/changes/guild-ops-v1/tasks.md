@@ -5,18 +5,18 @@
 - [x] 1.2 Terraform base stack: remote state, SSM parameters for tokens, SNS alarm topic with a Discord-forwarding Lambda, billing alarm (depends on: 1.1) (complexity: standard) (gate: none)
   Done in PR #3 (PER-297), applied; topic policy fixed in PR #10.
 - [x] 1.3 Interactions endpoint: Lambda function URL with Ed25519 verification, command router, deferred async worker with retries off and a timeout watchdog, cooldown claim before paid work (depends on: 1.2) (complexity: judgment) (gate: none)
-  Split: code in PR #5 (PER-300); Terraform and deployed smoke in PR #8 (PER-330), applied, smoke passed except the Discord PING check, which waits on 2.1.
+  Split: code in PR #5 (PER-300); Terraform and deployed smoke in PR #8 (PER-330), applied, smoke passed; the Discord PING check passed on Nov 3 after 2.1.
 - [x] 1.4 DynamoDB single-table schema and data access layer where every read takes the asker's roles and filters officer-only records (depends on: 1.1) (complexity: judgment) (gate: none)
   Done in PR #4 (PER-298), table applied.
 - [x] 1.5 Always-connected client on a t4g.nano: discord.js gateway with reconnect and resume, heartbeat metric and a ten-minute silence alarm, deploy over SSM (depends on: 1.2, 1.4) (complexity: standard) (gate: none)
-  Code and infrastructure merged in PR #7 (PER-301); not applied or deployed until 2.1 stores the bot token.
+  Code and infrastructure merged in PR #7 (PER-301); boot fixes in PR #20. Applied and deployed Nov 3; heartbeat metric reporting.
 - [ ] 1.6 Guild-scoped slash command registration script driven by the command router's definitions (depends on: 1.3) (complexity: mechanical) (gate: none)
 
 ## 2. Discord server
 
 - [x] 2.1 OPS (no PR): create the guild bot and operator-identity Discord applications, enable required intents, store the bot token in SSM and the operator token on the Mac, install the pinned Discord MCP restricted to the guild after reading its source; Done when both apps exist and the MCP lists the guild's channels (depends on: 1.2) (complexity: standard) (gate: none)
 - [x] 2.2 Layout tool: layout file schema plus plan, apply and permission readback commands, apply idempotent (depends on: 1.1) (complexity: judgment) (gate: none)
-  Split into four PRs: core schema and compilation, PR #6 (PER-299, merged); planner and adoption, PR #9 (PER-332, merged); readback (PER-333); executor, state, transport and CLI (PER-331).
+  Split into four PRs: core schema and compilation, PR #6 (PER-299, merged); planner and adoption, PR #9 (PER-332, merged); readback (PER-333, PR #12); executor, state, transport and CLI (PER-331, PRs #15, #17, #18), with live fixes #21, #22 and #24. Live test-guild gate passed Nov 3 on 0045e63.
 - [ ] 2.3 Initial server layout file (categories, channels, roles, role order, overwrites) applied after the operator reviews the plan, readback clean (depends on: 2.1, 2.2) (complexity: standard) (gate: none)
 - [ ] 2.4 OPS (no PR): AutoMod rules, Onboarding questions and ping roles, Raid-Helper and anti-raid bot installs, Forever news webhooks, pinned charter and loot policy; Done when a test account onboards and sees only public channels (depends on: 2.3) (complexity: standard) (gate: none)
 
