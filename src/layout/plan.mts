@@ -25,6 +25,7 @@ import type {
 /** Protect; remove role permissions; create roles, categories, then children; update and reparent.
  * Finalize category overwrites before channel overwrites; grant role permissions, reorder, delete.
  * Protection stays until parents are final, preventing category sync and role grants from exposing children.
+ * Administrator bypasses overwrite protection; operator capabilities must survive permission removals.
  */
 export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
   const bound = bindings(layout, snapshot, idMap);
@@ -80,18 +81,10 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
     (role) => role.applicationId === snapshot.applicationId,
   );
   if (!operator) throw new Error("Missing operator role");
-  const permissions =
-    BigInt(operator.permissions) |
-    BigInt(
-      snapshot.roles.find((role) => role.id === snapshot.guildId)
-        ?.permissions ?? "0",
-    );
-  if (
-    !(permissions & flags.Administrator) &&
-    (permissions & (flags.ManageRoles | flags.ManageChannels)) !==
-      (flags.ManageRoles | flags.ManageChannels)
-  )
-    errors.push("Operator lacks ManageRoles or ManageChannels");
+  const livePermissions = new Map(
+    snapshot.roles.map((role) => [role.id, BigInt(role.permissions)]),
+  );
+  const afterRemovals = new Map(livePermissions);
   const protects: Operation[] = [],
     removals: Operation[] = [],
     roleCreates: Operation[] = [],
@@ -105,6 +98,13 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
   let roleBitsChanged = false;
   for (const role of layout.roles) {
     const live = liveRole(role.key);
+    if (
+      role.kind !== "operator" &&
+      live &&
+      BigInt(live.permissions) & flags.Administrator &&
+      (role.permissions.Administrator !== false || role.kind === "observed")
+    )
+      errors.push(`Role retains Administrator: ${role.key}`);
     if (role.kind === "operator" || role.kind === "observed") {
       if (!live) errors.push(`Missing role: ${role.key}`);
       continue;
@@ -122,6 +122,7 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
     const { allow, managed } = rolePermissions(role);
     const current = BigInt(live.permissions) & managed;
     const removed = current & ~allow;
+    afterRemovals.set(live.id, BigInt(live.permissions) & ~removed);
     const added = allow & ~current;
     roleBitsChanged ||= current !== allow;
     const fieldsChanged =
@@ -143,6 +144,20 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
         },
       });
     if (added) grants.push({ kind: "updateRole", role });
+  }
+  for (const [phase, roleBits] of [
+    ["live", livePermissions],
+    ["after role removals", afterRemovals],
+  ] as const) {
+    const permissions =
+      (roleBits.get(operator.id) ?? 0n) |
+      (roleBits.get(snapshot.guildId) ?? 0n);
+    if (
+      !(permissions & flags.Administrator) &&
+      (permissions & (flags.ManageRoles | flags.ManageChannels)) !==
+        (flags.ManageRoles | flags.ManageChannels)
+    )
+      errors.push(`Operator lacks ManageRoles or ManageChannels: ${phase}`);
   }
   const recreated = new Set(
     layout.channels
@@ -320,7 +335,14 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       Number(right.live?.type === discordTypes.category) -
       Number(left.live?.type === discordTypes.category),
   )) {
-    if (!target.writable || target.create || !target.key) continue;
+    if (
+      !target.writable ||
+      target.create ||
+      !target.key ||
+      !target.live ||
+      sameOverwrites(target.live.overwrites, target.overwrites)
+    )
+      continue;
     protects.push({
       kind: "protectOverwrites",
       channelKey: target.key,

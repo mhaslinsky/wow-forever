@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PermissionFlagsBits as flags } from "discord.js";
+import { ChannelType, PermissionFlagsBits as flags } from "discord.js";
 import {
   compilePermissions,
   parseLayout,
@@ -213,4 +213,141 @@ test("protection target safety: non-Administrator operator can see every written
     ),
   );
   apply();
+});
+
+test("category metadata, order and deletion leave synced ignored children alone", () => {
+  for (const change of ["rename", "topic", "reorder", "delete"]) {
+    const layout = fixture(),
+      server = model(),
+      child = layout.channels[0];
+    for (const cell of Object.values(child.access)) {
+      cell.view = true;
+      cell.send = true;
+      cell.manageThreads = true;
+    }
+    const category = {
+      ...structuredClone(child),
+      key: "category",
+      name: "category",
+      type: "category" as const,
+      tags: [],
+    };
+    category.access.everyone = category.access.member = {
+      view: false,
+      send: false,
+      connect: false,
+      manageThreads: false,
+    };
+    category.access.operator.connect = true;
+    layout.channels.push(category, {
+      ...structuredClone(category),
+      key: "other",
+      name: "other",
+    });
+    child.parent = category.key;
+    plan(
+      validateLayout(layout),
+      server.snapshot,
+      server.ids,
+    ).operations.forEach(server.apply);
+    const parent = server.snapshot.channels.find(
+      (channel) => channel.id === server.ids.channels.category,
+    );
+    assert.ok(parent);
+    parent.overwrites.reverse();
+    const external = {
+      ...structuredClone(parent),
+      id: "ignored-child",
+      name: "External",
+      type: ChannelType.GuildText,
+      parent: parent.id,
+    };
+    server.snapshot.channels.push(external);
+    layout.ignore.channels.push(external.name);
+    const before = structuredClone(external.overwrites);
+    if (change === "rename") category.name = "renamed";
+    if (change === "topic") category.topic = "changed";
+    if (change === "reorder") layout.channels.reverse();
+    if (change === "delete") {
+      layout.channels = layout.channels.filter(
+        (channel) => channel !== category,
+      );
+      delete child.parent;
+    }
+    const result = plan(validateLayout(layout), server.snapshot, server.ids);
+    assert.equal(
+      result.ok,
+      true,
+      `${change}: ${JSON.stringify(result.errors)}`,
+    );
+    assert.ok(result.operations.length > 0, change);
+    assert.ok(
+      result.operations.every(
+        (operation) => operation.kind !== "protectOverwrites",
+      ),
+      change,
+    );
+    assert.ok(
+      result.operations.every(
+        (operation) => operation.kind !== "replaceOverwrites",
+      ),
+      change,
+    );
+    result.operations.forEach(server.apply);
+    assert.deepEqual(external.overwrites, before, change);
+  }
+});
+
+test("undeclared live Administrator blocks non-operator roles", () => {
+  const layout = fixture(),
+    server = model();
+  plan(layout, server.snapshot, server.ids).operations.forEach(server.apply);
+  const member = server.snapshot.roles.find(
+    (role) => role.id === server.ids.roles.member,
+  );
+  assert.ok(member);
+  member.permissions = (
+    BigInt(member.permissions) | flags.Administrator
+  ).toString();
+  const blocked = plan(layout, server.snapshot, server.ids);
+  assert.equal(blocked.ok, false);
+  assert.ok(
+    blocked.errors.some(
+      (error) => error.includes("member") && error.includes("Administrator"),
+    ),
+  );
+  layout.roles[2].permissions.Administrator = false;
+  const removal = plan(layout, server.snapshot, server.ids);
+  assert.equal(removal.ok, true, JSON.stringify(removal.errors));
+  removal.operations.forEach(server.apply);
+  assert.equal(BigInt(member.permissions) & flags.Administrator, 0n);
+  assert.equal(
+    canView(server.snapshot, server.ids.channels.lobby, member.id),
+    false,
+  );
+});
+
+test("operator capabilities must survive role permission removals", () => {
+  const layout = fixture(),
+    server = model();
+  server.snapshot.roles[0].permissions = (
+    flags.ManageRoles | flags.ManageChannels
+  ).toString();
+  server.snapshot.roles[1].permissions = flags.ViewChannel.toString();
+  layout.roles[1].permissions = { ViewChannel: true };
+  layout.roles[0].permissions = { ManageRoles: false, ManageChannels: false };
+  const blocked = plan(validateLayout(layout), server.snapshot, server.ids);
+  assert.equal(blocked.ok, false);
+  assert.ok(
+    blocked.errors.some(
+      (error) => error.includes("Operator") && error.includes("removals"),
+    ),
+  );
+  server.snapshot.roles[1].permissions = (
+    flags.ViewChannel |
+    flags.ManageRoles |
+    flags.ManageChannels
+  ).toString();
+  const retained = plan(layout, server.snapshot, server.ids);
+  assert.equal(retained.ok, true, JSON.stringify(retained.errors));
 });

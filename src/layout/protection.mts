@@ -111,7 +111,7 @@ export type ProtectionTarget = {
   overwrites: Overwrite[];
 };
 
-/** Selects affected channels and every child of a category this plan writes, including ignored children.
+/** Selects affected channels and children of categories with overwrite or type changes, including ignored children.
  * All live roles remain deny candidates across Administrator removal; operator/application roles retain ViewChannel.
  * New channels need declared role denies only: @everyone blocks other base grants without existing overwrites.
  * Unmanaged children matching any category state block the plan without receiving a write.
@@ -148,11 +148,26 @@ export function protectionTargets(
   const desiredByKey = (key: string) =>
     layout.channels.find((channel) => channel.key === key);
   const categoryKeys = new Set(
-    [...changes.touched].filter(
-      (key) =>
-        desiredByKey(key)?.type === "category" ||
-        liveByKey(key)?.type === DiscordType.GuildCategory,
-    ),
+    layout.channels
+      .filter((channel) => {
+        const live = liveByKey(channel.key);
+        if (
+          channel.type !== "category" &&
+          live?.type !== DiscordType.GuildCategory
+        )
+          return false;
+        const final = changes.finalOverwrites.get(channel.key);
+        return (
+          changes.recreated.has(channel.key) ||
+          Boolean(
+            live &&
+              final &&
+              JSON.stringify(normalizeOverwrites(live.overwrites)) !==
+                JSON.stringify(normalizeOverwrites(final)),
+          )
+        );
+      })
+      .map((channel) => channel.key),
   );
   const targets: ProtectionTarget[] = [];
   for (const [key, id] of Object.entries(ids.channels)) {
@@ -161,15 +176,14 @@ export function protectionTargets(
     const desired = desiredByKey(key);
     const writable =
       Boolean(desired) || !layout.ignore.channels.includes(live.name);
-    if (
-      !writable ||
-      !(
-        changes.roleBitsChanged ||
+    const isCategory =
+      live.type === DiscordType.GuildCategory || desired?.type === "category";
+    const affected = isCategory
+      ? categoryKeys.has(key)
+      : changes.roleBitsChanged ||
         changes.touched.has(key) ||
-        (desired?.parent && changes.touched.has(desired.parent))
-      ) ||
-      !privateChannel(snapshot, ids, desired, live)
-    )
+        (desired?.parent && categoryKeys.has(desired.parent));
+    if (!writable || !affected || !privateChannel(snapshot, ids, desired, live))
       continue;
     targets.push({
       key,
@@ -180,7 +194,6 @@ export function protectionTargets(
       roleIds,
       overwrites: [],
     });
-    if (live.type === DiscordType.GuildCategory) categoryKeys.add(key);
   }
   const parentKeys = new Map(
     [...categoryKeys].flatMap((key) =>
