@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["**/*.mts"],
+  "exclude": ["node_modules", "coverage"]
+}
