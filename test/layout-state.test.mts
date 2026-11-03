@@ -19,8 +19,11 @@ function child(source: string) {
   return result;
 }
 
-test("a second apply is refused across processes", async (context) => {
-  const { path } = sandbox(context);
+test("a second apply is refused across processes and symlinked paths", async (context) => {
+  const { path, directory } = sandbox(context);
+  const alias = join(directory, "alias");
+  fs.symlinkSync(directory, alias, "dir");
+  const aliasPath = join(alias, "state.json");
   await store.withStateLock(path, () => {
     const owner = JSON.parse(fs.readFileSync(`${path}.lock`, "utf8"));
     assert.equal(owner.pid, process.pid);
@@ -28,7 +31,7 @@ test("a second apply is refused across processes", async (context) => {
     const result = child(`
       import { withStateLock } from ${JSON.stringify(moduleUrl)};
       try {
-        await withStateLock(${JSON.stringify(path)}, () => process.exit(42));
+        await withStateLock(${JSON.stringify(aliasPath)}, () => process.exit(42));
       } catch (error) { console.log(error.status); }
     `);
     assert.equal(result.status, 0, result.stderr);
@@ -51,8 +54,7 @@ test("an interrupted write preserves the previous state and leaves a reported st
   assert.deepEqual(store.loadState(path), previous);
   await assert.rejects(
     store.withStateLock(path, () => assert.fail("acquired stale lock")),
-    (error: unknown) =>
-      error instanceof store.StateLockError && error.status === "stale",
+    { status: "stale" },
   );
   assert.equal(fs.existsSync(`${path}.lock`), true);
 });
@@ -75,25 +77,35 @@ test("state preserves tag identities and uncertain adoption records; saved plans
       parentKey: "officers",
     },
   ];
+  const plan = { operations: [] };
   const binding = {
     guildId: "guild",
     layoutHash: store.contentHash({ roles: [] }),
     stateHash: store.contentHash(state),
+    planHash: store.contentHash(plan),
   };
-  const planPath = join(directory, "plan.json");
+  const saved = join(directory, "plan.json");
   await store.withStateLock(path, (locked) => {
     locked.write(state);
+    const { uncertainCreates: _pending, ...bare } = state;
+    assert.throws(() => {
+      // @ts-expect-error Bare State has no recovery records.
+      locked.write(bare);
+    }, /Invalid uncertain creates/);
     assert.deepEqual(locked.read(), state);
-    locked.savePlan(planPath, binding, { operations: [] });
-    assert.throws(() => locked.savePlan(path, binding, {}), /overlaps/);
+    locked.savePlan(saved, binding, plan);
+    const alias = join(directory, "alias");
+    fs.symlinkSync(directory, alias, "dir");
+    const aliasState = join(alias, "state.json");
+    assert.throws(() => locked.savePlan(aliasState, binding, {}), /overlaps/);
+    const stale = { ...binding, stateHash: store.contentHash("old") };
+    assert.throws(() => locked.savePlan(saved, stale, plan), /stateHash/);
   });
-  assert.deepEqual(store.loadSavedPlan(planPath, binding).plan, {
-    operations: [],
-  });
+  assert.deepEqual(store.loadSavedPlan(saved, binding).plan, plan);
   for (const key of ["guildId", "layoutHash", "stateHash"] as const)
     assert.throws(
       () =>
-        store.loadSavedPlan(planPath, {
+        store.loadSavedPlan(saved, {
           ...binding,
           [key]: key === "guildId" ? "other" : store.contentHash("other"),
         }),
@@ -104,21 +116,21 @@ test("state preserves tag identities and uncertain adoption records; saved plans
     store.contentHash({ ...state, uncertainCreates: [] }),
   );
   assert.equal(fs.statSync(path).mode & 0o777, 0o600);
+  const edited = JSON.parse(fs.readFileSync(saved, "utf8"));
+  edited.plan = { operations: ["delete"] };
+  fs.writeFileSync(saved, JSON.stringify(edited));
+  assert.throws(() => store.loadSavedPlan(saved, binding), /planHash differs/);
 });
 
 test("state load rejects duplicate IDs, malformed and unsupported files; missing is distinct from empty", async (context) => {
   const { path } = sandbox(context);
   assert.throws(() => store.loadState(path), { code: "ENOENT" });
   const state = store.emptyState("guild");
-  for (const ids of [
-    { roles: { first: "same", second: "same" }, channels: {}, tags: {} },
-    { roles: {}, channels: { first: "same", second: "same" }, tags: {} },
-    {
-      roles: {},
-      channels: {},
-      tags: { forum: { first: "same", second: "same" } },
-    },
-  ]) {
+  for (const kind of ["roles", "channels", "tags"] as const) {
+    const ids = structuredClone(state.ids),
+      duplicate = { first: "same", second: "same" };
+    if (kind === "tags") ids.tags.forum = duplicate;
+    else ids[kind] = duplicate;
     fs.writeFileSync(path, JSON.stringify({ ...state, ids }));
     assert.throws(() => store.loadState(path), /Duplicate Discord ID/);
   }
@@ -133,10 +145,27 @@ test("state load rejects duplicate IDs, malformed and unsupported files; missing
   }
   await store.withStateLock(path, (locked) => locked.write(state));
   assert.deepEqual(store.loadState(path), state);
-  fs.writeFileSync(`${path}.lock`, "{");
+  for (const partial of ["", "{", '{"pid":1}']) {
+    fs.writeFileSync(`${path}.lock`, partial);
+    await assert.rejects(
+      store.withStateLock(path, () => assert.fail("acquired partial lock")),
+      { status: "active", initializing: true },
+    );
+  }
+});
+
+test("release preserves a replacement lock and the callback error", async (context) => {
+  const { path } = sandbox(context);
+  const failure = new Error("callback failed");
   await assert.rejects(
-    store.withStateLock(path, () => assert.fail("acquired malformed lock")),
-    (error: unknown) =>
-      error instanceof store.StateLockError && error.status === "unknown",
+    store.withStateLock(path, () => {
+      fs.writeFileSync(`${path}.lock`, '{"token":"replacement"}');
+      throw failure;
+    }),
+    (error: unknown) => {
+      const replacement = JSON.parse(fs.readFileSync(`${path}.lock`, "utf8"));
+      assert.equal(replacement.token, "replacement");
+      return error instanceof AggregateError && error.errors.includes(failure);
+    },
   );
 });

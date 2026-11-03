@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ChannelType, IdMap, State } from "./types.mts";
 import { channelTypes } from "./types.mts";
 
@@ -18,25 +18,31 @@ export type PlanBinding = {
   guildId: string;
   layoutHash: string;
   stateHash: string;
+  planHash: string;
 };
 export type SavedPlan = PlanBinding & { schemaVersion: 1; plan: unknown };
-export type LockOwner = { pid: number; startedAt: string };
+export type LockOwner = { pid: number; startedAt: string; token: string };
 
 export class StateLockError extends Error {
   readonly path: string;
   readonly status: "active" | "stale" | "unknown";
   readonly owner?: LockOwner;
+  readonly initializing: boolean;
 
   constructor(
     path: string,
     status: "active" | "stale" | "unknown",
     owner?: LockOwner,
+    initializing = false,
   ) {
-    super(`State lock ${status}: ${path}`);
+    super(
+      `State lock ${status}${initializing ? " (initializing)" : ""}: ${path}`,
+    );
     this.name = "StateLockError";
     this.path = path;
     this.status = status;
     this.owner = owner;
+    this.initializing = initializing;
   }
 }
 
@@ -103,9 +109,7 @@ export function parseState(value: unknown): LayoutState {
     ),
   };
   uniqueIds(ids);
-  // Version 1 predates recovery records; an omitted list means no pending create.
-  const pending =
-    entry.uncertainCreates === undefined ? [] : entry.uncertainCreates;
+  const pending = entry.uncertainCreates;
   if (!Array.isArray(pending)) throw new Error("Invalid uncertain creates");
   const uncertainCreates = pending.map(parseUncertain);
   const seen = new Set<string>();
@@ -185,17 +189,27 @@ function atomicWrite(path: string, value: unknown) {
 
 function lockConflict(path: string): StateLockError {
   let owner: LockOwner;
+  let raw: string;
   try {
-    const entry = record(JSON.parse(fs.readFileSync(path, "utf8")));
+    raw = fs.readFileSync(path, "utf8");
+  } catch {
+    return new StateLockError(path, "unknown");
+  }
+  try {
+    const entry = record(JSON.parse(raw));
     if (
       !Number.isSafeInteger(entry.pid) ||
       (entry.pid as number) <= 0 ||
       !Number.isFinite(Date.parse(text(entry.startedAt)))
     )
       throw new Error("Invalid lock owner");
-    owner = { pid: entry.pid as number, startedAt: entry.startedAt as string };
+    owner = {
+      pid: entry.pid as number,
+      startedAt: entry.startedAt as string,
+      token: text(entry.token),
+    };
   } catch {
-    return new StateLockError(path, "unknown");
+    return new StateLockError(path, "active", undefined, true);
   }
   try {
     process.kill(owner.pid, 0);
@@ -210,9 +224,21 @@ function lockConflict(path: string): StateLockError {
   }
 }
 
+function canonicalPath(path: string): string {
+  const absolute = resolve(path);
+  return join(fs.realpathSync(dirname(absolute)), basename(absolute));
+}
+
+function releaseLock(path: string, token: string) {
+  const current = record(JSON.parse(fs.readFileSync(path, "utf8")));
+  if (current.token !== token)
+    throw new Error(`State lock ownership changed: ${path}`);
+  fs.unlinkSync(path);
+}
+
 export type LockedState = {
   read(): LayoutState;
-  write(state: LayoutState | State): void;
+  write(state: LayoutState): void;
   savePlan(path: string, binding: PlanBinding, plan: unknown): void;
 };
 
@@ -220,12 +246,20 @@ export async function withStateLock<Result>(
   path: string,
   action: (state: LockedState) => Result | Promise<Result>,
 ): Promise<Result> {
-  path = resolve(path);
   fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  path = canonicalPath(path);
   const lockPath = `${path}.lock`;
-  let descriptor: number;
+  const owner: LockOwner = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    token: randomUUID(),
+  };
   try {
-    descriptor = fs.openSync(lockPath, "wx", 0o600);
+    fs.writeFileSync(lockPath, JSON.stringify(owner), {
+      flag: "wx",
+      mode: 0o600,
+      flush: true,
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     throw lockConflict(lockPath);
@@ -234,13 +268,9 @@ export async function withStateLock<Result>(
   const requireLock = () => {
     if (!active) throw new Error("State lock released");
   };
+  let outcome: { ok: true; value: Result } | { ok: false; error: unknown };
   try {
-    fs.writeFileSync(
-      descriptor,
-      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
-    );
-    fs.fsyncSync(descriptor);
-    return await action({
+    const value = await action({
       read: () => {
         requireLock();
         return loadState(path);
@@ -251,28 +281,53 @@ export async function withStateLock<Result>(
       },
       savePlan: (planPath, binding, plan) => {
         requireLock();
-        planPath = resolve(planPath);
+        planPath = canonicalPath(planPath);
         if (planPath === path || planPath === lockPath)
           throw new Error("Plan path overlaps state or lock");
         validateBinding(binding);
         if (plan === undefined || plan === null)
           throw new Error("Missing saved plan");
-        atomicWrite(planPath, { schemaVersion: 1, ...binding, plan });
+        const current = loadState(path);
+        const stateHash = contentHash(current);
+        const planHash = contentHash(plan);
+        if (current.guildId !== binding.guildId)
+          throw new Error("Saved plan guildId differs");
+        if (stateHash !== binding.stateHash)
+          throw new Error("Saved plan stateHash differs");
+        if (planHash !== binding.planHash)
+          throw new Error("Saved plan planHash differs");
+        atomicWrite(planPath, {
+          schemaVersion: 1,
+          ...binding,
+          stateHash,
+          planHash,
+          plan,
+        });
       },
     });
-  } finally {
-    active = false;
-    try {
-      fs.closeSync(descriptor);
-    } finally {
-      fs.unlinkSync(lockPath);
-    }
+    outcome = { ok: true, value };
+  } catch (error) {
+    outcome = { ok: false, error };
   }
+  active = false;
+  try {
+    releaseLock(lockPath, owner.token);
+  } catch (releaseError) {
+    if (!outcome.ok)
+      throw new AggregateError(
+        [outcome.error, releaseError],
+        "State callback and lock release failed",
+        { cause: outcome.error },
+      );
+    throw releaseError;
+  }
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
 }
 
 function validateBinding(binding: PlanBinding) {
   text(binding.guildId);
-  for (const hash of [binding.layoutHash, binding.stateHash])
+  for (const hash of [binding.layoutHash, binding.stateHash, binding.planHash])
     if (typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash))
       throw new Error("Invalid plan hash");
 }
@@ -281,10 +336,12 @@ export function loadSavedPlan(path: string, expected: PlanBinding): SavedPlan {
   validateBinding(expected);
   const entry = record(JSON.parse(fs.readFileSync(path, "utf8")));
   if (entry.schemaVersion !== 1) throw new Error("Unsupported plan version");
-  for (const key of ["guildId", "layoutHash", "stateHash"] as const)
+  for (const key of ["guildId", "layoutHash", "stateHash", "planHash"] as const)
     if (entry[key] !== expected[key])
       throw new Error(`Saved plan ${key} differs`);
   if (!("plan" in entry) || entry.plan === null)
     throw new Error("Missing saved plan");
+  if (contentHash(entry.plan) !== expected.planHash)
+    throw new Error("Saved plan planHash differs");
   return { schemaVersion: 1, ...expected, plan: entry.plan };
 }
