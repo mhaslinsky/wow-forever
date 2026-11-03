@@ -1,13 +1,49 @@
-import { ChannelType as DiscordType, PermissionFlagsBits } from "discord.js";
+import { equal, ok } from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import {
+  ChannelType as DiscordType,
+  PermissionFlagsBits as flags,
+} from "discord.js";
 import type {
+  CompiledOverwrite,
   IdMap,
+  Layout,
+  LiveChannel,
   Operation,
   Overwrite,
   Snapshot,
+  Tag,
 } from "../src/layout/index.mts";
-
+import { parseLayout, plan } from "../src/layout/index.mts";
 import { discordTypes } from "../src/layout/inventory.mts";
 
+export const fixture = () =>
+  parseLayout(
+    readFileSync(new URL("./fixtures/layout.yaml", import.meta.url), "utf8"),
+  );
+export const access = (view = false, connect = false) => ({
+  view,
+  send: view,
+  connect,
+  manageThreads: view,
+});
+export const overwrite = (
+  id = "guild",
+  allow = "0",
+  deny = "0",
+  type: Overwrite["type"] = "role",
+): Overwrite => ({ id, type, allow, deny });
+export function category(layout: Layout, key = "category") {
+  const channel = {
+    ...structuredClone(layout.channels[0]),
+    key,
+    name: key,
+    type: "category" as const,
+    tags: [],
+  };
+  channel.access.operator.connect = true;
+  return channel;
+}
 export function model() {
   const ids: IdMap = {
     roles: { everyone: "guild", operator: "app-role" },
@@ -17,83 +53,67 @@ export function model() {
   const snapshot: Snapshot = {
     guildId: "guild",
     applicationId: "app",
-    roles: [
-      {
-        id: "guild",
-        name: "@everyone",
-        permissions: "0",
-        position: 0,
-        color: 0,
-        hoist: false,
-        mentionable: false,
-        managed: false,
-      },
-      {
-        id: "app-role",
-        name: "Operator",
-        permissions: "8",
-        position: 100,
-        color: 0,
-        hoist: false,
-        mentionable: false,
-        managed: true,
-        applicationId: "app",
-      },
-    ],
     channels: [],
+    roles: fixture()
+      .roles.slice(0, 2)
+      .map((role, index) => ({
+        ...role,
+        id: index ? "app-role" : "guild",
+        permissions: index ? "8" : "0",
+        position: index * 100,
+        managed: Boolean(index),
+        applicationId: index ? "app" : undefined,
+      })),
   };
   let serial = 0;
   const nextId = () => `synthetic-${++serial}`;
-  const channelByKey = (key: string) =>
-    snapshot.channels.find((entry) => entry.id === ids.channels[key]);
-  const compiled = (
-    entries: {
-      roleKey: string;
-      allow: string;
-      deny: string;
-      type: "role" | "member";
-    }[],
-  ) =>
-    entries.map((entry) => ({
-      type: entry.type,
-      allow: entry.allow,
-      deny: entry.deny,
-      id: ids.roles[entry.roleKey],
+  const find = <Entry extends { id: string }>(entries: Entry[], id: string) => {
+    const entry = entries.find((entry) => entry.id === id);
+    ok(entry, `Missing ID ${id}`);
+    return entry;
+  };
+  const live = (key = "lobby"): LiveChannel =>
+    find(snapshot.channels, ids.channels[key]);
+  const compiled = (entries: CompiledOverwrite[]) =>
+    entries.map(({ roleKey, ...entry }) => ({
+      ...entry,
+      id: ids.roles[roleKey],
     }));
+  const signature = (entries: Overwrite[]) =>
+    entries
+      .flatMap(({ type, id, allow, deny }) =>
+        type === "role" &&
+        id === snapshot.guildId &&
+        (BigInt(allow) | BigInt(deny)) === 0n
+          ? []
+          : [`${type}:${id}:${BigInt(allow)}:${BigInt(deny)}`],
+      )
+      .sort()
+      .join("|");
   const replace = (key: string, overwrites: Overwrite[]) => {
-    const channel = channelByKey(key);
-    if (!channel) throw new Error(`Missing channel ${key}`);
-    const signature = (entries: Overwrite[]) =>
-      entries
-        .filter(
-          (entry) =>
-            !(
-              entry.type === "role" &&
-              entry.id === snapshot.guildId &&
-              BigInt(entry.allow) === 0n &&
-              BigInt(entry.deny) === 0n
-            ),
-        )
-        .map(
-          (entry) =>
-            `${entry.type}:${entry.id}:${BigInt(entry.allow)}:${BigInt(entry.deny)}`,
-        )
-        .sort()
-        .join("|");
+    const channel = live(key);
     if (channel.type === DiscordType.GuildCategory)
-      for (const child of snapshot.channels) {
+      for (const child of snapshot.channels)
         if (
           child.parent === channel.id &&
           signature(child.overwrites) === signature(channel.overwrites)
         )
           child.overwrites = structuredClone(overwrites);
-      }
     channel.overwrites = structuredClone(overwrites);
   };
+  const tags = (key: string, values: (Tag & { id?: string })[]) => {
+    ids.tags[key] = {};
+    live(key).tags = values.map(({ key: tagKey, ...tag }) => {
+      const id = tag.id ?? nextId();
+      ids.tags[key][tagKey] = id;
+      return { ...tag, id };
+    });
+  };
   const apply = (operation: Operation) => {
-    if (operation.kind === "createRole" || operation.kind === "updateRole") {
+    const { kind } = operation;
+    if (kind === "createRole" || kind === "updateRole") {
       const { role } = operation;
-      if (operation.kind === "createRole") {
+      if (kind === "createRole") {
         for (const entry of snapshot.roles)
           if (entry.id !== "guild") entry.position++;
         ids.roles[role.key] = nextId();
@@ -105,129 +125,100 @@ export function model() {
           managed: false,
         });
       }
-      const live = snapshot.roles.find(
-        (entry) => entry.id === ids.roles[role.key],
-      );
-      if (!live) throw new Error("Missing role");
+      const target = find(snapshot.roles, ids.roles[role.key]);
       let allow = 0n,
         managed = 0n;
       for (const [name, enabled] of Object.entries(role.permissions)) {
-        const bit =
-          PermissionFlagsBits[name as keyof typeof PermissionFlagsBits];
+        const bit = flags[name as keyof typeof flags];
         managed |= bit;
         if (enabled) allow |= bit;
       }
-      Object.assign(live, {
-        name: role.name,
-        color: role.color,
-        hoist: role.hoist,
-        mentionable: role.mentionable,
-        permissions: ((BigInt(live.permissions) & ~managed) | allow).toString(),
+      Object.assign(target, role, {
+        permissions: (
+          (BigInt(target.permissions) & ~managed) |
+          allow
+        ).toString(),
       });
-    } else if (
-      operation.kind === "createCategory" ||
-      operation.kind === "createChannel"
-    ) {
+    } else if (kind === "createCategory" || kind === "createChannel") {
       const { channel } = operation;
       ids.channels[channel.key] = nextId();
       snapshot.channels.push({
+        ...channel,
         id: ids.channels[channel.key],
-        name: channel.name,
         type: discordTypes[channel.type],
-        topic: channel.topic,
         parent: channel.parent ? ids.channels[channel.parent] : null,
         position: snapshot.channels.length,
         tags: [],
         overwrites: compiled(operation.overwrites),
       });
-      if (channel.tags.length)
-        apply({
-          kind: "setForumTags",
-          channelKey: channel.key,
-          tags: channel.tags,
-          destructive: false,
-        });
-    } else if (operation.kind === "updateChannel") {
-      const live = channelByKey(operation.channel.key);
-      if (!live) throw new Error("Missing channel");
-      const parentId = operation.channel.parent
-        ? ids.channels[operation.channel.parent]
-        : null;
-      if (live.parent !== parentId)
-        live.position =
+      tags(channel.key, channel.tags);
+    } else if (kind === "updateChannel") {
+      const target = live(operation.channel.key),
+        { name, topic, parent } = operation.channel;
+      const parentId = parent ? ids.channels[parent] : null;
+      if (target.parent !== parentId)
+        target.position =
           Math.max(
             -1,
             ...snapshot.channels
               .filter((entry) => entry.parent === parentId)
               .map((entry) => entry.position),
           ) + 1;
-      Object.assign(live, {
-        name: operation.channel.name,
-        topic: operation.channel.topic,
-        parent: operation.channel.parent
-          ? ids.channels[operation.channel.parent]
-          : null,
-      });
-    } else if (operation.kind === "protectOverwrites")
+      Object.assign(target, { name, topic, parent: parentId });
+    } else if (kind === "protectOverwrites")
       replace(operation.channelKey, operation.overwrites);
-    else if (operation.kind === "replaceOverwrites")
+    else if (kind === "replaceOverwrites")
       replace(
         operation.channelKey,
         operation.overwrites.flatMap((entry) =>
           entry.kind === "preserved" ? [entry.overwrite] : compiled([entry]),
         ),
       );
-    else if (operation.kind === "setForumTags") {
-      ids.tags[operation.channelKey] = {};
-      const live = channelByKey(operation.channelKey);
-      if (!live) throw new Error("Missing forum");
-      live.tags = operation.tags.map(({ key, ...tag }) => {
-        const id = tag.id ?? nextId();
-        ids.tags[operation.channelKey][key] = id;
-        return { ...tag, id };
-      });
-    } else if (
-      operation.kind === "reorderChannels" ||
-      operation.kind === "reorderRoles"
-    ) {
+    else if (kind === "setForumTags")
+      tags(operation.channelKey, operation.tags);
+    else if (kind === "reorderChannels" || kind === "reorderRoles") {
       const entries =
-        operation.kind === "reorderRoles"
-          ? operation.roleKeys.map((key) =>
-              snapshot.roles.find((entry) => entry.id === ids.roles[key]),
-            )
-          : operation.channelKeys.map(channelByKey);
+        kind === "reorderChannels"
+          ? operation.channelKeys.map(live)
+          : operation.roleKeys.map((key) =>
+              find(snapshot.roles, ids.roles[key]),
+            );
       const positions = entries
-        .map((entry) => {
-          if (!entry) throw new Error("Missing reorder target");
-          return entry.position;
-        })
+        .map((entry) => entry.position)
         .sort((left, right) => left - right);
       entries.forEach((entry, index) => {
-        if (entry) entry.position = positions[index];
+        entry.position = positions[index];
       });
-    } else if (operation.kind === "removeOverwrite") {
-      const live = channelByKey(operation.channelKey);
-      if (live)
-        live.overwrites = live.overwrites.filter(
-          (entry) => entry.id !== operation.id,
-        );
-    } else if ("id" in operation) {
-      if (operation.kind === "deleteRole")
-        snapshot.roles = snapshot.roles.filter(
-          (entry) => entry.id !== operation.id,
-        );
-      else {
-        for (const child of snapshot.channels)
-          if (child.parent === operation.id) child.parent = null;
-        snapshot.channels = snapshot.channels.filter(
-          (entry) => entry.id !== operation.id,
-        );
-      }
-    }
+    } else if (kind === "removeOverwrite") {
+      const channel = live(operation.channelKey);
+      channel.overwrites = channel.overwrites.filter(
+        (entry) => entry.id !== operation.id,
+      );
+    } else if (kind === "deleteRole")
+      snapshot.roles = snapshot.roles.filter(
+        (entry) => entry.id !== operation.id,
+      );
+    else if (kind === "deleteChannel" || kind === "deleteCategory") {
+      for (const child of snapshot.channels)
+        if (child.parent === operation.id) child.parent = null;
+      snapshot.channels = snapshot.channels.filter(
+        (entry) => entry.id !== operation.id,
+      );
+    } else throw new Error("Unsupported model operation");
   };
-  return { snapshot, ids, apply };
+  const run = (layout: Layout) => {
+    const planned = plan(layout, snapshot, ids);
+    equal(planned.ok, true, JSON.stringify(planned));
+    planned.operations.forEach(apply);
+    return planned;
+  };
+  return { snapshot, ids, apply, live, run };
 }
-
+export function applied(layout = fixture()) {
+  const server = model();
+  server.run(layout);
+  return { ...server, layout, run: () => server.run(layout) };
+}
 export function canView(
   snapshot: Snapshot,
   channelId: string,
@@ -238,12 +229,12 @@ export function canView(
   let bits = snapshot.roles
     .filter((role) => role.id === snapshot.guildId || role.id === roleId)
     .reduce((bits, role) => bits | BigInt(role.permissions), 0n);
-  if (bits & PermissionFlagsBits.Administrator) return true;
+  if (bits & flags.Administrator) return true;
   for (const id of [snapshot.guildId, roleId]) {
     const entry = channel.overwrites.find(
       (entry) => entry.type === "role" && entry.id === id,
     );
     if (entry) bits = (bits & ~BigInt(entry.deny)) | BigInt(entry.allow);
   }
-  return Boolean(bits & PermissionFlagsBits.ViewChannel);
+  return Boolean(bits & flags.ViewChannel);
 }
