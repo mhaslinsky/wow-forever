@@ -1,16 +1,7 @@
 roles:
-  - key: everyone
-    name: '@everyone'
-    kind: everyone
-    permissions: {}
-  - key: operator
-    name: Operator
-    kind: operator
-    permissions: {Administrator: true}
-  - key: member
-    name: Member
-    kind: managed
-    permissions: {ViewChannel: true}
+  - {key: everyone, name: '@everyone', kind: everyone, permissions: {}}
+  - {key: operator, name: Operator, kind: operator, permissions: {Administrator: true}}
+  - {key: member, name: Member, kind: managed, permissions: {ViewChannel: true}}
 channels:
   - key: lobby
     name: lobby
@@ -19,7 +10,5 @@ channels:
       everyone: {view: false, send: false, connect: false, manageThreads: false}
       operator: {view: true, send: true, connect: false, manageThreads: true}
       member: {view: true, send: true, connect: false, manageThreads: false}
-    tags:
-      - key: new
-        name: New
+    tags: [{key: new, name: New}]
 ignore: {roles: [], channels: [], overwrites: []}
