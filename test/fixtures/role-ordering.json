@@ -1,0 +1,1378 @@
+[
+  {
+    "source": "per345-fixture-001-baseline.json",
+    "capturedAt": "2026-11-03T20:50:10.974Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-002-create-older.json",
+    "capturedAt": "2026-11-03T20:50:11.318Z",
+    "request": {
+      "method": "POST",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": {
+        "name": "probe-per345-older",
+        "permissions": "0",
+        "mentionable": false,
+        "hoist": false
+      }
+    },
+    "status": 200,
+    "response": {
+      "id": "1567279750127554580",
+      "name": "probe-per345-older",
+      "position": 1,
+      "managed": false
+    }
+  },
+  {
+    "source": "per345-fixture-003-after-create-older.json",
+    "capturedAt": "2026-11-03T20:50:11.420Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-004-create-newer.json",
+    "capturedAt": "2026-11-03T20:50:11.613Z",
+    "request": {
+      "method": "POST",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": {
+        "name": "probe-per345-newer",
+        "permissions": "0",
+        "mentionable": false,
+        "hoist": false
+      }
+    },
+    "status": 200,
+    "response": {
+      "id": "1567279752006336672",
+      "name": "probe-per345-newer",
+      "position": 1,
+      "managed": false
+    }
+  },
+  {
+    "source": "per345-fixture-005-after-create-newer.json",
+    "capturedAt": "2026-11-03T20:50:11.927Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-006-distinct-below.json",
+    "capturedAt": "2026-11-03T20:50:20.162Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567279750127554580",
+          "position": 0
+        },
+        {
+          "id": "1567279752006336672",
+          "position": 1
+        }
+      ]
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-007-after-distinct-below.json",
+    "capturedAt": "2026-11-03T20:50:20.267Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-008-distinct-positive-below.json",
+    "capturedAt": "2026-11-03T20:50:31.417Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567279750127554580",
+          "position": 1
+        },
+        {
+          "id": "1567279752006336672",
+          "position": 2
+        }
+      ]
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 2,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-009-after-distinct-positive-below.json",
+    "capturedAt": "2026-11-03T20:50:31.510Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 2,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-010-tie.json",
+    "capturedAt": "2026-11-03T20:50:39.739Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567279750127554580",
+          "position": 1
+        },
+        {
+          "id": "1567279752006336672",
+          "position": 1
+        }
+      ]
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-011-after-tie.json",
+    "capturedAt": "2026-11-03T20:50:39.879Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-012-at-operator.json",
+    "capturedAt": "2026-11-03T20:50:49.730Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567279750127554580",
+          "position": 4
+        }
+      ]
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 3,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-013-after-at-operator.json",
+    "capturedAt": "2026-11-03T20:50:49.872Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 3,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-014-above-operator.json",
+    "capturedAt": "2026-11-03T20:50:58.212Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567279752006336672",
+          "position": 5
+        }
+      ]
+    },
+    "status": 400,
+    "response": {
+      "message": "Missing Permissions",
+      "code": 50013
+    }
+  },
+  {
+    "source": "per345-fixture-015-after-above-operator.json",
+    "capturedAt": "2026-11-03T20:50:58.358Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 3,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-016-tie-reversed.json",
+    "capturedAt": "2026-11-03T20:51:28.210Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567279752006336672",
+          "position": 1
+        },
+        {
+          "id": "1567279750127554580",
+          "position": 1
+        }
+      ]
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-017-after-tie-reversed.json",
+    "capturedAt": "2026-11-03T20:51:28.322Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-018-before-cleanup.json",
+    "capturedAt": "2026-11-03T20:51:47.738Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567279750127554580",
+        "name": "probe-per345-older",
+        "position": 2,
+        "managed": false
+      },
+      {
+        "id": "1567279752006336672",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-019-delete-probe-per345-newer.json",
+    "capturedAt": "2026-11-03T20:51:47.918Z",
+    "request": {
+      "method": "DELETE",
+      "path": "/guilds/1567069173232701491/roles/1567279752006336672"
+    },
+    "status": 204,
+    "response": null
+  },
+  {
+    "source": "per345-fixture-020-delete-probe-per345-older.json",
+    "capturedAt": "2026-11-03T20:51:48.158Z",
+    "request": {
+      "method": "DELETE",
+      "path": "/guilds/1567069173232701491/roles/1567279750127554580"
+    },
+    "status": 204,
+    "response": null
+  },
+  {
+    "source": "per345-fixture-021-after-cleanup.json",
+    "capturedAt": "2026-11-03T20:51:48.252Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 3,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-022-empty-reorder.json",
+    "capturedAt": "2026-11-03T20:52:07.245Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": []
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-023-after-empty-reorder.json",
+    "capturedAt": "2026-11-03T20:52:07.364Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-024-replay-baseline.json",
+    "capturedAt": "2026-11-03T20:52:37.030Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-025-replay-create-older.json",
+    "capturedAt": "2026-11-03T20:52:37.239Z",
+    "request": {
+      "method": "POST",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": {
+        "name": "probe-per345-older",
+        "permissions": "0",
+        "mentionable": false,
+        "hoist": false
+      }
+    },
+    "status": 200,
+    "response": {
+      "id": "1567280362705653820",
+      "name": "probe-per345-older",
+      "position": 1,
+      "managed": false
+    }
+  },
+  {
+    "source": "per345-fixture-026-replay-after-create-older.json",
+    "capturedAt": "2026-11-03T20:52:37.341Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-027-replay-create-newer.json",
+    "capturedAt": "2026-11-03T20:52:37.514Z",
+    "request": {
+      "method": "POST",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": {
+        "name": "probe-per345-newer",
+        "permissions": "0",
+        "mentionable": false,
+        "hoist": false
+      }
+    },
+    "status": 200,
+    "response": {
+      "id": "1567280363947036802",
+      "name": "probe-per345-newer",
+      "position": 1,
+      "managed": false
+    }
+  },
+  {
+    "source": "per345-fixture-028-replay-after-create-newer.json",
+    "capturedAt": "2026-11-03T20:52:37.667Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567280363947036802",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-029-replay-edit-tied-older.json",
+    "capturedAt": "2026-11-03T20:52:37.838Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles/1567280362705653820",
+      "body": {
+        "mentionable": true
+      }
+    },
+    "status": 200,
+    "response": {
+      "id": "1567280362705653820",
+      "name": "probe-per345-older",
+      "position": 1,
+      "managed": false
+    }
+  },
+  {
+    "source": "per345-fixture-030-replay-after-edit-tied-older.json",
+    "capturedAt": "2026-11-03T20:52:37.931Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567280363947036802",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-031-replay-edit-tied-newer.json",
+    "capturedAt": "2026-11-03T20:52:38.305Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles/1567280363947036802",
+      "body": {
+        "mentionable": true
+      }
+    },
+    "status": 200,
+    "response": {
+      "id": "1567280363947036802",
+      "name": "probe-per345-newer",
+      "position": 1,
+      "managed": false
+    }
+  },
+  {
+    "source": "per345-fixture-032-replay-after-edit-tied-newer.json",
+    "capturedAt": "2026-11-03T20:52:38.438Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567280363947036802",
+        "name": "probe-per345-newer",
+        "position": 1,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-033-replay-positive-targets-from-operator2.json",
+    "capturedAt": "2026-11-03T20:52:38.566Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": [
+        {
+          "id": "1567280362705653820",
+          "position": 1
+        },
+        {
+          "id": "1567280363947036802",
+          "position": 2
+        }
+      ]
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567280363947036802",
+        "name": "probe-per345-newer",
+        "position": 3,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-034-replay-after-positive-targets.json",
+    "capturedAt": "2026-11-03T20:52:38.703Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567280363947036802",
+        "name": "probe-per345-newer",
+        "position": 3,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-035-before-cleanup.json",
+    "capturedAt": "2026-11-03T20:52:38.800Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      },
+      {
+        "id": "1567280362705653820",
+        "name": "probe-per345-older",
+        "position": 1,
+        "managed": false
+      },
+      {
+        "id": "1567280363947036802",
+        "name": "probe-per345-newer",
+        "position": 3,
+        "managed": false
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-036-delete-probe-per345-newer.json",
+    "capturedAt": "2026-11-03T20:52:39.075Z",
+    "request": {
+      "method": "DELETE",
+      "path": "/guilds/1567069173232701491/roles/1567280363947036802"
+    },
+    "status": 204,
+    "response": null
+  },
+  {
+    "source": "per345-fixture-037-delete-probe-per345-older.json",
+    "capturedAt": "2026-11-03T20:52:39.407Z",
+    "request": {
+      "method": "DELETE",
+      "path": "/guilds/1567069173232701491/roles/1567280362705653820"
+    },
+    "status": 204,
+    "response": null
+  },
+  {
+    "source": "per345-fixture-038-after-cleanup.json",
+    "capturedAt": "2026-11-03T20:52:39.493Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 4,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-039-cleanup-empty-reorder.json",
+    "capturedAt": "2026-11-03T20:52:39.631Z",
+    "request": {
+      "method": "PATCH",
+      "path": "/guilds/1567069173232701491/roles",
+      "body": []
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  },
+  {
+    "source": "per345-fixture-040-after-cleanup-compaction.json",
+    "capturedAt": "2026-11-03T20:52:39.775Z",
+    "request": {
+      "method": "GET",
+      "path": "/guilds/1567069173232701491/roles"
+    },
+    "status": 200,
+    "response": [
+      {
+        "id": "1567069173232701491",
+        "name": "@everyone",
+        "position": 0,
+        "managed": false
+      },
+      {
+        "id": "1567254870745022506",
+        "name": "Forever Guild Bot",
+        "position": 1,
+        "managed": true,
+        "applicationId": "1567070440717815842"
+      },
+      {
+        "id": "1567255038743547914",
+        "name": "Forever Guild Operator",
+        "position": 2,
+        "managed": true,
+        "applicationId": "1567071931553947688"
+      }
+    ]
+  }
+]

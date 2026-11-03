@@ -9,6 +9,7 @@ import type {
   IdMap,
   Layout,
   LiveChannel,
+  LiveRole,
   Operation,
   Overwrite,
   Snapshot,
@@ -16,6 +17,7 @@ import type {
 } from "../src/layout/index.mts";
 import { parseLayout, plan } from "../src/layout/index.mts";
 import { discordTypes } from "../src/layout/inventory.mts";
+import { roleOrder } from "../src/layout/ordering.mts";
 
 export const fixture = () =>
   parseLayout(
@@ -109,13 +111,43 @@ export function model() {
       return { ...tag, id };
     });
   };
+  const rolePosition = (left: LiveRole, right: LiveRole) => {
+    if (left.position !== right.position) return left.position - right.position;
+    const numeric = /^\d+$/.test(left.id) && /^\d+$/.test(right.id);
+    const first = numeric ? BigInt(left.id) : left.id;
+    const second = numeric ? BigInt(right.id) : right.id;
+    return first < second ? 1 : first > second ? -1 : 0;
+  };
+  const reorderRoles = (body: { id: string; position: number }[]) => {
+    const operator = snapshot.roles.find(
+      (role) => role.applicationId === snapshot.applicationId,
+    );
+    ok(operator);
+    const targets = body.map((entry) => ({
+      role: find(snapshot.roles, entry.id),
+      position: entry.position,
+    }));
+    if (
+      targets.some(
+        ({ role, position }) =>
+          position > operator.position || rolePosition(role, operator) >= 0,
+      )
+    )
+      throw Object.assign(new Error("Missing Permissions"), { code: 50013 });
+    for (const { role, position } of targets)
+      role.position = Math.max(1, position);
+    snapshot.roles
+      .filter((role) => role.id !== snapshot.guildId)
+      .sort(rolePosition)
+      .forEach((role, index) => {
+        role.position = index + 1;
+      });
+  };
   const apply = (operation: Operation) => {
     const { kind } = operation;
     if (kind === "createRole" || kind === "updateRole") {
       const { role } = operation;
       if (kind === "createRole") {
-        for (const entry of snapshot.roles)
-          if (entry.id !== "guild") entry.position++;
         ids.roles[role.key] = nextId();
         snapshot.roles.push({
           ...role,
@@ -176,24 +208,24 @@ export function model() {
       );
     else if (kind === "setForumTags")
       tags(operation.channelKey, operation.tags);
-    else if (kind === "reorderChannels" || kind === "reorderRoles") {
-      const entries =
-        kind === "reorderChannels"
-          ? operation.channelKeys.map(live)
-          : operation.roleKeys.map((key) =>
-              find(snapshot.roles, ids.roles[key]),
-            );
+    else if (kind === "reorderRoles") {
+      const targets = operation.roleKeys.map((key) => ids.roles[key]);
+      const operator = snapshot.roles.find(
+        (role) => role.applicationId === snapshot.applicationId,
+      );
+      ok(operator);
+      if (roleOrder(targets, snapshot).length >= operator.position)
+        reorderRoles([]);
+      reorderRoles(roleOrder(targets, snapshot));
+    } else if (kind === "reorderChannels") {
+      const entries = operation.channelKeys.map(live);
       const positions = entries
         .map((entry) => entry.position)
         .sort((left, right) => left - right);
       if (new Set(positions).size !== positions.length) {
-        const siblings =
-          kind === "reorderRoles"
-            ? snapshot.roles
-            : snapshot.channels.filter(
-                (entry) =>
-                  entry.parent === live(operation.channelKeys[0]).parent,
-              );
+        const siblings = snapshot.channels.filter(
+          (entry) => entry.parent === live(operation.channelKeys[0]).parent,
+        );
         const occupied = new Set(
           siblings
             .filter((entry) => !entries.some((target) => target === entry))
@@ -228,7 +260,7 @@ export function model() {
     planned.operations.forEach(apply);
     return planned;
   };
-  return { snapshot, ids, apply, live, run };
+  return { snapshot, ids, apply, live, run, reorderRoles };
 }
 export function applied(layout = fixture()) {
   const server = model();

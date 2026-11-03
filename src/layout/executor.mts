@@ -5,7 +5,6 @@ import {
   pendingCandidates,
 } from "./execute-operation.mts";
 import { adoptionCandidates } from "./inventory.mts";
-import { comparePosition } from "./ordering.mts";
 import { plan } from "./plan.mts";
 import { readback } from "./readback.mts";
 import type { LayoutState, LockedState } from "./state.mts";
@@ -37,7 +36,6 @@ export function planBinding(
   };
 }
 export function preflight(
-  layout: Layout,
   snapshot: Snapshot,
   state: LayoutState,
   target: Target,
@@ -60,17 +58,6 @@ export function preflight(
       (flags.ManageRoles | flags.ManageChannels)
   )
     throw new Error("Operator lacks ManageRoles or ManageChannels");
-  for (const role of layout.roles) {
-    const live = snapshot.roles.find(
-      (entry) => entry.id === state.ids.roles[role.key],
-    );
-    if (
-      role.kind === "managed" &&
-      live &&
-      (live.managed || comparePosition(live, operator, "role") >= 0)
-    )
-      throw new Error(`Uneditable role: ${role.key}`);
-  }
 }
 
 export function adopt(
@@ -141,7 +128,7 @@ export async function applyLocked(
   try {
     state = locked.read();
     const snapshot = await fetchSnapshot(options.port, options);
-    preflight(options.layout, snapshot, state, options);
+    preflight(snapshot, state, options);
     const fresh = inspectPlan(options.layout, snapshot, state);
     loadSavedPlan(options.planPath, planBinding(options.layout, state, fresh));
     if (!fresh.ok)
