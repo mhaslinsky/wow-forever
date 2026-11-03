@@ -1,11 +1,11 @@
-import { ChannelType as DiscordType } from "discord.js";
+import { ChannelType as DiscordType, PermissionFlagsBits } from "discord.js";
 import type {
   IdMap,
   Operation,
   Overwrite,
   Snapshot,
 } from "../src/layout/index.mts";
-import { normalizeOverwrites, rolePermissions } from "../src/layout/index.mts";
+
 import { discordTypes } from "../src/layout/inventory.mts";
 
 export function model() {
@@ -63,30 +63,28 @@ export function model() {
   const replace = (key: string, overwrites: Overwrite[]) => {
     const channel = channelByKey(key);
     if (!channel) throw new Error(`Missing channel ${key}`);
+    const signature = (entries: Overwrite[]) =>
+      entries
+        .filter(
+          (entry) =>
+            !(
+              entry.type === "role" &&
+              entry.id === snapshot.guildId &&
+              BigInt(entry.allow) === 0n &&
+              BigInt(entry.deny) === 0n
+            ),
+        )
+        .map(
+          (entry) =>
+            `${entry.type}:${entry.id}:${BigInt(entry.allow)}:${BigInt(entry.deny)}`,
+        )
+        .sort()
+        .join("|");
     if (channel.type === DiscordType.GuildCategory)
       for (const child of snapshot.channels) {
         if (
           child.parent === channel.id &&
-          JSON.stringify(
-            normalizeOverwrites(child.overwrites).filter(
-              (entry) =>
-                !(
-                  entry.id === snapshot.guildId &&
-                  entry.allow === "0" &&
-                  entry.deny === "0"
-                ),
-            ),
-          ) ===
-            JSON.stringify(
-              normalizeOverwrites(channel.overwrites).filter(
-                (entry) =>
-                  !(
-                    entry.id === snapshot.guildId &&
-                    entry.allow === "0" &&
-                    entry.deny === "0"
-                  ),
-              ),
-            )
+          signature(child.overwrites) === signature(channel.overwrites)
         )
           child.overwrites = structuredClone(overwrites);
       }
@@ -111,7 +109,14 @@ export function model() {
         (entry) => entry.id === ids.roles[role.key],
       );
       if (!live) throw new Error("Missing role");
-      const { allow, managed } = rolePermissions(role);
+      let allow = 0n,
+        managed = 0n;
+      for (const [name, enabled] of Object.entries(role.permissions)) {
+        const bit =
+          PermissionFlagsBits[name as keyof typeof PermissionFlagsBits];
+        managed |= bit;
+        if (enabled) allow |= bit;
+      }
       Object.assign(live, {
         name: role.name,
         color: role.color,
@@ -145,6 +150,17 @@ export function model() {
     } else if (operation.kind === "updateChannel") {
       const live = channelByKey(operation.channel.key);
       if (!live) throw new Error("Missing channel");
+      const parentId = operation.channel.parent
+        ? ids.channels[operation.channel.parent]
+        : null;
+      if (live.parent !== parentId)
+        live.position =
+          Math.max(
+            -1,
+            ...snapshot.channels
+              .filter((entry) => entry.parent === parentId)
+              .map((entry) => entry.position),
+          ) + 1;
       Object.assign(live, {
         name: operation.channel.name,
         topic: operation.channel.topic,
@@ -200,10 +216,13 @@ export function model() {
         snapshot.roles = snapshot.roles.filter(
           (entry) => entry.id !== operation.id,
         );
-      else
+      else {
+        for (const child of snapshot.channels)
+          if (child.parent === operation.id) child.parent = null;
         snapshot.channels = snapshot.channels.filter(
           (entry) => entry.id !== operation.id,
         );
+      }
     }
   };
   return { snapshot, ids, apply };

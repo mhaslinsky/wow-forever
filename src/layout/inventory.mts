@@ -33,6 +33,10 @@ export function adoptionCandidates(
   idMap: IdMap,
 ): IdMap {
   const ids = bindings(layout, snapshot, idMap);
+  for (const kind of ["roles", "channels"] as const)
+    for (const [key, id] of Object.entries(ids[kind]))
+      if (!snapshot[kind].some((entry) => entry.id === id))
+        delete ids[kind][key];
   const bind = (
     target: Record<string, string>,
     key: string,
@@ -56,7 +60,12 @@ export function adoptionCandidates(
     ...layout.channels.filter((entry) => entry.type === "category"),
     ...layout.channels.filter((entry) => entry.type !== "category"),
   ]) {
-    if (channel.parent && !ids.channels[channel.parent]) continue;
+    if (
+      !ids.channels[channel.key] &&
+      channel.parent &&
+      !ids.channels[channel.parent]
+    )
+      continue;
     bind(
       ids.channels,
       channel.key,
@@ -73,6 +82,8 @@ export function adoptionCandidates(
     );
     ids.tags[channel.key] ??= {};
     const tags = ids.tags[channel.key];
+    for (const [key, id] of Object.entries(tags))
+      if (!live?.tags.some((tag) => tag.id === id)) delete tags[key];
     for (const tag of channel.tags)
       bind(
         tags,
@@ -117,9 +128,9 @@ export function untracked(
     for (const overwrite of channel.overwrites) {
       const role = snapshot.roles.find((entry) => entry.id === overwrite.id);
       if (
-        overwrite.type === "member" ||
-        (!Object.values(ids.roles).includes(overwrite.id) &&
-          !layout.ignore.overwrites.includes(role?.name ?? ""))
+        overwrite.type === "role" &&
+        !Object.values(ids.roles).includes(overwrite.id) &&
+        !layout.ignore.overwrites.includes(role?.name ?? "")
       )
         result.push({
           kind: "overwrite",

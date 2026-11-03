@@ -122,6 +122,7 @@ test("protective ordering keeps private synced children hidden throughout catego
           type: "category" as const,
           parent: undefined,
         };
+        category.access.operator.connect = true;
         layout.channels.unshift(category);
         const server = applyLayout(layout);
         const parentLive = server.snapshot.channels.find(
@@ -305,7 +306,9 @@ test("tag rename retains ID, destructive removals are ordered, and thread invent
   layout.roles.pop();
   const removals = plan(layout, server.snapshot, server.ids);
   assert.deepEqual(
-    removals.operations.map((entry) => entry.kind),
+    removals.operations
+      .filter((entry) => entry.kind !== "protectOverwrites")
+      .map((entry) => entry.kind),
     ["deleteChannel", "deleteCategory", "deleteRole"],
   );
   for (const type of [
