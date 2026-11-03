@@ -246,6 +246,7 @@ test("SSM and invoke deadlines cancel requests within the HTTP budget", async ()
       dependency === "publicKey" ? 503 : 200,
     );
     assert.equal(signal?.aborted, true);
+    assert.ok(setup.calls.includes("reported"));
   }
 });
 test("autocomplete failure returns empty choices", async () => {

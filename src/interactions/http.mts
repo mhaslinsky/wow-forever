@@ -42,6 +42,7 @@ export function createHttp(ports: Ports, routes: readonly Route[]) {
     try {
       key = await bounded(ports.clock, 1000, signal, ports.publicKey);
     } catch {
+      ports.report();
       return response(503, { error: "Service unavailable" });
     }
     if (!signatureValid(body, signature, timestamp, key))
@@ -97,6 +98,7 @@ export function createHttp(ports: Ports, routes: readonly Route[]) {
             },
       );
     } catch {
+      ports.report();
       return response(
         200,
         interaction.type === 4
