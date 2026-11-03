@@ -150,6 +150,26 @@ async function fixture(context: TestContext, seeded = false) {
   return { options, server, review, io };
 }
 
+for (const position of [1, 100])
+  test(`role order checks operator ceiling ${position} before mutation`, async (context) => {
+    const { server, options, review, io } = await fixture(context);
+    server.snapshot.roles[1].position = position;
+    options.layout.roles.push({
+      ...options.layout.roles[2],
+      key: "scout",
+      name: "Scout",
+    });
+    options.layout.channels[0].access.scout =
+      options.layout.channels[0].access.member;
+    const planned = await review();
+    const result = await applyLayout(options);
+    if (position === 1) {
+      equal(io.mutations, 0);
+      match(result.error ?? "", /server owner.*drag.*Operator.*top/i);
+    } else equal(result.ok, true, JSON.stringify(result));
+    equal(planned.ok, position !== 1, JSON.stringify(planned));
+  });
+
 for (const failure of ["lost response", "state write"])
   test(`${failure} requires adoption without a duplicate create`, async (context) => {
     const setup = await fixture(context);
