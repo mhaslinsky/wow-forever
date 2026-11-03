@@ -120,6 +120,8 @@ resource "aws_instance" "gateway" {
     encrypted   = true
   }
   user_data = join("\n", ["#cloud-config", yamlencode({
+    # dnf is OOM-killed loading repo metadata in 512 MB of RAM; swap is set up before packages install.
+    swap           = { filename = "/swapfile", size = 1073741824, maxsize = 1073741824 }
     package_update = true
     packages       = ["nodejs22", "amazon-cloudwatch-agent"]
     users          = [{ name = "gateway", system = true, shell = "/sbin/nologin" }]
@@ -165,6 +167,8 @@ resource "aws_instance" "gateway" {
     ]
     runcmd = [
       ["install", "-d", "-m", "0755", "/opt/wow-forever-gateway"],
+      # systemd opens the append: log file before LogsDirectory= creates its directory.
+      ["install", "-d", "-m", "0750", "-o", "gateway", "-g", "gateway", "/var/log/wow-forever-gateway"],
       ["systemctl", "daemon-reload"],
       ["/usr/bin/node-22", "--experimental-strip-types", "/opt/wow-forever-gateway/bootstrap.mts", aws_s3_bucket.gateway.id],
       ["/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl", "-a", "fetch-config", "-m", "ec2", "-c", "file:/opt/aws/amazon-cloudwatch-agent/etc/gateway.json", "-s"]
