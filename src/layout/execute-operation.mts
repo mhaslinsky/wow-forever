@@ -186,20 +186,24 @@ export async function executeOperation(
       break;
     }
     case "reorderRoles": {
-      let snapshot = await fetchSnapshot(port, target);
       const targets = operation.roleKeys.map(roleId);
-      let body = roleOrder(targets, snapshot);
-      const operator = snapshot.roles.find(
-        (role) => role.applicationId === target.applicationId,
-      );
-      if (!operator) throw new Error("Missing operator role");
-      // Creates can leave ties that need compaction before distinct rank targets fit.
-      if (body.length >= operator.position) {
-        await port.request("PATCH", `${guildRoute}/roles`, []);
-        snapshot = await fetchSnapshot(port, target);
-        body = roleOrder(targets, snapshot);
+      // Concurrent creates can outgrow the operator's stored position after compaction.
+      for (let compactions = 0; compactions <= 2; compactions++) {
+        const snapshot = await fetchSnapshot(port, target);
+        const body = roleOrder(targets, snapshot);
+        const operator = snapshot.roles.find(
+          (role) => role.applicationId === target.applicationId,
+        );
+        if (!operator) throw new Error("Missing operator role");
+        if (body.some((entry) => entry.position >= operator.position)) {
+          if (compactions === 2)
+            throw new Error("Role order changed repeatedly during apply.");
+          await port.request("PATCH", `${guildRoute}/roles`, []);
+          continue;
+        }
+        await port.request("PATCH", `${guildRoute}/roles`, body);
+        break;
       }
-      await port.request("PATCH", `${guildRoute}/roles`, body);
       break;
     }
     case "reorderChannels": {

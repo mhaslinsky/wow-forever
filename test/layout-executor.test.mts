@@ -248,6 +248,56 @@ test("gate step-2 layout at operator position 2 converges and a second apply mak
   equal(io.mutations, before);
 });
 
+test("roles created during compaction converge or stop before an unsafe reorder", async (context) => {
+  for (const races of [1, 2]) {
+    const { server, options, review } = await fixture(context);
+    server.snapshot.roles[1].position = 2;
+    options.layout.roles.push({
+      ...options.layout.roles[2],
+      key: "scout",
+      name: "Scout",
+    });
+    options.layout.channels[0].access.scout =
+      options.layout.channels[0].access.member;
+    options.layout.ignore.roles = ["Race 0", "Race 1", "Race 2", "Race 3"];
+    await review();
+    const request = options.port.request;
+    let compactions = 0,
+      reorders = 0,
+      missingPermissions = 0;
+    options.port.request = async (method, route, body) => {
+      const reorder =
+        method === "PATCH" && route.endsWith("/roles") && Array.isArray(body);
+      if (reorder && body.length) reorders++;
+      let response: unknown;
+      try {
+        response = await request(method, route, body);
+      } catch (error) {
+        if ((error as { code?: number }).code === 50013) missingPermissions++;
+        throw error;
+      }
+      if (reorder && !body.length && ++compactions <= races)
+        for (const index of [compactions * 2 - 2, compactions * 2 - 1])
+          server.apply({
+            kind: "createRole",
+            role: {
+              ...options.layout.roles[2],
+              key: `race-${index}`,
+              name: `Race ${index}`,
+              permissions: {},
+            },
+          });
+      return response;
+    };
+    const result = await applyLayout(options);
+    equal(missingPermissions, 0, JSON.stringify(result));
+    equal(compactions, 2);
+    equal(reorders, races === 1 ? 1 : 0);
+    if (races === 1) equal(result.ok, true, JSON.stringify(result));
+    else match(result.error ?? "", /Role order changed repeatedly/);
+  }
+});
+
 test("live unnamed permission bits adopt, converge and survive writes", async (context) => {
   const setup = await fixture(context, true);
   const unknown = 1n << 47n;
