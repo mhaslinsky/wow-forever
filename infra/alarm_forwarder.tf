@@ -27,6 +27,10 @@ resource "aws_iam_role" "alarm_forwarder" {
 
 data "aws_iam_policy_document" "alarm_forwarder" {
   statement {
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.alarm_forwarder_failures.arn]
+  }
+  statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.alarm_forwarder.arn}:*"]
   }
@@ -101,3 +105,16 @@ resource "aws_lambda_permission" "alarm_forwarder_sns" {
 }
 
 
+
+resource "aws_sqs_queue" "alarm_forwarder_failures" {
+  name                      = "wow-forever-alarm-forwarder-failures"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+}
+resource "aws_lambda_function_event_invoke_config" "alarm_forwarder" {
+  function_name = aws_lambda_function.alarm_forwarder.function_name
+  destination_config {
+    on_failure { destination = aws_sqs_queue.alarm_forwarder_failures.arn }
+  }
+  depends_on = [aws_iam_role_policy.alarm_forwarder]
+}
