@@ -10,18 +10,22 @@
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mts",
-    "build:alarm-forwarder": "esbuild src/alarm-forwarder/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/alarm-forwarder/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
+    "build:alarm-forwarder": "esbuild src/alarm-forwarder/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/alarm-forwarder/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
+    "build:gateway": "esbuild src/gateway/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gateway/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.3",
     "@types/node": "^22.20.5",
     "esbuild": "^0.28.2",
     "fast-check": "^4.10.2",
+    "hcl2-parser": "^1.0.3",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1161.0",
     "@aws-sdk/client-dynamodb": "^3.1161.0",
     "@aws-sdk/client-ssm": "^3.1161.0",
-    "@aws-sdk/lib-dynamodb": "^3.1161.0"
+    "@aws-sdk/lib-dynamodb": "^3.1161.0",
+    "discord.js": "^14.28.0"
   }
 }

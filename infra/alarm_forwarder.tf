@@ -27,6 +27,10 @@ resource "aws_iam_role" "alarm_forwarder" {
 
 data "aws_iam_policy_document" "alarm_forwarder" {
   statement {
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.alarm_forwarder_failures.arn]
+  }
+  statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.alarm_forwarder.arn}:*"]
   }
