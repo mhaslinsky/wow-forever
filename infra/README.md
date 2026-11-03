@@ -6,8 +6,10 @@ Run `npm ci` and `npm run build:alarm-forwarder` at the repository root before p
 
 Bootstrap in `infra/bootstrap/` creates the encrypted, versioned state bucket with public access blocked. Use this two-step procedure:
 
-1. In `infra/bootstrap/`, run `terraform init`, then have the orchestrator review and apply the initial local-state plan. Keep that state safe outside the worktree until migration succeeds.
-2. After the bucket exists, uncomment the `backend "s3"` block in `infra/bootstrap/main.tf` and run `terraform init -migrate-state` from `infra/bootstrap/`. Confirm migration to `bootstrap/terraform.tfstate` before removing the local copy. Then initialize the main stack's backend.
+Bootstrap state lives in the bucket it creates (`bootstrap/terraform.tfstate`). On a fresh account the bucket does not exist yet, so:
+
+1. Comment out the `backend "s3"` block in `infra/bootstrap/main.tf`, run `terraform init`, review the plan and apply it with local state.
+2. Restore the block and run `terraform init -migrate-state`. Confirm the state object exists in the bucket before deleting the local state files. Then initialize the main stack's backend.
 
 The bucket requires TLS, enforces bucket ownership, and expires noncurrent state versions after 90 days. The main stack uses native S3 locking.
 
@@ -15,4 +17,4 @@ The three SecureString parameters start as `None`. Set their real values out of 
 
 The monthly budget covers the whole account and sends actual-spend notifications at 80 and 100 percent of the configured amount (default $25). Budget data can be delayed. Discord is the only notification destination configured here; webhook failure has no independent alert path.
 
-Not yet applied. AWS planning and deployment require a separate review; local validation does not establish AWS permissions or live delivery.
+Applied on 2026-11-03 in account 414700437904. A test invoke loaded the bundle, read the placeholder through SSM and KMS, and failed with "Webhook not configured", which is the expected result until the webhook value is set.

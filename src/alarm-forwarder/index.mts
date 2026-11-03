@@ -69,8 +69,7 @@ export function createHandler(
     let url: URL;
     try {
       url = new URL(value);
-      if (url.protocol !== "https:" && url.protocol !== "http:")
-        throw new Error();
+      if (url.protocol !== "https:") throw new Error();
     } catch {
       throw new Error("Invalid webhook URL");
     }
