@@ -5,6 +5,7 @@ import {
   discordTypes,
   untracked,
 } from "./inventory.mts";
+import { comparePosition } from "./ordering.mts";
 import {
   compilePermissions,
   normalizeOverwrites,
@@ -116,7 +117,7 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
     }
     if (
       role.kind === "managed" &&
-      (live.position >= operator.position || live.managed)
+      (comparePosition(live, operator, "role") >= 0 || live.managed)
     )
       errors.push(`Uneditable role: ${role.key}`);
     const { allow, managed } = rolePermissions(role);
@@ -279,20 +280,35 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
   const reorder = (
     keys: string[],
     position: (key: string) => number | undefined,
+    identity: (key: string) => string | undefined,
+    kind: "role" | "channel",
   ) =>
     keys.length > 1 &&
     (keys.some((key) => position(key) === undefined) ||
       !equal(
         keys,
-        [...keys].sort(
-          (left, right) =>
-            (position(left) ?? Infinity) - (position(right) ?? Infinity),
+        [...keys].sort((left, right) =>
+          comparePosition(
+            { id: identity(left) ?? "", position: position(left) ?? Infinity },
+            {
+              id: identity(right) ?? "",
+              position: position(right) ?? Infinity,
+            },
+            kind,
+          ),
         ),
       ));
   const roleKeys = layout.roles
     .filter((role) => role.kind === "managed")
     .map((role) => role.key);
-  if (reorder(roleKeys, (key) => liveRole(key)?.position))
+  if (
+    reorder(
+      roleKeys,
+      (key) => liveRole(key)?.position,
+      (key) => liveRole(key)?.id,
+      "role",
+    )
+  )
     reorders.push({ kind: "reorderRoles", roleKeys });
   for (const parentKey of [
     undefined,
@@ -303,14 +319,19 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       .map((channel) => channel.key);
     const parentId = parentKey ? ids.channels[parentKey] : null;
     if (
-      reorder(channelKeys, (key) => {
-        const live = liveChannel(key);
-        return recreated.has(key) ||
-          live?.parent !== parentId ||
-          (parentKey && recreated.has(parentKey))
-          ? undefined
-          : live?.position;
-      })
+      reorder(
+        channelKeys,
+        (key) => {
+          const live = liveChannel(key);
+          return recreated.has(key) ||
+            live?.parent !== parentId ||
+            (parentKey && recreated.has(parentKey))
+            ? undefined
+            : live?.position;
+        },
+        (key) => liveChannel(key)?.id,
+        "channel",
+      )
     )
       reorders.push({
         kind: "reorderChannels",
@@ -386,7 +407,7 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       live.applicationId !== snapshot.applicationId &&
       !layout.ignore.roles.includes(live.name)
     ) {
-      if (live.managed || live.position >= operator.position)
+      if (live.managed || comparePosition(live, operator, "role") >= 0)
         errors.push(`Uneditable role: ${key}`);
       else deletes.push({ kind: "deleteRole", key, id, destructive: true });
     }
@@ -425,7 +446,7 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       .filter(
         (role) =>
           role.id !== snapshot.guildId &&
-          (role.managed || role.position >= operator.position),
+          (role.managed || comparePosition(role, operator, "role") >= 0),
       )
       .map((role) => role.id),
     staleBindings,
