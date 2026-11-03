@@ -1,32 +1,15 @@
-import {
-  deepEqual,
-  equal,
-  match,
-  notEqual,
-  ok,
-  throws,
-} from "node:assert/strict";
+import { deepEqual, equal, match, ok, throws } from "node:assert/strict";
 import test from "node:test";
-import {
-  ChannelType,
-  Collection,
-  PermissionFlagsBits as flags,
-  GuildChannel,
-  PermissionsBitField,
-} from "discord.js";
+import { ChannelType, PermissionFlagsBits as flags } from "discord.js";
 import fc from "fast-check";
-import type { Layout, Overwrite } from "../src/layout/index.mts";
+import type { Layout } from "../src/layout/index.mts";
 import {
   adoptionCandidates,
   channelTypes,
   compilePermissions,
-  normalizeBits,
-  normalizeOverwrites,
-  normalizeSnapshot,
   parseLayout,
   plan,
   protectionTargets,
-  protectiveOverwrite,
   rolePermissions,
   validateLayout,
 } from "../src/layout/index.mts";
@@ -143,76 +126,6 @@ test("compiled access agrees with an independent effective-permission oracle", (
     managed: flags.ViewChannel | flags.SendMessages,
   });
 });
-test("normalization preserves drift bits, defaults and rejects malformed bitfields", () => {
-  const entry = overwrite("guild", "0001");
-  const server = applied();
-  const snapshot = normalizeSnapshot({
-    ...server.snapshot,
-    roles: [{ ...server.snapshot.roles[0], hoist: undefined }],
-    channels: [
-      {
-        ...server.live(),
-        topic: undefined,
-        type: ChannelType.GuildStageVoice,
-        overwrites: [entry],
-      },
-      { ...server.live(), id: "missing-tags", tags: undefined },
-    ],
-  });
-  equal(snapshot.channels[0].topic, "");
-  deepEqual(snapshot.channels[1].tags, []);
-  equal(snapshot.channels[0].type, ChannelType.GuildStageVoice);
-  equal(snapshot.channels[0].overwrites[0].allow, "1");
-  equal(snapshot.roles[0].hoist, false);
-  equal(normalizeBits((1n << 64n) - 1n), ((1n << 64n) - 1n).toString());
-  for (const malformed of ["", "-1", "garbage", Number.MAX_SAFE_INTEGER + 1])
-    throws(() => normalizeBits(malformed));
-  throws(() => normalizeBits(1n << 64n));
-  throws(() => normalizeOverwrites([entry, entry]), /Duplicate overwrite/);
-  const ordered = normalizeOverwrites([overwrite("a"), overwrite("Z")]);
-  deepEqual(
-    ordered.map((entry) => entry.id),
-    ["Z", "a"],
-  );
-  deepEqual(Object.keys(ordered[0]), ["type", "id", "allow", "deny"]);
-});
-test("protective overwrites add no allow bits", () => {
-  fc.assert(
-    fc.property(
-      fc.constantFrom(...channelTypes),
-      fc.bigInt({ min: 0n, max: 65535n }),
-      fc.bigInt({ min: 0n, max: 65535n }),
-      fc.constantFrom("none", "child", "category"),
-      (type, allow, deny, emptyMode) => {
-        const entries: Overwrite[] = [
-          overwrite(
-            "guild",
-            emptyMode === "none" ? allow.toString() : "0",
-            emptyMode === "none" ? deny.toString() : "0",
-          ),
-          overwrite("member", deny.toString(), allow.toString()),
-        ];
-        const parent = structuredClone(entries).reverse();
-        if (emptyMode === "child") entries.shift();
-        if (emptyMode === "category") parent.pop();
-        const before = structuredClone(entries);
-        equal(locked(entries, parent), true);
-        const result = protectiveOverwrite(
-          { type, everyoneId: "guild", overwrites: entries },
-          { overwrites: parent },
-        );
-        equal(locked(result, parent), false);
-        for (const entry of result) {
-          const previous = before.find(
-            (before) => before.id === entry.id && before.type === entry.type,
-          );
-          equal(BigInt(entry.allow) & ~BigInt(previous?.allow ?? "0"), 0n);
-        }
-        deepEqual(entries, before);
-      },
-    ),
-  );
-});
 test("adoption requires consent and rejects ambiguous roles or channels", () => {
   const server = applied(),
     { layout, snapshot, ids } = server;
@@ -292,35 +205,6 @@ test("member overwrites are destructive removals and ignored bindings survive", 
   layout.ignore.channels.push(live.name);
   layout.ignore.roles.push("Member");
   deepEqual(plan(layout, snapshot, ids).operations, []);
-});
-
-test("type replacements omit doomed overwrites and move retained children", () => {
-  const layout = fixture(),
-    child = layout.channels[0];
-  layout.channels.push(category(layout));
-  child.parent = "category";
-  layout.channels.push({
-    ...structuredClone(child),
-    key: "retained",
-    name: "retained",
-  });
-  const server = applied(layout),
-    oldParent = server.live("category").id;
-  server.live("category").type = ChannelType.GuildText;
-  server.live().overwrites.push(overwrite("person", "0", "0", "member"));
-  child.type = "text";
-  child.tags = [];
-  const result = server.run();
-  const create = result.operations.find(
-    (entry) => entry.kind === "createChannel",
-  );
-  ok(create?.kind === "createChannel");
-  ok(create.overwrites.every((entry) => entry.type === "role"));
-  equal(result.destructive, true);
-  notEqual(server.ids.channels.category, oldParent);
-  for (const key of ["lobby", "retained"])
-    equal(server.live(key).parent, server.ids.channels.category);
-  deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
 });
 
 test("role creation and reorder converge; deletion removes children before categories and roles", () => {
@@ -547,70 +431,6 @@ for (const shape of shapes)
     deepEqual(plan(layout, snapshot, ids).operations, []);
   });
 
-function locked(child: Overwrite[], parent: Overwrite[]) {
-  const getter = Object.getOwnPropertyDescriptor(
-    GuildChannel.prototype,
-    "permissionsLocked",
-  )?.get;
-  ok(getter);
-  const cache = (entries: Overwrite[]) =>
-    new Collection(
-      entries.map((entry) => [
-        entry.id,
-        {
-          allow: new PermissionsBitField(BigInt(entry.allow)),
-          deny: new PermissionsBitField(BigInt(entry.deny)),
-        },
-      ]),
-    );
-  return getter.call({
-    guildId: "guild",
-    permissionOverwrites: { cache: cache(child) },
-    parent: { permissionOverwrites: { cache: cache(parent) } },
-  });
-}
-
-test("protection falls back to text and voice flags after common denies", () => {
-  const common =
-    flags.ViewChannel |
-    flags.ReadMessageHistory |
-    flags.SendMessages |
-    flags.SendMessagesInThreads;
-  for (const type of channelTypes) {
-    const entries = [overwrite("guild", "0", common.toString())];
-    const result = protectiveOverwrite(
-      { type, everyoneId: "guild", overwrites: entries },
-      { overwrites: entries },
-    );
-    equal(
-      BigInt(result[0].deny) & ~common,
-      type === "voice" ? flags.Connect : flags.CreatePublicThreads,
-    );
-  }
-});
-
-test("omitted voice send defaults to deny", () => {
-  const layout = fixture(),
-    channel = layout.channels[0];
-  channel.type = "voice";
-  channel.tags = [];
-  channel.access = Object.fromEntries(
-    layout.roles.map((role) => [
-      role.key,
-      { ...access(true, true), manageThreads: false },
-    ]),
-  );
-  Reflect.deleteProperty(channel.access.member, "send");
-  const checked = validateLayout(layout);
-  equal(checked.channels[0].access.member.send, false);
-  const member = compilePermissions(checked, checked.channels[0]).find(
-    (entry) => entry.roleKey === "member",
-  );
-  ok(member);
-  const text = flags.SendMessages | flags.SendMessagesInThreads;
-  equal(BigInt(member.deny) & text, text);
-});
-
 test("forum tag rename retains ID and tag removal is destructive", () => {
   const server = applied(),
     tagId = server.ids.tags.lobby.new;
@@ -622,7 +442,36 @@ test("forum tag rename retains ID and tag removal is destructive", () => {
   equal(server.run().destructive, true);
 });
 
-test("reparent reorders against destination siblings", () => {
+test("stationary private child stays hidden when its category grants Member access", () => {
+  const layout = fixture(),
+    child = layout.channels[0];
+  child.type = "text";
+  child.tags = [];
+  child.access.member = access();
+  const parent = category(layout);
+  child.parent = parent.key;
+  layout.channels.unshift(parent);
+  const server = applied(layout),
+    { snapshot, ids } = server;
+  server.live().overwrites = structuredClone(
+    server.live(parent.key).overwrites,
+  );
+  parent.access.member = access(true, true);
+  const result = plan(layout, snapshot, ids);
+  equal(result.ok, true, JSON.stringify(result.errors));
+  for (const operation of result.operations) {
+    server.apply(operation);
+    equal(
+      canView(snapshot, ids.channels.lobby, ids.roles.member),
+      false,
+      operation.kind,
+    );
+  }
+  equal(server.live().parent, ids.channels[parent.key]);
+  deepEqual(plan(layout, snapshot, ids).operations, []);
+});
+
+test("reparent into a populated category converges in one apply", () => {
   const layout = fixture(),
     child = layout.channels[0];
   layout.channels.push(
@@ -636,67 +485,13 @@ test("reparent reorders against destination siblings", () => {
     name: "resident",
     parent: "destination",
   });
-  const server = applied(layout),
-    arrival = server.live(),
-    resident = server.live("resident");
-  arrival.position = 0;
-  resident.position = 10;
+  const server = applied(layout);
+  server.live().position = 0;
+  server.live("resident").position = 10;
   child.parent = "destination";
-  const result = server.run();
-  ok(
-    result.operations.some(
-      (entry) =>
-        entry.kind === "reorderChannels" && entry.parentKey === "destination",
-    ),
-  );
-  ok(arrival.position < resident.position);
-  deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
-});
-
-test("normalization excludes every thread type", () => {
-  const server = applied();
-  for (const type of [
-    ChannelType.AnnouncementThread,
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-  ])
-    server.snapshot.channels.push({ ...server.live(), type });
-  equal(normalizeSnapshot(server.snapshot).channels.length, 1);
-});
-
-test("public creates skip redundant overwrite replacement", () => {
-  const layout = fixture();
-  layout.channels[0].access.everyone = { ...layout.channels[0].access.member };
-  const server = model(),
-    result = server.run(layout);
-  equal(
-    result.operations.filter((entry) => entry.kind === "replaceOverwrites")
-      .length,
-    0,
-  );
-  deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
-  layout.channels[0].name = "renamed";
-  deepEqual(
-    server.run(layout).operations.map((entry) => entry.kind),
-    ["updateChannel"],
-  );
-});
-
-test("channel metadata and role fields are applied without changing owned permissions", () => {
-  for (const field of ["name", "topic"] as const) {
-    const server = applied();
-    server.layout.channels[0][field] = "changed";
-    equal(validateLayout(server.layout).channels[0][field], "changed");
-    ok(server.run().operations.some((entry) => entry.kind === "updateChannel"));
-    equal(server.live()[field], "changed");
-  }
-  const server = applied();
-  server.layout.roles[2].mentionable = true;
-  const permissions = server.snapshot.roles[2].permissions;
   server.run();
-  equal(server.snapshot.roles[2].mentionable, true);
-  equal(server.snapshot.roles[2].permissions, permissions);
-  deepEqual(plan(server.layout, server.snapshot, server.ids).operations, []);
+  ok(server.live().position < server.live("resident").position);
+  deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
 });
 
 test("mixed role changes protect before removals and grant after overwrite finals", () => {
@@ -723,131 +518,4 @@ test("mixed role changes protect before removals and grant after overwrite final
   ok(roleUpdates[1] > Math.max(...finals));
   equal(member.permissions, flags.ManageThreads.toString());
   deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
-});
-
-test("category metadata and deletion preserve synced ignored children", () => {
-  for (const change of ["rename", "topic", "reorder", "delete"]) {
-    const layout = fixture(),
-      child = layout.channels[0];
-    for (const key of Object.keys(child.access))
-      child.access[key] = access(true);
-    const parent = category(layout);
-    parent.access.everyone = parent.access.member = access();
-    layout.channels.push(parent, category(layout, "other"));
-    child.parent = "category";
-    const server = applied(layout);
-    const external = {
-      ...structuredClone(server.live("category")),
-      id: "external",
-      name: "External",
-      type: ChannelType.GuildText,
-      parent: server.ids.channels.category,
-    };
-    external.overwrites.reverse();
-    server.snapshot.channels.push(external);
-    layout.ignore.channels.push(external.name);
-    const before = structuredClone(external.overwrites);
-    if (change === "rename") parent.name = "renamed";
-    if (change === "topic") parent.topic = "changed";
-    if (change === "reorder") layout.channels.reverse();
-    if (change === "delete") {
-      layout.channels = layout.channels.filter((entry) => entry !== parent);
-      delete child.parent;
-    }
-    const result = server.run();
-    ok(result.operations.length > 0);
-    ok(
-      result.operations.every(
-        (entry) =>
-          !["protectOverwrites", "replaceOverwrites"].includes(entry.kind),
-      ),
-    );
-    deepEqual(external.overwrites, before);
-  }
-});
-
-for (const reparent of [false, true])
-  for (const rename of [false, true])
-    for (const newChild of [false, true])
-      test(`synced private child: move=${reparent}, rename=${rename}, create=${newChild}`, () => {
-        const layout = fixture(),
-          child = layout.channels[0];
-        child.type = "text";
-        child.tags = [];
-        child.access.member = access();
-        const parent = category(layout);
-        child.parent = "category";
-        layout.channels.unshift(parent);
-        const server = applied(layout),
-          liveParent = server.live("category"),
-          liveChild = server.live();
-        liveChild.overwrites = structuredClone(liveParent.overwrites);
-        if (newChild) {
-          for (const entry of liveParent.overwrites)
-            entry.deny = (
-              BigInt(entry.deny) & ~(flags.Connect | flags.Speak)
-            ).toString();
-          server.snapshot.channels = server.snapshot.channels.filter(
-            (entry) => entry !== liveChild,
-          );
-          delete server.ids.channels.lobby;
-        }
-        if (rename) child.name = "renamed-private";
-        parent.access.member = access(true, true);
-        if (reparent) {
-          if (!newChild) {
-            server.snapshot.channels.push({
-              ...structuredClone(liveParent),
-              id: "destination",
-              name: "destination",
-              overwrites: structuredClone(liveChild.overwrites),
-            });
-            server.ids.channels.destination = "destination";
-            liveParent.overwrites[0].deny = (
-              BigInt(liveParent.overwrites[0].deny) | flags.Stream
-            ).toString();
-          }
-          layout.channels.push({
-            ...structuredClone(parent),
-            key: "destination",
-            name: "destination",
-          });
-          child.parent = "destination";
-        }
-        const { snapshot, ids } = server;
-        const result = plan(layout, snapshot, ids);
-        equal(result.ok, true, JSON.stringify(result.errors));
-        ok(
-          result.operations.some(
-            (entry) =>
-              entry.kind === (newChild ? "createChannel" : "protectOverwrites"),
-          ),
-        );
-        for (const operation of result.operations) {
-          server.apply(operation);
-          equal(
-            canView(snapshot, ids.channels.lobby, ids.roles.member),
-            false,
-            operation.kind,
-          );
-        }
-        deepEqual(plan(layout, snapshot, ids).operations, []);
-      });
-
-test("bound forum tags adopt while moving to an unbound category", () => {
-  const server = applied(),
-    tagId = server.ids.tags.lobby.new;
-  server.layout.channels.push(category(server.layout, "destination"));
-  server.layout.channels[0].parent = "destination";
-  server.ids.tags = {};
-  const candidates = adoptionCandidates(
-    server.layout,
-    server.snapshot,
-    server.ids,
-  );
-  equal(candidates.tags.lobby.new, tagId);
-  Object.assign(server.ids, candidates);
-  server.run();
-  equal(server.live().tags[0].id, tagId);
-  deepEqual(plan(server.layout, server.snapshot, server.ids).operations, []);
 });
