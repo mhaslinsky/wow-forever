@@ -1,3 +1,5 @@
+import type { ChannelType as DiscordChannelType } from "discord.js";
+
 export const channelTypes = [
   "category",
   "text",
@@ -36,10 +38,16 @@ export type Channel = {
   access: Record<string, Access>;
   tags: Tag[];
 };
+/** Ignore entries are live role names, channel names, and overwrite role names. */
+export type Ignore = {
+  roles: string[];
+  channels: string[];
+  overwrites: string[];
+};
 export type Layout = {
   roles: Role[];
   channels: Channel[];
-  ignore: { roles: string[]; channels: string[]; overwrites: string[] };
+  ignore: Ignore;
 };
 export type Overwrite = {
   id: string;
@@ -61,7 +69,7 @@ export type LiveRole = {
 export type LiveChannel = {
   id: string;
   name: string;
-  type: ChannelType;
+  type: DiscordChannelType;
   parent: string | null;
   topic: string;
   position: number;
@@ -84,7 +92,6 @@ export type IdMap = {
 };
 /** Persisted identity bindings use an explicit format version. */
 export type State = { schemaVersion: 1; guildId: string; ids: IdMap };
-export type Target = { kind: "role" | "channel"; key: string };
 export type CompiledOverwrite = Omit<Overwrite, "id"> & { roleKey: string };
 
 /** Stable keys resolve after creates; reorder targets contain managed siblings only. */
@@ -108,7 +115,8 @@ export type Operation =
       tags: (Tag & { id?: string })[];
       destructive: boolean;
     }
-  | { kind: "reorder"; targets: Target[]; parentKey?: string }
+  | { kind: "reorderRoles"; roleKeys: string[] }
+  | { kind: "reorderChannels"; channelKeys: string[]; parentKey?: string }
   | {
       kind: "deleteChannel" | "deleteCategory" | "deleteRole";
       key: string;

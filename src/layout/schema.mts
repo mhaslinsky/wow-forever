@@ -31,6 +31,11 @@ function fields(value: Record<string, unknown>, allowed: string[]) {
 function unique(keys: string[]) {
   if (new Set(keys).size !== keys.length) fail("duplicate keys");
 }
+function names(value: unknown): string[] {
+  const result = array(value).map(string);
+  unique(result);
+  return result;
+}
 function key(value: unknown): string {
   const result = string(value);
   if (!/^[a-z][a-z0-9-]*$/.test(result)) fail(`invalid stable key ${result}`);
@@ -89,13 +94,15 @@ function access(value: unknown, type: Channel["type"]): Access {
   fields(entry, ["view", "send", "connect", "manageThreads"]);
   const result = {
     view: boolean(entry.view),
-    send: boolean(entry.send),
+    send: boolean(
+      type === "voice" && entry.send === undefined ? false : entry.send,
+    ),
     connect: boolean(entry.connect),
     manageThreads: boolean(entry.manageThreads),
   };
   if (!result.view && (result.send || result.connect || result.manageThreads))
     fail("view denied with another access allowed");
-  if (type === "voice" && (result.send || result.manageThreads))
+  if (type === "voice" && result.manageThreads)
     fail("voice channels cannot declare text access");
   if (type !== "voice" && type !== "category" && result.connect)
     fail("text channels cannot declare connect");
@@ -133,7 +140,7 @@ export function validateLayout(value: unknown): Layout {
         role.permissions.Administrator &&
         (!accessTable[role.key].view ||
           (type === "voice"
-            ? !accessTable[role.key].connect
+            ? !accessTable[role.key].connect || !accessTable[role.key].send
             : !accessTable[role.key].send ||
               !accessTable[role.key].manageThreads) ||
           (type === "category" && !accessTable[role.key].connect))
@@ -178,9 +185,9 @@ export function validateLayout(value: unknown): Layout {
     roles,
     channels,
     ignore: {
-      roles: array(ignore.roles).map(string),
-      channels: array(ignore.channels).map(string),
-      overwrites: array(ignore.overwrites).map(string),
+      roles: names(ignore.roles),
+      channels: names(ignore.channels),
+      overwrites: names(ignore.overwrites),
     },
   };
 }

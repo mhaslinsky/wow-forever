@@ -38,12 +38,12 @@ export function accessBits(
   return {
     view: PermissionFlagsBits.ViewChannel,
     send:
-      type === "voice"
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.SendMessagesInThreads |
+      (type === "voice"
         ? 0n
-        : PermissionFlagsBits.SendMessages |
-          (type === "forum" || type === "category"
-            ? PermissionFlagsBits.SendMessagesInThreads
-            : 0n),
+        : PermissionFlagsBits.CreatePublicThreads |
+          PermissionFlagsBits.CreatePrivateThreads),
     connect:
       type === "voice" || type === "category"
         ? PermissionFlagsBits.Connect | PermissionFlagsBits.Speak
@@ -88,14 +88,17 @@ export function normalizeOverwrites(overwrites: Overwrite[]): Overwrite[] {
         throw new Error(`Duplicate overwrite ${identity}`);
       identities.add(identity);
       return {
-        ...entry,
+        type: entry.type,
+        id: entry.id,
         allow: normalizeBits(entry.allow),
         deny: normalizeBits(entry.deny),
       };
     })
-    .sort((left, right) =>
-      `${left.type}:${left.id}`.localeCompare(`${right.type}:${right.id}`),
-    );
+    .sort((left, right) => {
+      const leftKey = `${left.type}:${left.id}`;
+      const rightKey = `${right.type}:${right.id}`;
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
 }
 
 export function normalizeBits(value: string | number | bigint): string {
@@ -109,17 +112,69 @@ export function normalizeBits(value: string | number | bigint): string {
   return bits.toString();
 }
 
-/** Adds a deny to unsync matching children without widening access.
- * Throws if every valid bit on every target is already denied with no allows.
+function canonicalOverwrites(overwrites: Overwrite[], everyoneId: string) {
+  return normalizeOverwrites(overwrites)
+    .filter(
+      (entry) =>
+        !(
+          entry.type === "role" &&
+          entry.id === everyoneId &&
+          entry.allow === "0" &&
+          entry.deny === "0"
+        ),
+    )
+    .map((entry) => [entry.type, entry.id, entry.allow, entry.deny] as const);
+}
+
+function protectiveFlags(type: Channel["type"]): bigint[] {
+  const common = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.SendMessagesInThreads,
+  ];
+  const text = [
+    PermissionFlagsBits.CreatePublicThreads,
+    PermissionFlagsBits.CreatePrivateThreads,
+    PermissionFlagsBits.ManageThreads,
+  ];
+  const voice = [
+    PermissionFlagsBits.Connect,
+    PermissionFlagsBits.Speak,
+    PermissionFlagsBits.Stream,
+    PermissionFlagsBits.MuteMembers,
+    PermissionFlagsBits.DeafenMembers,
+    PermissionFlagsBits.MoveMembers,
+    PermissionFlagsBits.UseVAD,
+    PermissionFlagsBits.PrioritySpeaker,
+  ];
+  return [
+    ...new Set([
+      ...common,
+      ...(type === "voice" ? [] : text),
+      ...(type === "voice" || type === "category" ? voice : []),
+    ]),
+  ];
+}
+
+/** Adds a channel-scoped deny to break category sync without widening access.
+ * Throws when all protective flags on every target are denied with no allows.
  */
 export function protectiveOverwrite(
-  child: { everyoneId: string; overwrites: Overwrite[] },
+  child: { type: Channel["type"]; everyoneId: string; overwrites: Overwrite[] },
   category: { overwrites: Overwrite[] },
 ): Overwrite[] {
   const result = normalizeOverwrites(child.overwrites);
+  const childTuples = canonicalOverwrites(result, child.everyoneId);
+  const categoryTuples = canonicalOverwrites(
+    category.overwrites,
+    child.everyoneId,
+  );
   if (
-    JSON.stringify(result) !==
-    JSON.stringify(normalizeOverwrites(category.overwrites))
+    childTuples.length !== categoryTuples.length ||
+    !childTuples.every((tuple, index) =>
+      tuple.every((value, field) => value === categoryTuples[index][field]),
+    )
   )
     return result;
   let target = result.find(
@@ -129,13 +184,12 @@ export function protectiveOverwrite(
     target = { id: child.everyoneId, type: "role", allow: "0", deny: "0" };
     result.push(target);
   }
+  const candidates = protectiveFlags(child.type);
   for (const candidate of [
     target,
     ...result.filter((entry) => entry !== target),
   ]) {
-    const bit = Object.values(PermissionFlagsBits).find(
-      (bit) => (BigInt(candidate.deny) & bit) === 0n,
-    );
+    const bit = candidates.find((bit) => (BigInt(candidate.deny) & bit) === 0n);
     if (bit === undefined) {
       if (BigInt(candidate.allow) === 0n) continue;
       candidate.allow = "0";
