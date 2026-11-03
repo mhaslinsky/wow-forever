@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -52,24 +52,29 @@ try {
       throw new Error("--plan is required");
     const repo = resolve(fileURLToPath(new URL("..", import.meta.url)));
     const statePath = resolve(values.state);
-    const inside = (path: string) => {
-      const part = relative(repo, path);
-      return part === "" || (!part.startsWith("..") && !part.startsWith("/"));
-    };
-    let ancestor = statePath;
-    while (true) {
-      try {
-        ancestor = realpathSync(ancestor);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        const parent = resolve(ancestor, "..");
-        if (parent === ancestor) throw error;
-        ancestor = parent;
+    const requireOutside = (target: string, label: string) => {
+      let ancestor = resolve(target);
+      while (true) {
+        try {
+          ancestor = realpathSync(ancestor);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          const parent = resolve(ancestor, "..");
+          if (parent === ancestor) throw error;
+          ancestor = parent;
+        }
       }
-    }
-    if (inside(statePath) || inside(ancestor))
-      throw new Error("State must be outside the repository");
+      const part = relative(realpathSync(repo), ancestor);
+      if (
+        part === "" ||
+        (part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part))
+      )
+        throw new Error(`${label} must be outside the repository`);
+    };
+    requireOutside(statePath, "State");
+    if (command === "plan" || command === "apply")
+      requireOutside(values.plan as string, "Plan");
     const layout = parseLayout(readFileSync(values.layout, "utf8"));
     const port = discordTransport(keychainToken());
     const target = { guildId: values.guild, applicationId: values.application };

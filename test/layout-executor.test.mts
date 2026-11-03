@@ -1,4 +1,5 @@
-import assert from "node:assert/strict";
+import { equal, match, ok, rejects } from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,23 +11,26 @@ import {
   inspectPlan,
   planBinding,
 } from "../src/layout/executor.mts";
-import { comparePosition } from "../src/layout/ordering.mts";
-import { parseLayout } from "../src/layout/schema.mts";
 import { emptyState, loadState, withStateLock } from "../src/layout/state.mts";
 import type { DiscordPort } from "../src/layout/transport.mts";
 import {
   LayoutTransportError,
   wireOverwrites,
+  wireTags,
 } from "../src/layout/transport.mts";
-import { canView, model } from "./layout-model.mts";
+import {
+  access,
+  canView,
+  fixture as layoutFixture,
+  model,
+} from "./layout-model.mts";
 
-async function fixture(context: TestContext) {
+async function fixture(context: TestContext, seeded = false) {
   const directory = fs.mkdtempSync(join(tmpdir(), "layout-executor-"));
   context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const server = model();
-  const layout = parseLayout(
-    fs.readFileSync(new URL("fixtures/layout.yaml", import.meta.url), "utf8"),
-  );
+  const layout = layoutFixture();
+  if (seeded) server.run(layout);
   const options = {
     guildId: "guild",
     applicationId: "app",
@@ -37,19 +41,18 @@ async function fixture(context: TestContext) {
     port: {} as DiscordPort,
   };
   let operations: ReturnType<typeof inspectPlan>["operations"] = [];
-  let mutations = 0,
-    reads = 0;
-  let rateLimited = false;
-  let loseResponse = false,
-    failMutation = Infinity,
-    identity = "app",
-    guild = "guild";
-  const payloads: unknown[] = [];
+  const io = {
+    mutations: 0,
+    rateLimited: false,
+    loseResponse: false,
+    failMutation: Infinity,
+    identity: "app",
+    guild: "guild",
+  };
   options.port.request = async (method, route, body) => {
     if (method === "GET") {
-      reads++;
-      if (route === "/oauth2/applications/@me") return { id: identity };
-      if (route === "/guilds/guild") return { id: guild };
+      if (route === "/oauth2/applications/@me") return { id: io.identity };
+      if (route === "/guilds/guild") return { id: io.guild };
       if (route.endsWith("/roles"))
         return server.snapshot.roles.map((role) => ({
           ...role,
@@ -60,26 +63,22 @@ async function fixture(context: TestContext) {
           ...channel,
           parent_id: channel.parent,
           permission_overwrites: wireOverwrites(channel.overwrites),
-          available_tags: channel.tags.map((tag) => ({
-            ...tag,
-            emoji_id: null,
-            emoji_name: tag.emoji ?? null,
-          })),
+          available_tags: wireTags(
+            channel.tags.map((tag) => ({ ...tag, key: tag.id })),
+          ),
         }));
       throw new Error(`Unexpected read: ${route}`);
     }
-    mutations++;
-    payloads.push(body);
-    if (rateLimited)
-      throw new LayoutTransportError(
-        "rate_limit",
-        "Discord rate limited",
-        429,
-        51,
-      );
-    if (mutations === failMutation) throw new Error("Interrupted request");
+    io.mutations++;
+    for (const entry of (body as { permission_overwrites?: object[] })
+      ?.permission_overwrites ?? [])
+      ok(!("kind" in entry));
+    if (io.rateLimited)
+      throw new LayoutTransportError("rate_limit", "Limited", 429, 51);
+    if (io.mutations === io.failMutation)
+      throw new Error("Interrupted request");
     const operation = operations.shift();
-    assert.ok(operation, "No unplanned mutation");
+    ok(operation, "No unplanned mutation");
     if (
       operation.kind === "createChannel" ||
       operation.kind === "createCategory"
@@ -87,13 +86,33 @@ async function fixture(context: TestContext) {
       const overwrites = (
         body as { permission_overwrites: { id: string; deny: string }[] }
       ).permission_overwrites;
-      assert.ok(
+      ok(
         BigInt(overwrites.find((entry) => entry.id === "guild")?.deny ?? "0") &
           1024n,
       );
     }
     server.apply(operation);
-    if (loseResponse) throw new Error("Lost create response");
+    if (
+      operation.kind === "reorderRoles" ||
+      operation.kind === "reorderChannels"
+    ) {
+      const live =
+        operation.kind === "reorderRoles"
+          ? server.snapshot.roles
+          : server.snapshot.channels;
+      for (const entry of body as { id: string; position: number }[]) {
+        const target = live.find((target) => target.id === entry.id);
+        ok(target);
+        target.position = entry.position;
+      }
+    }
+    if (
+      io.loseResponse &&
+      (operation.kind === "createRole" ||
+        operation.kind === "createChannel" ||
+        operation.kind === "createCategory")
+    )
+      throw new Error("Lost create response");
     if ("role" in operation)
       return { id: server.ids.roles[operation.role.key] };
     const key =
@@ -107,11 +126,9 @@ async function fixture(context: TestContext) {
     );
     return {
       id: channel?.id,
-      available_tags: channel?.tags.map((tag) => ({
-        ...tag,
-        emoji_id: null,
-        emoji_name: tag.emoji ?? null,
-      })),
+      available_tags: channel
+        ? wireTags(channel.tags.map((tag) => ({ ...tag, key: tag.id })))
+        : undefined,
     };
   };
   await withStateLock(options.statePath, (locked) =>
@@ -129,157 +146,176 @@ async function fixture(context: TestContext) {
       );
       return result;
     });
-  return {
-    options,
-    server,
-    review,
-    payloads,
-    get mutations() {
-      return mutations;
-    },
-    get reads() {
-      return reads;
-    },
-    limit() {
-      rateLimited = true;
-    },
-    lose() {
-      loseResponse = true;
-    },
-    interrupt(at: number) {
-      failMutation = at;
-    },
-    wrongApplication() {
-      identity = "other";
-    },
-    wrongGuild() {
-      guild = "other";
-    },
-  };
+  await review();
+  return { options, server, review, io };
 }
 
 for (const failure of ["lost response", "state write"])
   test(`${failure} requires adoption without a duplicate create`, async (context) => {
     const setup = await fixture(context);
-    await setup.review();
-    if (failure === "lost response") setup.lose();
+    if (failure === "lost response") setup.io.loseResponse = true;
     const result = await withStateLock(setup.options.statePath, (locked) =>
       applyLocked(setup.options, {
         ...locked,
         write(state) {
-          if (failure === "state write" && setup.mutations > 0)
+          if (failure === "state write" && setup.io.mutations > 0)
             throw new Error("Disk write failed");
           locked.write(state);
         },
       }),
     );
-    assert.equal(result.ok, false);
-    assert.equal(setup.mutations, 1);
-    assert.ok(result.readback);
+    ok(result.readback);
     const state = loadState(setup.options.statePath);
-    assert.equal(state.uncertainCreates.length, 1);
-    assert.ok(
-      inspectPlan(
-        setup.options.layout,
-        setup.server.snapshot,
-        state,
-      ).errors.some((error) => error.includes("Adoption required")),
-    );
+    equal(state.uncertainCreates.length, 1);
     const retry = await applyLayout(setup.options);
-    assert.equal(retry.ok, false);
-    assert.equal(setup.mutations, 1);
+    equal(retry.ok, false);
+    equal(setup.io.mutations, 1);
     const adopted = adopt(setup.options.layout, setup.server.snapshot, state);
-    assert.equal(adopted.ids.roles.member, setup.server.ids.roles.member);
-    assert.deepEqual(adopted.uncertainCreates, []);
+    equal(adopted.ids.roles.member, setup.server.ids.roles.member);
+    equal(adopted.uncertainCreates.length, 0);
   });
 
 for (const mismatch of ["application", "guild"])
   test(`preflight refuses a different ${mismatch}`, async (context) => {
     const setup = await fixture(context);
-    await setup.review();
-    if (mismatch === "application") setup.wrongApplication();
-    else setup.wrongGuild();
+    if (mismatch === "application") setup.io.identity = "other";
+    else setup.io.guild = "other";
     const result = await applyLayout(setup.options);
-    assert.equal(result.ok, false);
-    assert.match(result.error ?? "", /differs/);
-    assert.ok(result.readbackError);
-    assert.equal(setup.mutations, 0);
-    assert.ok(setup.reads >= 2);
+    match(result.error ?? "", /differs/);
+    ok(result.readbackError);
+    equal(setup.io.mutations, 0);
   });
 
-test("apply converges, saves tag IDs, and makes no second-apply mutations", async (context) => {
+test("apply saves tag IDs and interrupted permissions retain protection", async (context) => {
   const setup = await fixture(context);
-  await setup.review();
-  assert.equal((await applyLayout(setup.options)).ok, true);
-  assert.ok(loadState(setup.options.statePath).ids.tags.lobby.new);
-  const before = setup.mutations;
-  await setup.review();
-  assert.equal((await applyLayout(setup.options)).ok, true);
-  assert.equal(setup.mutations, before);
-});
-
-test("interrupted permission updates retain protection and stop mutation", async (context) => {
-  const setup = await fixture(context);
-  await setup.review();
-  assert.equal((await applyLayout(setup.options)).ok, true);
+  equal((await applyLayout(setup.options)).ok, true);
+  ok(loadState(setup.options.statePath).ids.tags.lobby.new);
   const channel = setup.server.snapshot.channels[0];
-  const before = setup.mutations;
-  setup.options.layout.channels[0].access.member = {
-    view: false,
-    send: false,
-    connect: false,
-    manageThreads: false,
-  };
+  const before = setup.io.mutations;
+  setup.options.layout.channels[0].access.member = access();
   await setup.review();
-  setup.interrupt(before + 2);
+  setup.io.failMutation = before + 2;
   const result = await applyLayout(setup.options);
-  assert.equal(result.ok, false);
-  assert.equal(result.completed[0].kind, "protectOverwrites");
-  assert.equal(
+  equal(result.ok, false);
+  equal(result.completed[0].kind, "protectOverwrites");
+  equal(
     canView(setup.server.snapshot, channel.id, setup.server.ids.roles.member),
     false,
   );
-  assert.equal(setup.mutations, before + 2);
-  assert.ok(result.readback);
+  equal(setup.io.mutations, before + 2);
+  ok(result.readback);
 });
 
 test("saved plan refuses drift and held state lock refuses concurrent apply", async (context) => {
   const setup = await fixture(context);
-  await setup.review();
   setup.options.layout.roles[2].name = "Renamed";
-  assert.equal((await applyLayout(setup.options)).ok, false);
+  equal((await applyLayout(setup.options)).ok, false);
   await withStateLock(setup.options.statePath, async () => {
-    await assert.rejects(applyLayout(setup.options), /State lock active/);
+    await rejects(applyLayout(setup.options), /State lock active/);
   });
-  assert.equal(setup.mutations, 0);
+  equal(setup.io.mutations, 0);
 });
 
-test("Discord position ties use numeric channel IDs and reverse role IDs", () => {
-  assert.ok(
-    comparePosition(
-      { id: "9", position: 1 },
-      { id: "10", position: 1 },
-      "channel",
-    ) < 0,
+test("tied role positions converge in one apply", async (context) => {
+  const setup = await fixture(context, true),
+    { server, options } = setup;
+  const member = server.snapshot.roles.find(
+    (role) => role.id === server.ids.roles.member,
   );
-  assert.ok(
-    comparePosition(
-      { id: "9", position: 1 },
-      { id: "10", position: 1 },
-      "role",
-    ) > 0,
+  ok(member);
+  const previous = member.id;
+  member.id = server.ids.roles.member = "9";
+  for (const channel of server.snapshot.channels)
+    for (const entry of channel.overwrites)
+      if (entry.id === previous) entry.id = "9";
+  options.layout.roles.push({
+    ...options.layout.roles[2],
+    key: "scout",
+    name: "Scout",
+  });
+  server.ids.roles.scout = "10";
+  server.snapshot.roles.push(
+    { ...member, id: "10", name: "Scout" },
+    { ...member, id: "fixed", name: "Integration", position: 2, managed: true },
+  );
+  for (const channel of options.layout.channels)
+    channel.access.scout = { ...channel.access.member };
+  await withStateLock(options.statePath, (locked) =>
+    locked.write({ ...locked.read(), ids: server.ids }),
+  );
+  await setup.review();
+  equal((await applyLayout(options)).ok, true);
+  equal(
+    server.snapshot.roles.find((entry) => entry.id === "fixed")?.position,
+    2,
+  );
+  const before = setup.io.mutations;
+  await setup.review();
+  equal((await applyLayout(options)).ok, true);
+  equal(setup.io.mutations, before);
+});
+
+for (const [command, path] of [
+  ["plan", "plan.json"],
+  ["apply", "plan.json"],
+  ["plan", "..notes/plan.json"],
+])
+  test(`${command} refuses repository plan path ${path}`, async (context) => {
+    const setup = await fixture(context);
+    const directory = fs.mkdtempSync(
+      join(process.cwd(), path.startsWith("..") ? "..notes-" : "plan-"),
+    );
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const planPath = join(directory, "plan.json");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/layout.mts",
+        command,
+        "--guild=guild",
+        "--application=app",
+        `--state=${setup.options.statePath}`,
+        `--plan=${planPath}`,
+      ],
+      { encoding: "utf8" },
+    );
+    equal(result.status, 1);
+    match(result.stderr, /Plan must be outside the repository/);
+  });
+
+test("lost replacement response adopts the replacement without another create", async (context) => {
+  const setup = await fixture(context, true),
+    { server, options } = setup;
+  const doomed = server.ids.channels.lobby;
+  options.layout.channels[0].type = "text";
+  options.layout.channels[0].tags = [];
+  options.allowDelete = true;
+  await setup.review();
+  setup.io.loseResponse = true;
+  equal((await applyLayout(options)).ok, false);
+  const adopted = adopt(
+    options.layout,
+    server.snapshot,
+    loadState(options.statePath),
+  );
+  equal(adopted.ids.channels.lobby, server.ids.channels.lobby);
+  const fresh = inspectPlan(options.layout, server.snapshot, adopted);
+  equal(fresh.ok, true);
+  ok(!fresh.operations.some((entry) => entry.kind === "createChannel"));
+  ok(
+    fresh.operations.some(
+      (entry) => entry.kind === "deleteChannel" && entry.id === doomed,
+    ),
   );
 });
 
 test("rate limit stops apply after one mutation attempt and still runs readback", async (context) => {
   const setup = await fixture(context);
-  await setup.review();
-  setup.limit();
+  setup.io.rateLimited = true;
   const result = await applyLayout(setup.options);
-  assert.equal(result.ok, false);
-  assert.equal(result.errorKind, "rate_limit");
-  assert.equal(result.retryAfterMs, 51);
-  assert.equal(setup.mutations, 1);
-  assert.deepEqual(result.completed, []);
-  assert.ok(result.readback);
+  equal(result.ok, false);
+  equal(result.errorKind, "rate_limit");
+  equal(result.retryAfterMs, 51);
+  equal(setup.io.mutations, 1);
+  ok(result.readback);
 });

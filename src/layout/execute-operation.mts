@@ -1,5 +1,6 @@
 import type { APIRole } from "discord.js";
 import { discordTypes } from "./inventory.mts";
+import { reorderPositions } from "./ordering.mts";
 import { rolePermissions } from "./permissions.mts";
 import type { LayoutState, LockedState, UncertainCreate } from "./state.mts";
 import type { DiscordPort, Target } from "./transport.mts";
@@ -25,8 +26,10 @@ function compiled(
   entries: CompiledOverwrite[],
   state: LayoutState,
 ): Overwrite[] {
-  return entries.map(({ roleKey, ...entry }) => ({
-    ...entry,
+  return entries.map(({ roleKey, type, allow, deny }) => ({
+    type,
+    allow,
+    deny,
     id: requiredId(state.ids.roles, roleKey),
   }));
 }
@@ -193,14 +196,28 @@ export async function executeOperation(
           : operation.channelKeys.map((key) =>
               snapshot.channels.find((entry) => entry.id === channelId(key)),
             );
-      const positions = entries
-        .map((entry) => {
-          if (!entry) throw new Error("Missing reorder target");
-          return entry.position;
-        })
-        .sort((left, right) => left - right);
-      const body = entries.map((entry, index) => ({
-        id: entry?.id,
+      const targets = entries.map((entry) => {
+        if (!entry) throw new Error("Missing reorder target");
+        return entry;
+      });
+      const siblings =
+        operation.kind === "reorderRoles"
+          ? snapshot.roles
+          : snapshot.channels.filter(
+              (entry) =>
+                entry.parent ===
+                (operation.parentKey ? channelId(operation.parentKey) : null),
+            );
+      const operator = snapshot.roles.find(
+        (entry) => entry.applicationId === target.applicationId,
+      );
+      const positions = reorderPositions(
+        targets,
+        siblings,
+        operation.kind === "reorderRoles" ? operator?.position : undefined,
+      );
+      const body = targets.map((entry, index) => ({
+        id: entry.id,
         position: positions[index],
       }));
       await port.request(
@@ -239,21 +256,27 @@ export async function executeOperation(
   }
 }
 
+export function createCandidates(
+  pending: UncertainCreate,
+  snapshot: Snapshot,
+  state: LayoutState,
+): { id: string }[] {
+  return pending.kind === "role"
+    ? snapshot.roles.filter((role) => role.name === pending.name)
+    : snapshot.channels.filter(
+        (channel) =>
+          channel.name === pending.name &&
+          channel.type === discordTypes[pending.type] &&
+          channel.parent ===
+            (pending.parentKey ? state.ids.channels[pending.parentKey] : null),
+      );
+}
+
 export function pendingCandidates(
   state: LayoutState,
   snapshot: Snapshot,
 ): string[] {
   return state.uncertainCreates
-    .filter((entry) =>
-      entry.kind === "role"
-        ? snapshot.roles.some((role) => role.name === entry.name)
-        : snapshot.channels.some(
-            (channel) =>
-              channel.name === entry.name &&
-              channel.type === discordTypes[entry.type] &&
-              channel.parent ===
-                (entry.parentKey ? state.ids.channels[entry.parentKey] : null),
-          ),
-    )
+    .filter((entry) => createCandidates(entry, snapshot, state).length > 0)
     .map((entry) => `Adoption required after uncertain create: ${entry.key}`);
 }

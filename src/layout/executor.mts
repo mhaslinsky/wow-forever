@@ -1,5 +1,9 @@
 import { PermissionFlagsBits as flags } from "discord.js";
-import { executeOperation, pendingCandidates } from "./execute-operation.mts";
+import {
+  createCandidates,
+  executeOperation,
+  pendingCandidates,
+} from "./execute-operation.mts";
 import { adoptionCandidates } from "./inventory.mts";
 import { comparePosition } from "./ordering.mts";
 import { plan } from "./plan.mts";
@@ -76,20 +80,35 @@ export function adopt(
 ): LayoutState {
   if (snapshot.guildId !== state.guildId)
     throw new Error("Target guild differs");
-  const ids = adoptionCandidates(layout, snapshot, state.ids);
-  for (const pending of state.uncertainCreates) {
-    const candidates = pendingCandidates(
-      { ...state, uncertainCreates: [pending] },
-      snapshot,
-    );
+  const recovering = structuredClone(state);
+  for (const pending of recovering.uncertainCreates) {
+    const bindings =
+      pending.kind === "role" ? recovering.ids.roles : recovering.ids.channels;
+    const previous = bindings[pending.key];
+    const matches = createCandidates(pending, snapshot, recovering);
+    if (matches.some((entry) => entry.id === previous)) continue;
+    if (matches.length > 1)
+      throw new Error(`Ambiguous adoption: ${pending.key}`);
+    if (matches.length === 0) continue;
+    const replacement = matches[0].id;
+    if (Object.values(bindings).includes(replacement))
+      throw new Error(`Ambiguous adoption: ${pending.key}`);
     if (
-      candidates.length &&
-      !(pending.kind === "role"
-        ? ids.roles[pending.key]
-        : ids.channels[pending.key])
-    )
-      throw new Error(`Cannot adopt uncertain create: ${pending.key}`);
+      previous &&
+      (pending.kind === "role" ? snapshot.roles : snapshot.channels).some(
+        (entry) => entry.id === previous,
+      )
+    ) {
+      // Keep the replaced object bound until the planner deletes it.
+      const retired = `replaced:${pending.key}:${previous}`;
+      bindings[retired] = previous;
+      if (pending.kind === "channel")
+        recovering.ids.tags[retired] = recovering.ids.tags[pending.key] ?? {};
+    }
+    bindings[pending.key] = replacement;
+    if (pending.kind === "channel") recovering.ids.tags[pending.key] = {};
   }
+  const ids = adoptionCandidates(layout, snapshot, recovering.ids);
   return { ...state, ids, uncertainCreates: [] };
 }
 
