@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { globSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import hcl from "hcl2-parser";
-import { waitForGateway } from "../scripts/gateway-readiness.mts";
+import {
+  gatewayDeployCommands,
+  waitForGateway,
+} from "../scripts/gateway-readiness.mts";
 
 test("readiness requires thirty stable seconds and a fresh instance heartbeat", async () => {
   let time = 1;
@@ -80,6 +83,28 @@ test("instance policies grant parameter reads only on the bot token", () => {
   );
   const statements = parsed.data.aws_iam_policy_document.gateway[0]
     .statement as { actions: string[]; resources: string[] }[];
+  assert.deepEqual(
+    statements.filter((statement) =>
+      statement.actions.includes("s3:ListBucket"),
+    ),
+    [
+      {
+        actions: ["s3:ListBucket"],
+        resources: [`\${aws_s3_bucket.gateway.arn}`],
+      },
+    ],
+  );
+  assert.deepEqual(
+    statements.filter((statement) =>
+      statement.actions.includes("s3:GetObject"),
+    ),
+    [
+      {
+        actions: ["s3:GetObject"],
+        resources: [`\${aws_s3_bucket.gateway.arn}/artifacts/gateway/*`],
+      },
+    ],
+  );
   const parameterStatements = statements.filter((statement) =>
     statement.actions.some((action) =>
       ["ssm:GetParameter", "ssm:GetParameters"].some((permission) =>
@@ -93,4 +118,17 @@ test("instance policies grant parameter reads only on the bot token", () => {
       resources: [`\${aws_ssm_parameter.secrets["discord_bot_token"].arn}`],
     },
   ]);
+});
+
+test("deployment enables the unit before restarting it", () => {
+  const commands = gatewayDeployCommands(
+    "bucket",
+    "artifacts/gateway/test.mjs",
+    "digest",
+  );
+  assert.ok(commands.includes("systemctl enable wow-forever-gateway"));
+  assert.ok(
+    commands.indexOf("systemctl enable wow-forever-gateway") <
+      commands.indexOf("systemctl restart wow-forever-gateway"),
+  );
 });

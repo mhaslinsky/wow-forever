@@ -54,6 +54,10 @@ if (available) {
     throw new Error("Gateway artifact digest mismatch");
   renameSync(`${directory}/next.mjs`, `${directory}/index.mjs`);
 }
-execFileSync("systemctl", ["enable", "--now", "wow-forever-gateway"], {
-  stdio: "inherit",
-});
+execFileSync(
+  "systemctl",
+  ["enable", ...(available ? ["--now"] : []), "wow-forever-gateway"],
+  {
+    stdio: "inherit",
+  },
+);

@@ -11,7 +11,7 @@ export type Log = (record: Readonly<Record<string, unknown>>) => void;
 
 export function tokenValue(value: string | undefined): string {
   if (!value?.trim() || value.trim() === "None")
-    throw new Error("TOKEN_NOT_CONFIGURED");
+    throw new StartupError("TOKEN_NOT_CONFIGURED");
   return value;
 }
 
@@ -87,4 +87,19 @@ export function scheduleHeartbeat(heartbeat: () => Promise<void>) {
   return setInterval(() => {
     void heartbeat();
   }, 60_000);
+}
+
+type StartupCode = "TOKEN_NOT_CONFIGURED" | "SSM_READ_FAILED" | "LOGIN_FAILED";
+export class StartupError extends Error {
+  readonly code: StartupCode;
+  constructor(code: StartupCode) {
+    super(code);
+    this.code = code;
+  }
+}
+export function startupFailure(error: unknown) {
+  return {
+    event: "gateway_start_failed",
+    code: error instanceof StartupError ? error.code : "STARTUP_FAILED",
+  };
 }

@@ -42,3 +42,20 @@ export async function waitForGateway(options: {
   } while (options.now() <= deadline);
   throw new Error("No instance heartbeat after restart within three minutes");
 }
+
+export function gatewayDeployCommands(
+  bucket: string,
+  key: string,
+  digest: string,
+) {
+  return [
+    "set -eu",
+    `aws s3 cp s3://${bucket}/${key} /opt/wow-forever-gateway/next.mjs --region us-east-1`,
+    `echo '${digest}  /opt/wow-forever-gateway/next.mjs' | sha256sum -c -`,
+    "mv /opt/wow-forever-gateway/next.mjs /opt/wow-forever-gateway/index.mjs",
+    "chmod 0644 /opt/wow-forever-gateway/index.mjs",
+    "systemctl enable wow-forever-gateway",
+    "systemctl restart wow-forever-gateway",
+    "systemctl is-active --quiet wow-forever-gateway",
+  ];
+}

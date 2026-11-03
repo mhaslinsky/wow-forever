@@ -7,7 +7,9 @@ import { Client, GatewayIntentBits } from "discord.js";
 import {
   attachGateway,
   handlers,
+  StartupError,
   scheduleHeartbeat,
+  startupFailure,
   tokenValue,
 } from "./client.mts";
 
@@ -17,12 +19,16 @@ const cloudwatch = new CloudWatchClient({ region });
 const log = (record: Readonly<Record<string, unknown>>) =>
   console.log(JSON.stringify(record));
 async function main() {
-  const result = await ssm.send(
-    new GetParameterCommand({
-      Name: "/wow-forever/discord_bot_token",
-      WithDecryption: true,
-    }),
-  );
+  const result = await ssm
+    .send(
+      new GetParameterCommand({
+        Name: "/wow-forever/discord_bot_token",
+        WithDecryption: true,
+      }),
+    )
+    .catch(() => {
+      throw new StartupError("SSM_READ_FAILED");
+    });
   const token = tokenValue(result.Parameter?.Value);
   const instance = process.env.GATEWAY_INSTANCE_ID;
   if (!instance || !/^i-[a-f0-9]+$/.test(instance))
@@ -67,10 +73,10 @@ async function main() {
     await client.login(token);
   } catch {
     stop();
-    throw new Error("GATEWAY_LOGIN_FAILED");
+    throw new StartupError("LOGIN_FAILED");
   }
 }
-main().catch(() => {
-  log({ event: "gateway_start_failed" });
+main().catch((error: unknown) => {
+  log(startupFailure(error));
   process.exitCode = 1;
 });

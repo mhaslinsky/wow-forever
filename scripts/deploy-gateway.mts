@@ -3,7 +3,11 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
-import { type UnitStatus, waitForGateway } from "./gateway-readiness.mts";
+import {
+  gatewayDeployCommands,
+  type UnitStatus,
+  waitForGateway,
+} from "./gateway-readiness.mts";
 
 const [instance, bucket, profile = "aidb-personal"] = process.argv.slice(2);
 if (
@@ -32,15 +36,7 @@ function aws(...args: string[]) {
   );
 }
 aws("s3", "cp", bundle, `s3://${bucket}/${key}`);
-const commands = [
-  "set -eu",
-  `aws s3 cp s3://${bucket}/${key} /opt/wow-forever-gateway/next.mjs --region us-east-1`,
-  `echo '${digest}  /opt/wow-forever-gateway/next.mjs' | sha256sum -c -`,
-  "mv /opt/wow-forever-gateway/next.mjs /opt/wow-forever-gateway/index.mjs",
-  "chmod 0644 /opt/wow-forever-gateway/index.mjs",
-  "systemctl restart wow-forever-gateway",
-  "systemctl is-active --quiet wow-forever-gateway",
-];
+const commands = gatewayDeployCommands(bucket, key, digest);
 function runCommand(commands: string[]): string {
   const sent = JSON.parse(
     aws(

@@ -8,7 +8,9 @@ import { Client } from "discord.js";
 import hcl from "hcl2-parser";
 import {
   attachGateway,
+  StartupError,
   scheduleHeartbeat,
+  startupFailure,
   tokenValue,
 } from "../src/gateway/client.mts";
 
@@ -184,4 +186,23 @@ test("silence alarm requires ten missing minute periods and resets after heartbe
   for (let minute = 1; minute < 10; minute++) assert.equal(evaluate(), false);
   assert.equal(evaluate(), true);
   assert.equal(evaluate(1), false);
+});
+
+test("startup failure logs fixed codes without error messages or tokens", () => {
+  for (const code of [
+    "TOKEN_NOT_CONFIGURED",
+    "SSM_READ_FAILED",
+    "LOGIN_FAILED",
+  ] as const) {
+    const error = new StartupError(code);
+    error.message = "private-token";
+    assert.deepEqual(startupFailure(error), {
+      event: "gateway_start_failed",
+      code,
+    });
+  }
+  assert.deepEqual(startupFailure(new Error("private-token")), {
+    event: "gateway_start_failed",
+    code: "STARTUP_FAILED",
+  });
 });
