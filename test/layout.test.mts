@@ -56,6 +56,9 @@ test("validation rejects malformed layouts and impossible access", () => {
     layout.roles[2].permissions.Administrator = true;
   }, /operator role/);
   invalid((layout) => {
+    layout.roles[2].permissions.UnnamedPermission = true;
+  }, /unknown permission/);
+  invalid((layout) => {
     layout.roles[2].key = "everyone";
   }, /duplicate keys/);
   invalid((layout) => {
@@ -161,8 +164,10 @@ test("normalization preserves drift bits, defaults and rejects malformed bitfiel
   equal(snapshot.channels[0].type, ChannelType.GuildStageVoice);
   equal(snapshot.channels[0].overwrites[0].allow, "1");
   equal(snapshot.roles[0].hoist, false);
+  equal(normalizeBits((1n << 64n) - 1n), ((1n << 64n) - 1n).toString());
   for (const malformed of ["", "-1", "garbage", Number.MAX_SAFE_INTEGER + 1])
     throws(() => normalizeBits(malformed));
+  throws(() => normalizeBits(1n << 64n));
   throws(() => normalizeOverwrites([entry, entry]), /Duplicate overwrite/);
   const ordered = normalizeOverwrites([overwrite("a"), overwrite("Z")]);
   deepEqual(

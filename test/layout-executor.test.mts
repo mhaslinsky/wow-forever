@@ -14,6 +14,7 @@ import {
 import { emptyState, loadState, withStateLock } from "../src/layout/state.mts";
 import type { DiscordPort } from "../src/layout/transport.mts";
 import {
+  fetchSnapshot,
   LayoutTransportError,
   wireOverwrites,
   wireTags,
@@ -149,6 +150,44 @@ async function fixture(context: TestContext, seeded = false) {
   await review();
   return { options, server, review, io };
 }
+
+test("live unnamed permission bits adopt, converge and survive writes", async (context) => {
+  const setup = await fixture(context, true);
+  const unknown = 1n << 47n;
+  setup.server.snapshot.roles[0].permissions = unknown.toString();
+  const overwrite = setup.server.live().overwrites[0];
+  overwrite.allow = (BigInt(overwrite.allow) | unknown).toString();
+  overwrite.deny = (BigInt(overwrite.deny) | (1n << 63n)).toString();
+  const snapshot = await fetchSnapshot(setup.options.port, setup.options);
+  const state = adopt(setup.options.layout, snapshot, emptyState("guild"));
+  const initial = inspectPlan(setup.options.layout, snapshot, state);
+  equal(initial.ok, true, JSON.stringify(initial));
+  equal(initial.operations.length, 0);
+  setup.options.layout.roles[0].permissions.ManageMessages = true;
+  setup.options.layout.channels[0].name = "renamed";
+  let roleWrite: string | undefined;
+  const request = setup.options.port.request;
+  context.mock.method(
+    setup.options.port,
+    "request",
+    async (...args: Parameters<DiscordPort["request"]>) => {
+      const [method, route, body] = args;
+      if (method === "PATCH" && route.endsWith("/roles/guild"))
+        roleWrite = (body as { permissions: string }).permissions;
+      return request(method, route, body);
+    },
+  );
+  await setup.review();
+  const result = await applyLayout(setup.options);
+  equal(result.ok, true, JSON.stringify(result));
+  ok(roleWrite);
+  equal(BigInt(roleWrite) & unknown, unknown);
+  equal(BigInt(setup.server.live().overwrites[0].allow) & unknown, unknown);
+  equal(
+    BigInt(setup.server.live().overwrites[0].deny) & (1n << 63n),
+    1n << 63n,
+  );
+});
 
 for (const failure of ["lost response", "state write"])
   test(`${failure} requires adoption without a duplicate create`, async (context) => {
@@ -309,6 +348,24 @@ test("lost replacement response adopts the replacement without another create", 
       (entry) => entry.kind === "deleteChannel" && entry.id === doomed,
     ),
   );
+});
+
+test("channel recreation excludes member overwrites with unnamed bits", async (context) => {
+  const { server, options, review } = await fixture(context, true);
+  server.live().overwrites.push({
+    id: "synthetic-member",
+    type: "member",
+    allow: (1n << 47n).toString(),
+    deny: "0",
+  });
+  options.layout.channels[0].type = "text";
+  options.layout.channels[0].tags = [];
+  options.allowDelete = true;
+  await review();
+  const result = await applyLayout(options);
+  equal(result.readback?.ok, true, result.readback?.errors.join("; "));
+  equal(result.ok, true);
+  equal(result.remaining?.operations.length, 0);
 });
 
 test("rate limit stops apply after one mutation attempt and still runs readback", async (context) => {
