@@ -1,6 +1,7 @@
 resource "aws_sns_topic" "alerts" { name = "wow-forever-alerts" }
 data "aws_iam_policy_document" "budget_publish" {
   statement {
+    sid       = "CloudWatchAlarms"
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.alerts.arn]
     principals {
@@ -19,6 +20,7 @@ data "aws_iam_policy_document" "budget_publish" {
     }
   }
   statement {
+    sid       = "Budgets"
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.alerts.arn]
     principals {
