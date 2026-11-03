@@ -350,6 +350,26 @@ test("lost replacement response adopts the replacement without another create", 
   );
 });
 
+test("channel recreation excludes member overwrites with unnamed bits", async (context) => {
+  const { server, options, review } = await fixture(context, true);
+  server
+    .live()
+    .overwrites.push({
+      id: "synthetic-member",
+      type: "member",
+      allow: (1n << 47n).toString(),
+      deny: "0",
+    });
+  options.layout.channels[0].type = "text";
+  options.layout.channels[0].tags = [];
+  options.allowDelete = true;
+  await review();
+  const result = await applyLayout(options);
+  equal(result.readback?.ok, true, result.readback?.errors.join("; "));
+  equal(result.ok, true);
+  equal(result.remaining?.operations.length, 0);
+});
+
 test("rate limit stops apply after one mutation attempt and still runs readback", async (context) => {
   const setup = await fixture(context);
   setup.io.rateLimited = true;
