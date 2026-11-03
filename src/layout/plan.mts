@@ -5,7 +5,7 @@ import {
   discordTypes,
   untracked,
 } from "./inventory.mts";
-import { comparePosition } from "./ordering.mts";
+import { comparePosition, reorderPositions } from "./ordering.mts";
 import {
   compilePermissions,
   normalizeOverwrites,
@@ -342,8 +342,27 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       (key) => liveRole(key)?.id,
       "role",
     )
-  )
+  ) {
+    // Check new roles at Discord's initial position before any creates run.
+    const targets = roleKeys.map(
+      (key) => liveRole(key) ?? { id: roleId(key), position: 1 },
+    );
+    const siblings = [
+      ...new Map(
+        [...snapshot.roles, ...targets].map((role) => [role.id, role]),
+      ).values(),
+    ];
+    try {
+      const positions = reorderPositions(targets, siblings, operator.position);
+      if (positions.some((position) => position >= operator.position))
+        throw new Error("Role order exceeds the operator ceiling");
+    } catch {
+      errors.push(
+        `Server owner: drag ${operator.name} to the top of the role list.`,
+      );
+    }
     reorders.push({ kind: "reorderRoles", roleKeys });
+  }
   for (const parentKey of [
     undefined,
     ...categories.map((channel) => channel.key),
