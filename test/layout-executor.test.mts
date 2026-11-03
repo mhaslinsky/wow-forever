@@ -259,6 +259,7 @@ for (const [command, path] of [
   ["plan", "plan.json"],
   ["apply", "plan.json"],
   ["plan", "..notes/plan.json"],
+  ["plan", "symlink"],
 ])
   test(`${command} refuses repository plan path ${path}`, async (context) => {
     const setup = await fixture(context);
@@ -267,6 +268,7 @@ for (const [command, path] of [
     );
     context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     const planPath = join(directory, "plan.json");
+    if (path === "symlink") fs.symlinkSync(setup.options.planPath, planPath);
     const result = spawnSync(
       process.execPath,
       [

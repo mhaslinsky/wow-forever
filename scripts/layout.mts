@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -53,7 +61,8 @@ try {
     const repo = resolve(fileURLToPath(new URL("..", import.meta.url)));
     const statePath = resolve(values.state);
     const requireOutside = (target: string, label: string) => {
-      let ancestor = resolve(target);
+      let ancestor = dirname(resolve(target));
+      let suffix = basename(resolve(target));
       while (true) {
         try {
           ancestor = realpathSync(ancestor);
@@ -62,10 +71,11 @@ try {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           const parent = resolve(ancestor, "..");
           if (parent === ancestor) throw error;
+          suffix = join(basename(ancestor), suffix);
           ancestor = parent;
         }
       }
-      const part = relative(realpathSync(repo), ancestor);
+      const part = relative(realpathSync(repo), join(ancestor, suffix));
       if (
         part === "" ||
         (part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part))
