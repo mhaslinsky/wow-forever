@@ -442,6 +442,58 @@ test("forum tag rename retains ID and tag removal is destructive", () => {
   equal(server.run().destructive, true);
 });
 
+test("stationary private child stays hidden when its category grants Member access", () => {
+  const layout = fixture(),
+    child = layout.channels[0];
+  child.type = "text";
+  child.tags = [];
+  child.access.member = access();
+  const parent = category(layout);
+  child.parent = parent.key;
+  layout.channels.unshift(parent);
+  const server = applied(layout),
+    { snapshot, ids } = server;
+  server.live().overwrites = structuredClone(
+    server.live(parent.key).overwrites,
+  );
+  parent.access.member = access(true, true);
+  const result = plan(layout, snapshot, ids);
+  equal(result.ok, true, JSON.stringify(result.errors));
+  for (const operation of result.operations) {
+    server.apply(operation);
+    equal(
+      canView(snapshot, ids.channels.lobby, ids.roles.member),
+      false,
+      operation.kind,
+    );
+  }
+  equal(server.live().parent, ids.channels[parent.key]);
+  deepEqual(plan(layout, snapshot, ids).operations, []);
+});
+
+test("reparent into a populated category converges in one apply", () => {
+  const layout = fixture(),
+    child = layout.channels[0];
+  layout.channels.push(
+    category(layout, "source"),
+    category(layout, "destination"),
+  );
+  child.parent = "source";
+  layout.channels.push({
+    ...structuredClone(child),
+    key: "resident",
+    name: "resident",
+    parent: "destination",
+  });
+  const server = applied(layout);
+  server.live().position = 0;
+  server.live("resident").position = 10;
+  child.parent = "destination";
+  server.run();
+  ok(server.live().position < server.live("resident").position);
+  deepEqual(plan(layout, server.snapshot, server.ids).operations, []);
+});
+
 test("mixed role changes protect before removals and grant after overwrite finals", () => {
   const layout = fixture();
   layout.channels[0].access.member = access();
