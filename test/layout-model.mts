@@ -227,3 +227,23 @@ export function model() {
   };
   return { snapshot, ids, apply };
 }
+
+export function canView(
+  snapshot: Snapshot,
+  channelId: string,
+  roleId: string,
+): boolean {
+  const channel = snapshot.channels.find((entry) => entry.id === channelId);
+  if (!channel) return false;
+  let bits = snapshot.roles
+    .filter((role) => role.id === snapshot.guildId || role.id === roleId)
+    .reduce((bits, role) => bits | BigInt(role.permissions), 0n);
+  if (bits & PermissionFlagsBits.Administrator) return true;
+  for (const id of [snapshot.guildId, roleId]) {
+    const entry = channel.overwrites.find(
+      (entry) => entry.type === "role" && entry.id === id,
+    );
+    if (entry) bits = (bits & ~BigInt(entry.deny)) | BigInt(entry.allow);
+  }
+  return Boolean(bits & PermissionFlagsBits.ViewChannel);
+}

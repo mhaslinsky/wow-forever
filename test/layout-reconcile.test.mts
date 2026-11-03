@@ -71,6 +71,43 @@ test("member overwrites are executable destructive removals", () => {
   );
 });
 
+test("bound ignored channels and roles survive removal from the layout", () => {
+  const server = applied();
+  const channel = server.layout.channels.pop();
+  const role = server.layout.roles.pop();
+  assert.ok(channel && role);
+  server.layout.ignore.channels.push(channel.name);
+  server.layout.ignore.roles.push(role.name);
+  const result = plan(server.layout, server.snapshot, server.ids);
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.operations, []);
+  assert.equal(result.destructive, false);
+});
+
+test("bound ignored-name channels still inventory unknown overwrites", () => {
+  const server = applied();
+  const channel = server.snapshot.channels[0];
+  server.layout.ignore.channels.push(channel.name);
+  server.snapshot.roles.push({
+    ...structuredClone(server.snapshot.roles[1]),
+    id: "integration-role",
+    name: "Integration",
+    applicationId: undefined,
+    managed: true,
+  });
+  channel.overwrites.push({
+    id: "integration-role",
+    type: "role",
+    allow: flags.ViewChannel.toString(),
+    deny: "0",
+  });
+  const result = plan(server.layout, server.snapshot, server.ids);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.untracked, [
+    { kind: "overwrite", id: "integration-role", channelId: channel.id },
+  ]);
+});
+
 test("adoption inventory uses candidate IDs while requiring explicit adoption", () => {
   const server = applied(),
     empty = { roles: {}, channels: {}, tags: {} };

@@ -10,7 +10,7 @@ import {
   normalizeOverwrites,
   rolePermissions,
 } from "./permissions.mts";
-import { denyView, privateChannel, unsync } from "./protection.mts";
+import { protectionTargets } from "./protection.mts";
 import type {
   Channel,
   CompiledOverwrite,
@@ -247,7 +247,11 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
   }
   for (const [key, id] of Object.entries(ids.channels)) {
     const live = liveChannel(key);
-    if (live && !layout.channels.some((channel) => channel.key === key)) {
+    if (
+      live &&
+      !layout.channels.some((channel) => channel.key === key) &&
+      !layout.ignore.channels.includes(live.name)
+    ) {
       touched.add(key);
       deletes.push(
         deletedChannel(key, id, live.type === discordTypes.category),
@@ -302,32 +306,41 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
   for (const operation of reorders)
     if (operation.kind === "reorderChannels")
       for (const key of operation.channelKeys) touched.add(key);
-  const categoryStates = [
-    ...snapshot.channels
-      .filter((channel) => channel.type === discordTypes.category)
-      .map((channel) => channel.overwrites),
-    ...categories.map(finalOverwrites),
-  ];
-  const touchedParentIds = new Set(
-    [...touched].map((key) => ids.channels[key]),
-  );
-  const targets = layout.roles
-    .filter((role) => !role.permissions.Administrator)
-    .map((role) => roleId(role.key));
-  const existingTargets = snapshot.roles
-    .filter((role) => !(BigInt(role.permissions) & flags.Administrator))
-    .map((role) => role.id);
-  const create = (channel: Channel) => {
-    const compiled = compilePermissions(layout, channel);
-    const normal = resolve(compiled);
-    const privateCreate = privateChannel(snapshot, ids, channel);
-    const sealed = privateCreate ? denyView(normal, targets) : normal;
+  const protection = protectionTargets(layout, snapshot, ids, {
+    touched,
+    roleBitsChanged,
+    recreated,
+    finalOverwrites: new Map(
+      layout.channels.map((channel) => [channel.key, finalOverwrites(channel)]),
+    ),
+  });
+  errors.push(...protection.errors);
+  for (const target of [...protection.channels].sort(
+    (left, right) =>
+      Number(right.live?.type === discordTypes.category) -
+      Number(left.live?.type === discordTypes.category),
+  )) {
+    if (!target.writable || target.create || !target.key) continue;
+    protects.push({
+      kind: "protectOverwrites",
+      channelKey: target.key,
+      overwrites: target.overwrites,
+    });
+    if (target.desired && !recreated.has(target.key))
+      replacements.set(target.key, replacement(target.desired));
+  }
+  for (const channel of [
+    ...categories,
+    ...layout.channels.filter((channel) => channel.type !== "category"),
+  ]) {
+    if (!recreated.has(channel.key)) continue;
+    const normal = resolve(compilePermissions(layout, channel));
     const overwrites =
-      channel.type === "category" || !privateCreate
-        ? sealed
-        : unsync(channel.type, snapshot.guildId, sealed, categoryStates);
+      protection.channels.find(
+        (target) => target.create && target.key === channel.key,
+      )?.overwrites ?? normal;
     const byId = new Map(
-      compiled.map((entry) => [roleId(entry.roleKey), entry.roleKey]),
+      layout.roles.map((role) => [roleId(role.key), role.key]),
     );
     const payload = overwrites.map(({ id, ...entry }) => {
       const roleKey = byId.get(id);
@@ -339,65 +352,17 @@ export function plan(layout: Layout, snapshot: Snapshot, idMap: IdMap) {
       channel,
       overwrites: payload,
     });
-    if (channel.type === "category") categoryStates.push(overwrites);
     if (!sameOverwrites(overwrites, finalOverwrites(channel)))
       replacements.set(channel.key, replacement(channel));
-  };
-  for (const category of categories)
-    if (recreated.has(category.key)) create(category);
-  const managedLive = Object.entries(ids.channels).flatMap(([key, id]) => {
-    const live = snapshot.channels.find((entry) => entry.id === id);
-    return live
-      ? [
-          {
-            key,
-            live,
-            desired: layout.channels.find((channel) => channel.key === key),
-          },
-        ]
-      : [];
-  });
-  managedLive.sort(
-    (left, right) =>
-      Number(right.live.type === discordTypes.category) -
-      Number(left.live.type === discordTypes.category),
-  );
-  for (const { key, live, desired } of managedLive) {
-    const affected =
-      roleBitsChanged ||
-      touched.has(key) ||
-      touchedParentIds.has(live.parent ?? "") ||
-      (desired?.parent && touched.has(desired.parent));
-    if (!affected || !privateChannel(snapshot, ids, desired, live)) continue;
-    const type =
-      desired?.type ??
-      (Object.entries(discordTypes).find(
-        ([, value]) => value === live.type,
-      )?.[0] as Channel["type"] | undefined);
-    if (!type) {
-      errors.push(`Unsupported private channel: ${key}`);
-      continue;
-    }
-    const sealed = denyView(live.overwrites, existingTargets);
-    const overwrites =
-      live.type === discordTypes.category
-        ? sealed
-        : unsync(type, snapshot.guildId, sealed, categoryStates);
-    protects.push({ kind: "protectOverwrites", channelKey: key, overwrites });
-    if (live.type === discordTypes.category) categoryStates.push(overwrites);
-    if (desired && !recreated.has(key))
-      replacements.set(key, replacement(desired));
   }
-  for (const channel of layout.channels)
-    if (channel.type !== "category" && recreated.has(channel.key))
-      create(channel);
   for (const [key, id] of Object.entries(ids.roles)) {
     const live = liveRole(key);
     if (
       live &&
       !layout.roles.some((role) => role.key === key) &&
       id !== snapshot.guildId &&
-      live.applicationId !== snapshot.applicationId
+      live.applicationId !== snapshot.applicationId &&
+      !layout.ignore.roles.includes(live.name)
     ) {
       if (live.managed || live.position >= operator.position)
         errors.push(`Uneditable role: ${key}`);

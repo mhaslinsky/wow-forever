@@ -124,7 +124,11 @@ export function untracked(
       !layout.ignore.channels.includes(channel.name)
     )
       result.push({ kind: "channel", id: channel.id });
-    if (layout.ignore.channels.includes(channel.name)) continue;
+    if (
+      layout.ignore.channels.includes(channel.name) &&
+      !Object.values(ids.channels).includes(channel.id)
+    )
+      continue;
     for (const overwrite of channel.overwrites) {
       const role = snapshot.roles.find((entry) => entry.id === overwrite.id);
       if (

@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ChannelType, PermissionFlagsBits as flags } from "discord.js";
+import { ChannelType } from "discord.js";
 import fc from "fast-check";
-import type { Snapshot } from "../src/layout/index.mts";
 import { parseLayout, plan, validateLayout } from "../src/layout/index.mts";
-import { model } from "./layout-model.mts";
+import { canView, model } from "./layout-model.mts";
 
 const shapes = [
   "root move",
@@ -14,25 +13,6 @@ const shapes = [
   "base grant",
   "new category",
 ] as const;
-function memberSees(
-  snapshot: Snapshot,
-  channelId: string,
-  memberId: string,
-): boolean {
-  const channel = snapshot.channels.find((entry) => entry.id === channelId);
-  if (!channel) return false;
-  let bits = snapshot.roles
-    .filter((role) => role.id === snapshot.guildId || role.id === memberId)
-    .reduce((bits, role) => bits | BigInt(role.permissions), 0n);
-  if (bits & flags.Administrator) return true;
-  for (const id of [snapshot.guildId, memberId]) {
-    const entry = channel.overwrites.find(
-      (entry) => entry.type === "role" && entry.id === id,
-    );
-    if (entry) bits = (bits & ~BigInt(entry.deny)) | BigInt(entry.allow);
-  }
-  return Boolean(bits & flags.ViewChannel);
-}
 for (const shape of shapes)
   test(`private transitions: ${shape}`, () => {
     fc.assert(
@@ -110,7 +90,7 @@ for (const shape of shapes)
         for (const operation of result.operations) {
           server.apply(operation);
           assert.equal(
-            memberSees(
+            canView(
               server.snapshot,
               server.ids.channels.lobby,
               server.ids.roles.member,
