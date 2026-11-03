@@ -20,3 +20,8 @@ variable "monthly_budget_usd" {
     error_message = "Budget must be positive."
   }
 }
+
+variable "budget_alert_email" {
+  type    = string
+  default = "mhaslinsky@gmail.com"
+}

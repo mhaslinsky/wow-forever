@@ -37,6 +37,8 @@ resource "aws_budgets_budget" "monthly" {
       threshold_type            = "PERCENTAGE"
       notification_type         = "ACTUAL"
       subscriber_sns_topic_arns = [aws_sns_topic.alerts.arn]
+      # Budgets sends an actual-spend alert once per period, so email covers a dropped Discord delivery.
+      subscriber_email_addresses = [var.budget_alert_email]
     }
   }
   depends_on = [aws_sns_topic_policy.alerts, aws_sns_topic_subscription.alerts_discord]
