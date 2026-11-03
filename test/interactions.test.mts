@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import fc from "fast-check";
+import ts from "typescript";
 import type {
   Clock,
   Interaction,
@@ -25,10 +26,8 @@ import { createWorker } from "../src/interactions/worker.mts";
 import { fixtures } from "./interactions-fixtures.mts";
 
 const keys = generateKeyPairSync("ed25519");
-const publicKey = keys.publicKey
-  .export({ format: "der", type: "spki" })
-  .subarray(-32)
-  .toString("hex");
+const publicDer = keys.publicKey.export({ format: "der", type: "spki" });
+const publicKey = publicDer.subarray(-32).toString("hex");
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 class SteppedClock implements Clock {
   value = 1_800_000_000_000;
@@ -122,44 +121,39 @@ const paidRoute = (calls: string[]): Route => ({
   },
 });
 test("cryptographic acceptance equals the independent Ed25519 oracle", () => {
+  const samples = fc.tuple(fc.uint8Array(), fc.string(), fc.boolean());
   fc.assert(
-    fc.property(
-      fc.uint8Array(),
-      fc.string(),
-      fc.boolean(),
-      (bytes, timestamp, tamper) => {
-        const body = Buffer.from(bytes);
-        const payload = Buffer.concat([Buffer.from(timestamp), body]);
-        const signature = sign(null, payload, keys.privateKey);
-        if (tamper) signature[0] ^= 1;
-        assert.equal(
-          signatureValid(body, signature.toString("hex"), timestamp, publicKey),
-          verify(null, payload, keys.publicKey, signature),
-        );
-      },
-    ),
+    fc.property(samples, ([bytes, timestamp, tamper]) => {
+      const body = Buffer.from(bytes);
+      const payload = Buffer.concat([Buffer.from(timestamp), body]);
+      const signature = sign(null, payload, keys.privateKey);
+      if (tamper) signature[0] ^= 1;
+      assert.equal(
+        signatureValid(body, signature.toString("hex"), timestamp, publicKey),
+        verify(null, payload, keys.publicKey, signature),
+      );
+    }),
   );
 });
 test("endpoint acceptance requires a valid signature and a fresh timestamp", async () => {
   const setup = harness();
+  const http = createHttp(setup.ports, fixtures);
+  const now = setup.clock.now();
+  const skew = fc.integer({ min: -1000, max: 1000 });
+  const samples = fc.tuple(skew, fc.string(), fc.boolean());
   await fc.assert(
-    fc.asyncProperty(
-      fc.integer({ min: -1000, max: 1000 }),
-      fc.string(),
-      fc.boolean(),
-      async (offset, padding, tamper) => {
-        const event = setup.event(
-          JSON.stringify({ type: 1, padding }),
-          String(setup.clock.now() / 1000 + offset),
-        );
-        if (tamper) event.body += " ";
-        const response = await createHttp(setup.ports, fixtures)(event);
-        assert.equal(
-          response.statusCode,
-          !tamper && Math.abs(offset) <= 300 ? 200 : 401,
-        );
-      },
-    ),
+    fc.asyncProperty(samples, async ([offset, padding, tamper]) => {
+      const event = setup.event(
+        JSON.stringify({ type: 1, padding }),
+        String(setup.clock.now() / 1000 + offset),
+      );
+      if (tamper) event.body += " ";
+      const response = await http(event);
+      assert.equal(
+        response.statusCode,
+        !tamper && Math.abs(offset) <= 300 ? 200 : 401,
+      );
+    }),
   );
   for (const timestamp of [
     "",
@@ -170,23 +164,14 @@ test("endpoint acceptance requires a valid signature and a fresh timestamp", asy
     " 1800000000",
     "-1",
     "9007199254740992",
-  ]) {
+  ])
     assert.equal(
-      (
-        await createHttp(
-          setup.ports,
-          fixtures,
-        )(setup.event(undefined, timestamp))
-      ).statusCode,
+      (await http(setup.event(undefined, timestamp))).statusCode,
       401,
     );
-  }
   for (const offset of [-301, -300, 300, 301])
     assert.equal(
-      timestampFresh(
-        String(setup.clock.now() / 1000 + offset),
-        setup.clock.now(),
-      ),
+      timestampFresh(String(now / 1000 + offset), now),
       Math.abs(offset) <= 300,
     );
 });
@@ -231,19 +216,14 @@ test("router covers inline, deferred, component, modal and autocomplete response
     [3, "fixture-open-modal", 9],
     [4, "fixture-fast", 8],
   ] as const) {
-    assert.equal(
-      JSON.parse(
-        (await http(setup.event(JSON.stringify(interaction(type, name))))).body,
-      ).type,
-      expected,
-    );
+    const event = setup.event(JSON.stringify(interaction(type, name)));
+    const response = await http(event);
+    assert.equal(JSON.parse(response.body).type, expected);
   }
-  assert.equal(
-    JSON.parse(
-      (await http(setup.event(JSON.stringify(interaction(2, "unknown"))))).body,
-    ).data.content,
-    "Unknown command",
+  const unknown = await http(
+    setup.event(JSON.stringify(interaction(2, "unknown"))),
   );
+  assert.equal(JSON.parse(unknown.body).data.content, "Unknown command");
   assert.equal(commandDefinitions(fixtures).length, 2);
   setup.ports.invoke = async () => {
     throw new Error("Unavailable");
@@ -482,4 +462,26 @@ test("production bundle imports in isolation and excludes all fixture commands",
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+test("claims adapter imports only DynamoDBClient and PutItemCommand", () => {
+  const file = "src/interactions/index.mts";
+  const text = readFileSync(file, "utf8");
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const names: string[] = [];
+  const inspect = (node: ts.Node) => {
+    const sdk = ts.isStringLiteral(node) && node.text.startsWith("@aws-sdk/");
+    if (sdk && node.text.includes("dynamodb")) {
+      assert.equal(node.text, "@aws-sdk/client-dynamodb");
+      assert.ok(ts.isImportDeclaration(node.parent));
+      const clause = node.parent.importClause;
+      assert.equal(clause?.name, undefined);
+      const bindings = clause?.namedBindings;
+      assert.ok(bindings && ts.isNamedImports(bindings));
+      for (const entry of bindings.elements)
+        names.push((entry.propertyName ?? entry.name).text);
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(source);
+  assert.deepEqual(names.sort(), ["DynamoDBClient", "PutItemCommand"]);
 });

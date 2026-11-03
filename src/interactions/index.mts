@@ -10,6 +10,7 @@ import { createWorker } from "./worker.mts";
 const ssm = new SSMClient({ maxAttempts: 1 });
 const lambda = new LambdaClient({ maxAttempts: 1 });
 const dynamo = new DynamoDBClient({ maxAttempts: 1 });
+const claimsTable = process.env.CLAIMS_TABLE;
 const secrets = new Map<string, string>();
 export async function readSecret(name: string, signal: AbortSignal) {
   const cached = secrets.get(name);
@@ -69,9 +70,10 @@ const ports: Ports = {
   },
   async claim(key, expiresAt, signal) {
     try {
+      if (!claimsTable) throw new Error("Missing CLAIMS_TABLE");
       await dynamo.send(
         new PutItemCommand({
-          TableName: required("CLAIMS_TABLE"),
+          TableName: claimsTable,
           Item: { pk: { S: key }, expiresAt: { N: String(expiresAt) } },
           ConditionExpression: "attribute_not_exists(pk) OR expiresAt < :now",
           ExpressionAttributeValues: {
