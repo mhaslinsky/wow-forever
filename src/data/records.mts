@@ -7,6 +7,7 @@ export const KIND_POLICY = Object.freeze({
   raid: "Member",
   attendance: "Member",
   signup: "Member",
+  voicePresence: "Member",
   lootAward: "Member",
   wishlist: "Member",
   fact: "Owner",
@@ -19,6 +20,10 @@ const CODECS = Object.freeze({
   member: { prefix: "MEMBER", fields: ["name"] },
   character: { prefix: "CHARACTER", fields: ["name"] },
   raid: { prefix: "RAID", fields: ["date"] },
+  voicePresence: {
+    prefix: "VOICE_PRESENCE",
+    fields: ["guildId", "channelId", "joinedAt"],
+  },
   attendance: { prefix: "ATTENDANCE", fields: ["raidId"] },
   signup: {
     prefix: "SIGNUP",
@@ -40,7 +45,10 @@ export type GuildRecord = {
   [Current in Kind]: Key & { kind: Current; ownerId: string } & Record<
       Fields<Current>,
       string
-    >;
+    > &
+    (Current extends "voicePresence"
+      ? { leftAt?: string }
+      : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -79,6 +87,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "voicePresence" && item.leftAt !== undefined) {
+    if (typeof item.leftAt !== "string" || !item.leftAt) return;
+    output.leftAt = item.leftAt;
   }
   return output as GuildRecord;
 }

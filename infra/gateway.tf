@@ -53,6 +53,10 @@ resource "aws_iam_instance_profile" "gateway" {
 }
 data "aws_iam_policy_document" "gateway" {
   statement {
+    actions = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+  }
+  statement {
     actions = [
       "ssm:UpdateInstanceInformation", "ssm:ListAssociations", "ssm:ListInstanceAssociations",
       "ssm:DescribeAssociation", "ssm:GetDocument", "ssm:DescribeDocument",

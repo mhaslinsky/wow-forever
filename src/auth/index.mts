@@ -30,16 +30,18 @@ export function createPrincipalFactory(config: {
   guildId: string;
   memberRoleId: string;
   officerRoleId: string;
+  officerRoleIds?: readonly string[];
   jobs: Readonly<Record<string, readonly Kind[]>>;
 }) {
   const guildId = config.guildId;
   const memberRoleId = config.memberRoleId;
   const officerRoleId = config.officerRoleId;
+  const officerRoleIds = [officerRoleId, ...(config.officerRoleIds ?? [])];
   if (
     !guildId ||
     !memberRoleId ||
     !officerRoleId ||
-    memberRoleId === officerRoleId
+    officerRoleIds.some((roleId) => !roleId || roleId === memberRoleId)
   )
     throw new Error("INVALID_ROLE_CONFIG");
   const jobs = new Map(
@@ -54,7 +56,8 @@ export function createPrincipalFactory(config: {
       memberRoleId &&
       officerRoleId
     ) {
-      if (roleIds.includes(officerRoleId)) roles.push("Officer", "Member");
+      if (officerRoleIds.some((roleId) => roleIds.includes(roleId)))
+        roles.push("Officer", "Member");
       else if (roleIds.includes(memberRoleId)) roles.push("Member");
     }
     const principal = Object.freeze({}) as Principal<"user">;
@@ -112,19 +115,25 @@ export function createPrincipalFactory(config: {
     systemPrincipal(jobName: string): Principal<"system"> {
       const kinds = jobs.get(jobName);
       if (!kinds) throw new Error("UNKNOWN_JOB");
-      // Facts belong to a user, so jobs cannot declare writes to them.
-      if (kinds.includes("fact")) throw new Error("INVALID_JOB_KINDS");
-      const principal = Object.freeze({}) as Principal<"system">;
-      authorities.set(
-        principal,
-        Object.freeze({
-          mode: "system",
-          userId: "",
-          roles: Object.freeze([]),
-          writableKinds: Object.freeze(kinds),
-        }),
-      );
-      return principal;
+      return createSystemPrincipal(kinds);
     },
   };
+}
+
+export function createSystemPrincipal(
+  kinds: readonly Kind[],
+): Principal<"system"> {
+  // Facts belong to a user, so jobs cannot declare writes to them.
+  if (kinds.includes("fact")) throw new Error("INVALID_JOB_KINDS");
+  const principal = Object.freeze({}) as Principal<"system">;
+  authorities.set(
+    principal,
+    Object.freeze({
+      mode: "system",
+      userId: "",
+      roles: Object.freeze([]),
+      writableKinds: Object.freeze([...kinds]),
+    }),
+  );
+  return principal;
 }

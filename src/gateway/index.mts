@@ -4,6 +4,7 @@ import {
 } from "@aws-sdk/client-cloudwatch";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Client, GatewayIntentBits } from "discord.js";
+import { createDynamoDataAccess } from "../data/index.mts";
 import {
   attachGateway,
   handlers,
@@ -12,6 +13,7 @@ import {
   startupFailure,
   tokenValue,
 } from "./client.mts";
+import { createVoicePresenceHandler } from "./voice-presence.mts";
 
 const region = "us-east-1";
 const ssm = new SSMClient({ region });
@@ -43,7 +45,12 @@ async function main() {
   });
   const heartbeat = attachGateway(
     client,
-    handlers,
+    {
+      ...handlers,
+      voiceStateUpdate: createVoicePresenceHandler(
+        createDynamoDataAccess({ tableName: "wow-forever", region }),
+      ),
+    },
     async (name) => {
       await cloudwatch.send(
         new PutMetricDataCommand({
