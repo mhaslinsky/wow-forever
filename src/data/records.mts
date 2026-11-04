@@ -59,6 +59,11 @@ export type GuildRecord = {
       : Current extends "candidate"
         ? {
             recruiting?: RecruitingState;
+            retention?: {
+              outcome: "Declined" | "Withdrawn";
+              threadId: string;
+              archived: boolean;
+            };
             application?: Application;
             discordUserId?: string;
             characters?: CharacterDeclaration[];
@@ -112,6 +117,18 @@ export function decode(raw: unknown): GuildRecord | undefined {
   if (kind === "voicePresence" && item.endUnknown !== undefined) {
     if (typeof item.endUnknown !== "boolean" || !item.leftAt) return;
     output.endUnknown = item.endUnknown;
+  }
+  if (kind === "candidate" && item.retention !== undefined) {
+    const retention = item.retention as Record<string, unknown>;
+    if (
+      !retention ||
+      !["Declined", "Withdrawn"].includes(retention.outcome as string) ||
+      typeof retention.threadId !== "string" ||
+      !retention.threadId ||
+      typeof retention.archived !== "boolean"
+    )
+      return;
+    output.retention = { ...retention };
   }
   if (kind === "candidate" && item.recruiting !== undefined) {
     if (!recruitingState(item.recruiting)) return;

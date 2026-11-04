@@ -1,5 +1,5 @@
 export type RecruitingFailure =
-  | { code: "RECRUITING_DIGEST_FAILED" }
+  | { code: "RECRUITING_DIGEST_FAILED" | "RECRUITING_RETENTION_FAILED" }
   | {
       code:
         | "MEMBER_GRANT_SKIPPED"
