@@ -3,7 +3,7 @@ import { createRetentionStorage } from "../data/retention.mts";
 import { readSecret } from "../interactions/index.mts";
 import { reportRecruitingFailure } from "./alarm.mts";
 import { recruitingContext } from "./discord.mts";
-import { createRetentionPurge } from "./retention.mts";
+import { archiveRetentionThread, createRetentionPurge } from "./retention.mts";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -34,12 +34,7 @@ export async function handler() {
       }),
       retentionDays: Number(required("RETENTION_DAYS")),
       now: Date.now,
-      async archive(threadId) {
-        const thread = await forum.threads.fetch(threadId, { force: true });
-        if (!thread || thread.parentId !== forum.id)
-          throw new Error("CANDIDATE_THREAD_MISSING");
-        await thread.edit({ archived: true, locked: true });
-      },
+      archive: (threadId) => archiveRetentionThread(forum, threadId),
     })();
   } catch {
     reportRecruitingFailure({ code: "RECRUITING_RETENTION_FAILED" });

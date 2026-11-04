@@ -41,6 +41,16 @@ resource "aws_iam_role" "interactions" {
 
 data "aws_iam_policy_document" "interactions" {
   statement {
+    actions   = ["dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["OFFICER_NOTE#${var.guild_id}"]
+    }
+  }
+
+  statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.interactions.arn}:*"]
   }

@@ -53,6 +53,16 @@ resource "aws_iam_instance_profile" "gateway" {
 }
 data "aws_iam_policy_document" "gateway" {
   statement {
+    actions   = ["dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["OFFICER_NOTE#${var.guild_id}"]
+    }
+  }
+
+  statement {
     actions   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.guild.arn]
   }

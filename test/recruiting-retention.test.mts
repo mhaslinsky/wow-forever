@@ -8,6 +8,7 @@ import {
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import type { ForumChannel } from "discord.js";
 import { createSystemPrincipal } from "../src/auth/index.mts";
 import { createDynamoDataAccess } from "../src/data/index.mts";
 import { recordKey } from "../src/data/records.mts";
@@ -16,7 +17,10 @@ import { SOURCES, STAGES } from "../src/data/recruiting.mts";
 import { createRetentionStorage } from "../src/data/retention.mts";
 import type { Candidate } from "../src/recruiting/core.mts";
 import { createRecruiting } from "../src/recruiting/core.mts";
-import { createRetentionPurge } from "../src/recruiting/retention.mts";
+import {
+  archiveRetentionThread,
+  createRetentionPurge,
+} from "../src/recruiting/retention.mts";
 
 function candidate(stage: Stage): Candidate {
   return {
@@ -337,4 +341,30 @@ test("Applied then Trial both succeed and both audit notes exist", async (contex
   await core.setStage("New", "Applied", "applicant", "applied");
   assert.equal(stored.recruiting?.stage, "Trial");
   assert.deepEqual(notes.sort(), ["Applied", "Trial"]);
+});
+
+test("deleted thread does not stop later candidates being purged", async () => {
+  const archived: string[] = [];
+  const forum = {
+    id: "forum",
+    threads: {
+      fetch: async (threadId: string) => {
+        if (threadId === "Declined")
+          throw Object.assign(new Error("Unknown Channel"), { code: 10003 });
+        return { parentId: "forum", edit: async () => {} };
+      },
+    },
+  } as unknown as ForumChannel;
+  const purge = createRetentionPurge({
+    candidates: async () => [candidate("Declined"), candidate("Withdrawn")],
+    retentionDays: 90,
+    now: () => Date.parse("2031-01-01T00:00:00Z"),
+    purge: async () => {},
+    archive: (threadId) => archiveRetentionThread(forum, threadId),
+    archived: async (record) => {
+      archived.push(record.sk);
+    },
+  });
+  assert.deepEqual(await purge(), { purged: 2 });
+  assert.deepEqual(archived, ["CANDIDATE#Declined", "CANDIDATE#Withdrawn"]);
 });

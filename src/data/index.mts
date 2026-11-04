@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   BatchGetCommand,
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
@@ -25,6 +26,7 @@ declare const cursorBrand: unique symbol;
 export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
+type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = { candidateThreadId: string };
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
@@ -35,6 +37,7 @@ export type StoragePort = {
   ): Promise<{ items: unknown[]; cursor?: QueryCursor }>;
   batch(keys: readonly Key[]): Promise<unknown[]>;
   put(item: GuildRecord, condition?: WriteCondition): Promise<void>;
+  removeNote?(item: OfficerNote): Promise<void>;
 };
 type Result<Mode extends "user" | "system"> = Mode extends "user"
   ? UserResult<GuildRecord>
@@ -115,6 +118,23 @@ export function createDataAccess(
       query: (partition: string) => query(partition, false),
       lookup: (partition: string) => query(partition, true),
       batch: (keys: readonly Key[]) => read(() => storage.batch(keys)),
+      async removeOfficerNote(input: OfficerNote): Promise<void> {
+        const item = decode(input);
+        if (!item || item.kind !== "officerNote")
+          throw new Error("INVALID_RECORD");
+        const actor = authority(principal);
+        const allowed =
+          actor.mode === "system"
+            ? actor.writableKinds.includes("officerNote")
+            : actor.roles.includes("Officer");
+        if (!allowed) throw new Error("WRITE_DENIED");
+        if (!storage.removeNote) throw new Error("NOTE_REMOVAL_UNAVAILABLE");
+        try {
+          await storage.removeNote(item);
+        } catch {
+          throw new Error("NOTE_REMOVAL_FAILED");
+        }
+      },
       async write(
         input: RecordInput,
         condition?: WriteCondition,
@@ -244,6 +264,20 @@ export function createDynamoDataAccess(config: {
         if (pending.length) throw new Error("BATCH_INCOMPLETE");
       }
       return items;
+    },
+    async removeNote(item) {
+      await client.send(
+        new DeleteCommand({
+          TableName: config.tableName,
+          Key: { pk: item.pk, sk: item.sk },
+          ConditionExpression:
+            "attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner)",
+          ExpressionAttributeValues: {
+            ":kind": "officerNote",
+            ":owner": item.ownerId,
+          },
+        }),
+      );
     },
     async put(item, condition) {
       if (item.kind === "officerNote") {

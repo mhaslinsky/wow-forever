@@ -1,5 +1,6 @@
 export type RecruitingFailure =
-  | { code: "RECRUITING_DIGEST_FAILED" | "RECRUITING_RETENTION_FAILED" }
+  | { code: "RECRUITING_DIGEST_FAILED" }
+  | { code: "RECRUITING_RETENTION_FAILED"; key?: { pk: string; sk: string } }
   | {
       code:
         | "MEMBER_GRANT_SKIPPED"
@@ -7,7 +8,8 @@ export type RecruitingFailure =
         | "CANDIDATE_SAVE_FAILED"
         | "CANDIDATE_NOT_FOUND"
         | "RECRUITING_MEMBER_LOOKUP_FAILED"
-        | "RECRUITING_EDIT_DENIED";
+        | "RECRUITING_EDIT_DENIED"
+        | "SUBMISSION_NOTE_CLEANUP_FAILED";
       threadId: string;
     }
   | { code: "RECRUITING_AUDIT_UNAVAILABLE"; guildId: string };

@@ -138,6 +138,8 @@ export function createRecruiting(
         if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
         await accepted(updated);
       } catch (cause) {
+        // Restore the previous stage so another acceptance can retry the grant.
+        await records.write(record);
         await acceptanceFailed?.();
         throw cause;
       }
@@ -270,10 +272,20 @@ export function createRecruiting(
           await records.write(note(threadId), {
             candidateThreadId: threadId,
           });
-          await forum.post(
-            threadId,
-            `Applied again through ${input.source}:\n${input.content || input.name}`,
-          );
+          try {
+            await forum.post(
+              threadId,
+              `Applied again through ${input.source}:\n${input.content || input.name}`,
+            );
+          } catch (cause) {
+            // A failed delivery must not make its retry look like a duplicate.
+            try {
+              await records.removeOfficerNote(note(threadId));
+            } catch {
+              report({ code: "SUBMISSION_NOTE_CLEANUP_FAILED", threadId });
+            }
+            throw cause;
+          }
           return enriched;
         });
       }
