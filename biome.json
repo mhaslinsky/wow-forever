@@ -48,7 +48,9 @@
         "src/data/retention.mts",
         "test/recruiting-retention.test.mts",
         "test/data-local.test.mts",
-        "src/interactions/index.mts"
+        "src/interactions/index.mts",
+        "src/data/gow-applications.mts",
+        "test/gow-intake.test.mts"
       ],
       "linter": {
         "rules": {
