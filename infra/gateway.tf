@@ -53,7 +53,7 @@ resource "aws_iam_instance_profile" "gateway" {
 }
 data "aws_iam_policy_document" "gateway" {
   statement {
-    actions = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.guild.arn]
   }
   statement {
