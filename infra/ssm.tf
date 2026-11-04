@@ -7,14 +7,24 @@ resource "aws_ssm_parameter" "secrets" {
 }
 data "aws_kms_key" "ssm" { key_id = "alias/aws/ssm" }
 
+locals {
+  external_api_key_names = toset(["raid_helper_api_key", "guildsofwow_api_key", "parallel_api_key"])
+}
+
+import {
+  for_each = local.external_api_key_names
+  to       = aws_ssm_parameter.external_api_keys[each.key]
+  id       = "/wow-forever/${each.key}"
+}
+
 resource "aws_ssm_parameter" "external_api_keys" {
-  for_each         = toset(["raid_helper_api_key", "guildsofwow_api_key", "parallel_api_key"])
+  for_each         = local.external_api_key_names
   name             = "/wow-forever/${each.key}"
   type             = "SecureString"
   value_wo         = "None"
   value_wo_version = 1
   lifecycle {
-    ignore_changes  = [value_wo, value_wo_version]
+    ignore_changes  = all
     prevent_destroy = true
   }
 }
