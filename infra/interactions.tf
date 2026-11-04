@@ -124,6 +124,7 @@ resource "aws_lambda_function" "interactions" {
       CLAIMS_TABLE          = aws_dynamodb_table.claims.name
       GUILD_TABLE           = aws_dynamodb_table.guild.name
       GUILD_ID              = var.guild_id
+      GUARD_EXTRA_TERMS     = var.guard_extra_terms
       WISHLIST_LOCK_MINUTES = tostring(var.wishlist_lock_minutes)
     }
   }
@@ -184,4 +185,10 @@ variable "wishlist_lock_minutes" {
     condition     = var.wishlist_lock_minutes >= 0 && floor(var.wishlist_lock_minutes) == var.wishlist_lock_minutes
     error_message = "Wishlist lock minutes must be a nonnegative integer."
   }
+}
+
+variable "guard_extra_terms" {
+  type      = string
+  default   = ""
+  sensitive = true
 }

@@ -73,7 +73,26 @@ function setup(
         assert.deepEqual(key, recordKey("member", "asker", "guild"));
         return stored;
       },
-      query: async () => assert.fail("Unexpected query"),
+      query: async (partition) => {
+        assert.ok(["MEMBER#ALL", "CHARACTER#ALL"].includes(partition));
+        return {
+          items:
+            partition === "MEMBER#ALL"
+              ? [
+                  member,
+                  {
+                    ...member,
+                    ...recordKey("member", "other", "guild"),
+                    ownerId: "other",
+                    name: "Other member sentinel",
+                    roster: [
+                      { ...member.roster[0], name: "Other character sentinel" },
+                    ],
+                  },
+                ]
+              : [],
+        };
+      },
       batch: async () => assert.fail("Unexpected batch"),
       put: async () => assert.fail("Unexpected write"),
     },
@@ -155,6 +174,7 @@ function setup(
       search,
       converse,
       route,
+      privateTerms: async () => ["Server sentinel", "Extra private sentinel"],
       claim: (userId, abortSignal) => claim("guild", userId, abortSignal),
     }),
   };
@@ -369,6 +389,21 @@ test("private or invalid routed queries never reach Parallel", async () => {
     "<@123> Mage",
     "123456789012345678 Mage",
     "Mage ".repeat(41),
+    "Server sentinel Mage",
+    "Extra private sentinel Mage",
+    ...[
+      "officer",
+      "officers",
+      "guild bank",
+      "kicked",
+      "drama",
+      "loot council",
+      "recruit",
+      "applicant",
+      "trial",
+      "roster",
+      "attendance",
+    ].map((term) => `Mage ${term.toUpperCase()}`),
   ]) {
     const state = setup(
       JSON.stringify({ needsGuild: true, needsWeb: true, searchQuery }),
@@ -388,6 +423,21 @@ test("private or invalid routed queries never reach Parallel", async () => {
     await state.ask(actor("member"), "My roster?", signal);
     assert.equal(state.searches.length, 0, routing);
   }
+});
+test("another member's name is blocked before Parallel and roster names stay local", async () => {
+  const state = setup(
+    JSON.stringify({
+      needsGuild: false,
+      needsWeb: true,
+      searchQuery: "Other member sentinel Mage",
+    }),
+  );
+  await state.ask(actor("member"), "Mage changes?", signal);
+  assert.equal(state.searches.length, 0);
+  assert.doesNotMatch(
+    JSON.stringify([...state.requests, ...state.routingRequests]),
+    /Other member sentinel|Other character sentinel/,
+  );
 });
 test("search failures and empty results disclose unverified numbers; deadline covers body parsing", async () => {
   for (const http of [

@@ -93,5 +93,23 @@ export async function assistantAnswer(
     }),
     converse: createConverse(),
     route: createRouting(),
+    privateTerms: async () => {
+      const guild = await get(`/guilds/${encodeURIComponent(guildId)}`);
+      if (
+        !guild ||
+        typeof guild !== "object" ||
+        !("name" in guild) ||
+        typeof guild.name !== "string" ||
+        !guild.name.trim()
+      )
+        throw new Error("ASSISTANT_GUILD_NAME_UNAVAILABLE");
+      return [
+        guild.name,
+        ...(process.env.GUARD_EXTRA_TERMS ?? "")
+          .split(",")
+          .map((term) => term.trim())
+          .filter(Boolean),
+      ];
+    },
   })(actor, question, signal);
 }
