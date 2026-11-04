@@ -200,16 +200,16 @@ export function createConverse(
     const answerText = text.replace(/https?:\/\/[^\s<>]+/g, "").trim();
     if (!answerText) throw new Error("ASSISTANT_GENERATION_FAILED");
     const answer = [
-      "AutoGM (GM-1NEPT)",
       answerText,
       ...evidence.map((entry) => entry.url),
-      ...(input.evidence.status !== "found" ? [NOT_VERIFIED] : []),
+      ...(input.evidence.status !== "found" && /\d/.test(answerText)
+        ? [NOT_VERIFIED]
+        : []),
       ...(input.evidence.status === "unavailable" ? [SEARCH_UNAVAILABLE] : []),
     ].join("\n");
     if (answer.length >= 1900)
       return [
         FAILURE,
-        ...(input.evidence.status !== "found" ? [NOT_VERIFIED] : []),
         ...(input.evidence.status === "unavailable"
           ? [SEARCH_UNAVAILABLE]
           : []),
