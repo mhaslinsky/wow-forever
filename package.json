@@ -13,7 +13,8 @@
     "build:alarm-forwarder": "esbuild src/alarm-forwarder/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/alarm-forwarder/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:gateway": "esbuild src/gateway/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gateway/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:interactions": "esbuild src/interactions/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/interactions/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
-    "build": "npm run build:alarm-forwarder && npm run build:interactions && npm run build:gateway"
+    "build": "npm run build:alarm-forwarder && npm run build:interactions && npm run build:gateway && npm run build:signups",
+    "build:signups": "esbuild src/signups/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/signups/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.3",

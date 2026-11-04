@@ -6,6 +6,7 @@ export const KIND_POLICY = Object.freeze({
   character: "Member",
   raid: "Member",
   attendance: "Member",
+  signup: "Member",
   lootAward: "Member",
   wishlist: "Member",
   fact: "Owner",
@@ -19,6 +20,10 @@ const CODECS = Object.freeze({
   character: { prefix: "CHARACTER", fields: ["name"] },
   raid: { prefix: "RAID", fields: ["date"] },
   attendance: { prefix: "ATTENDANCE", fields: ["raidId"] },
+  signup: {
+    prefix: "SIGNUP",
+    fields: ["raidId", "startTime", "signUps", "polledAt"],
+  },
   lootAward: {
     prefix: "LOOT_AWARD",
     fields: ["item", "winner", "raidId", "date"],
