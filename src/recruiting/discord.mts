@@ -9,6 +9,7 @@ import {
 import { createPrincipalFactory, type Principal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import type { Handlers } from "../gateway/client.mts";
+import { reportRecruitingFailure } from "./alarm.mts";
 import { createRecruiting, type ForumPort } from "./core.mts";
 
 type AppliedTagsChange = { key: "applied_tags"; new?: unknown };
@@ -46,6 +47,17 @@ async function recruitingContext(guild: Guild) {
   return { forum, factory };
 }
 
+export async function checkRecruitingAuditAccess(guild: Guild) {
+  try {
+    const bot = await guild.members.fetchMe({ force: true });
+    if (bot.permissions.has(PermissionFlagsBits.ViewAuditLog)) return;
+  } catch {}
+  reportRecruitingFailure({
+    code: "RECRUITING_AUDIT_UNAVAILABLE",
+    guildId: guild.id,
+  });
+}
+
 export function discordForum(forum: ForumChannel): ForumPort {
   return {
     async tags() {
@@ -60,13 +72,13 @@ export function discordForum(forum: ForumChannel): ForumPort {
       return thread.id;
     },
     async tagsFor(threadId) {
-      const thread = await forum.threads.fetch(threadId);
+      const thread = await forum.threads.fetch(threadId, { force: true });
       if (!thread || thread.parentId !== forum.id)
         throw new Error("CANDIDATE_THREAD_MISSING");
       return thread.appliedTags;
     },
     async setTags(threadId, tags) {
-      const thread = await forum.threads.fetch(threadId);
+      const thread = await forum.threads.fetch(threadId, { force: true });
       if (!thread || thread.parentId !== forum.id)
         throw new Error("CANDIDATE_THREAD_MISSING");
       await thread.setAppliedTags(tags);
@@ -109,24 +121,35 @@ export function recruitingHandlers(
       const processEntry = async () => {
         const thread = await guild.channels.fetch(entry.targetId as string);
         if (!thread?.isThread() || thread.parent?.name !== "recruiting") return;
+        const next = change.new === undefined ? [] : change.new;
         if (
-          !Array.isArray(change.new) ||
-          !change.new.every((tag) => typeof tag === "string")
+          !Array.isArray(next) ||
+          !next.every((tag) => typeof tag === "string")
         )
           throw new Error("RECRUITING_AUDIT_TAGS_INVALID");
         const { forum, factory } = await recruitingContext(guild);
+        const fetchMember = () =>
+          guild.members.fetch({
+            user: entry.executorId as string,
+            force: true,
+          });
+        const member = await fetchMember()
+          .catch(fetchMember)
+          .catch((cause: unknown) => {
+            reportRecruitingFailure({
+              code: "RECRUITING_MEMBER_LOOKUP_FAILED",
+              threadId: thread.id,
+            });
+            throw new Error(`RECRUITING_MEMBER_LOOKUP_FAILED:${thread.id}`, {
+              cause,
+            });
+          });
         const actor = await factory.fromGateway(
           { guildId: guild.id, userId: entry.executorId as string },
-          async (_guildId, userId) => {
-            const member = await guild.members.fetch({
-              user: userId,
-              force: true,
-            });
-            return {
-              userId: member.id,
-              roleIds: [...member.roles.cache.keys()],
-            };
-          },
+          async () => ({
+            userId: member.id,
+            roleIds: [...member.roles.cache.keys()],
+          }),
         );
         const core = createRecruiting(
           data,
@@ -136,7 +159,7 @@ export function recruitingHandlers(
         );
         await core.officerTags({
           threadId: thread.id,
-          tags: change.new,
+          tags: next,
           actor,
           eventId: entry.id,
           at: entry.createdAt.toISOString(),

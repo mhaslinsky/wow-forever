@@ -43,20 +43,44 @@ export function createRecruiting(
     );
     return record?.kind === "candidate" ? record : undefined;
   }
+  async function saving<Result>(threadId: string, work: () => Promise<Result>) {
+    try {
+      return await work();
+    } catch (cause) {
+      report({ code: "CANDIDATE_SAVE_FAILED", threadId });
+      throw new Error(`CANDIDATE_SAVE_FAILED:${threadId}`, { cause });
+    }
+  }
   async function syncTags(
     threadId: string,
     stage: Stage,
     source: Source,
-    tags: readonly string[],
+    expected?: readonly string[],
   ) {
+    const tags = await forum.tagsFor(threadId);
+    if (
+      expected &&
+      (tags.length !== expected.length ||
+        tags.some((tag) => !expected.includes(tag)))
+    )
+      return;
     const available = await forum.tags();
-    const stageIds = new Set(STAGES.map((name) => tagId(available, name)));
-    const sourceIds = new Set(SOURCES.map((name) => tagId(available, name)));
-    await forum.setTags(threadId, [
+    const stageIds = new Set(
+      available
+        .filter((tag) => STAGES.some((name) => name === tag.name))
+        .map((tag) => tag.id),
+    );
+    const sourceIds = new Set(
+      available
+        .filter((tag) => SOURCES.some((name) => name === tag.name))
+        .map((tag) => tag.id),
+    );
+    const next = [
       ...tags.filter((tag) => !stageIds.has(tag) && !sourceIds.has(tag)),
       tagId(available, source),
       tagId(available, stage),
-    ]);
+    ];
+    await forum.setTags(threadId, next);
   }
   async function saveStage(
     record: Candidate,
@@ -67,6 +91,16 @@ export function createRecruiting(
   ) {
     if (!STAGES.includes(stage)) throw new Error("INVALID_RECRUITING_STAGE");
     if (!record.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
+    const updated: Candidate = {
+      ...record,
+      recruiting: {
+        ...record.recruiting,
+        stage,
+        changedBy: actorId,
+        changedAt: at,
+      },
+    };
+    await records.write(updated);
     await records.write({
       ...recordKey(
         "officerNote",
@@ -82,16 +116,6 @@ export function createRecruiting(
         at,
       }),
     });
-    const updated: Candidate = {
-      ...record,
-      recruiting: {
-        ...record.recruiting,
-        stage,
-        changedBy: actorId,
-        changedAt: at,
-      },
-    };
-    await records.write(updated);
     return updated;
   }
   return {
@@ -128,12 +152,7 @@ export function createRecruiting(
           changedAt: new Date().toISOString(),
         },
       };
-      try {
-        await records.write(record);
-      } catch (cause) {
-        report({ code: "CANDIDATE_SAVE_FAILED", threadId });
-        throw new Error(`CANDIDATE_SAVE_FAILED:${threadId}`, { cause });
-      }
+      await saving(threadId, () => records.write(record));
       return record;
     },
     async officerTags(input: {
@@ -144,42 +163,49 @@ export function createRecruiting(
       at: string;
     }) {
       const actor = authority(input.actor);
-      if (!actor.roles.includes("Officer")) throw new Error("WRITE_DENIED");
+      if (!actor.roles.includes("Officer")) {
+        report({ code: "RECRUITING_EDIT_DENIED", threadId: input.threadId });
+        throw new Error("WRITE_DENIED");
+      }
       const record = await candidate(input.threadId);
       if (!record?.recruiting) {
         report({ code: "CANDIDATE_NOT_FOUND", threadId: input.threadId });
         throw new Error(`CANDIDATE_NOT_FOUND:${input.threadId}`);
       }
-      const tags = await forum.tags();
-      const stages = STAGES.filter((stage) =>
-        input.tags.includes(tagId(tags, stage)),
-      );
       if (Date.parse(input.at) < Date.parse(record.recruiting.changedAt))
         return;
-      if (stages.length !== 1) {
-        await syncTags(
-          input.threadId,
-          record.recruiting.stage,
-          record.recruiting.source,
-          input.tags,
+      const state = record.recruiting;
+      return saving(input.threadId, async () => {
+        const current = await forum.tagsFor(input.threadId);
+        // A newer Discord edit must keep its own actor.
+        if (
+          current.length !== input.tags.length ||
+          current.some((tag) => !input.tags.includes(tag))
+        )
+          return;
+        const available = await forum.tags();
+        const stages = STAGES.filter((stage) =>
+          available.some(
+            (tag) => tag.name === stage && current.includes(tag.id),
+          ),
         );
-        return;
-      }
-      if (!input.tags.includes(tagId(tags, record.recruiting.source)))
-        await syncTags(
-          input.threadId,
-          stages[0],
-          record.recruiting.source,
-          input.tags,
-        );
-      if (record.recruiting.stage === stages[0]) return;
-      return saveStage(
-        record,
-        stages[0],
-        actor.userId,
-        input.eventId,
-        input.at,
-      );
+        if (stages.length !== 1) {
+          await syncTags(input.threadId, state.stage, state.source, current);
+          return;
+        }
+        const updated =
+          state.stage === stages[0]
+            ? record
+            : await saveStage(
+                record,
+                stages[0],
+                actor.userId,
+                input.eventId,
+                input.at,
+              );
+        await syncTags(input.threadId, stages[0], state.source, current);
+        return updated;
+      });
     },
     async setStage(
       threadId: string,
@@ -191,15 +217,18 @@ export function createRecruiting(
         throw new Error("INVALID_RECRUITING_STAGE");
       const record = await candidate(threadId);
       if (!record?.recruiting) throw new Error("CANDIDATE_NOT_FOUND");
-      const current = await forum.tagsFor(threadId);
-      await syncTags(threadId, stage, record.recruiting.source, current);
-      return saveStage(
-        record,
-        stage,
-        actorId,
-        eventId,
-        new Date().toISOString(),
-      );
+      const source = record.recruiting.source;
+      return saving(threadId, async () => {
+        const updated = await saveStage(
+          record,
+          stage,
+          actorId,
+          eventId,
+          new Date().toISOString(),
+        );
+        await syncTags(threadId, stage, source);
+        return updated;
+      });
     },
   };
 }

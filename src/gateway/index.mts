@@ -6,7 +6,10 @@ import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Client, GatewayIntentBits } from "discord.js";
 import { createSystemPrincipal } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
-import { recruitingHandlers } from "../recruiting/discord.mts";
+import {
+  checkRecruitingAuditAccess,
+  recruitingHandlers,
+} from "../recruiting/discord.mts";
 import {
   attachGateway,
   handlers,
@@ -66,6 +69,7 @@ async function main() {
       clientReady: async (readyClient) => {
         const guild = readyClient.guilds.cache.get(guildId);
         if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
+        await checkRecruitingAuditAccess(guild);
         await voicePresence.ready(guild.voiceStates.cache.values());
       },
     },
