@@ -1,6 +1,7 @@
 import { createPrincipalFactory } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { clock, type Interaction } from "../interactions/core.mts";
+import { createChannelContext, interactionHistoryChannel } from "./context.mts";
 import {
   createAssistant,
   createConverse,
@@ -70,10 +71,10 @@ export async function assistantAnswer(
   if (!guildId || interaction.guild_id !== guildId || !userId) return REFUSAL;
   const { readSecret } = await import("../interactions/index.mts");
   const token = await readSecret("/wow-forever/discord_bot_token", signal);
-  const get = async (path: string): Promise<unknown> => {
+  const get = async (path: string, abortSignal = signal): Promise<unknown> => {
     const response = await fetch(`https://discord.com/api/v10${path}`, {
       headers: { authorization: `Bot ${token}` },
-      signal,
+      signal: abortSignal,
     });
     if (!response.ok) {
       await response.body?.cancel();
@@ -82,7 +83,15 @@ export async function assistantAnswer(
     return response.json();
   };
   const actor = await assistantPrincipal(guildId, userId, get);
-  return (await runtimeAssistant(guildId, get))(actor, question, signal);
+  return (await runtimeAssistant(guildId, get))(
+    actor,
+    question,
+    signal,
+    createChannelContext(
+      { clock, get },
+      interactionHistoryChannel(interaction),
+    ),
+  );
 }
 
 export async function runtimeAssistant(

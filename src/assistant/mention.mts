@@ -1,5 +1,6 @@
 import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
 import { capToMember, type Principal } from "../auth/index.mts";
+import type { ChannelContext } from "./context.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
 
 export type Mention = {
@@ -26,6 +27,7 @@ export function canView(
   channel: Pick<Channel, "permission_overwrites">,
   roles: Role[],
   guild: Guild,
+  permission: bigint = flags.ViewChannel,
 ): boolean {
   if (member.user.id === guild.owner_id) return true;
   const permissions = new PermissionsBitField();
@@ -60,7 +62,7 @@ export function canView(
       (entry) => entry.type === 1 && entry.id === member.user.id,
     ),
   );
-  return permissions.has(flags.ViewChannel, false);
+  return permissions.has(permission, false);
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -116,10 +118,12 @@ export function createMention(ports: {
   get(path: string): Promise<unknown>;
   claim(key: string, expiresAt: number, signal: AbortSignal): Promise<boolean>;
   now(): number;
+  context?(channelId: string, signal: AbortSignal): ReturnType<ChannelContext>;
   answer(
     actor: Principal<"user">,
     question: string,
     signal: AbortSignal,
+    context?: ChannelContext,
   ): Promise<string>;
   reply(event: Mention, content: string, signal: AbortSignal): Promise<void>;
   report(reason: string): void;
@@ -156,6 +160,7 @@ export function createMention(ports: {
       throw new Error("PUBLIC_CHANNEL");
     let after = "";
     let count = 0;
+    let history = true;
     for (;;) {
       const page = await ports.get(
         `${guildPath}/members?limit=1000${after ? `&after=${encodeURIComponent(after)}` : ""}`,
@@ -180,6 +185,11 @@ export function createMention(ports: {
           roles: raw.roles as string[],
         };
         if (
+          canView(member, target, roles, guild) &&
+          !canView(member, target, roles, guild, flags.ReadMessageHistory)
+        )
+          history = false;
+        if (
           !member.user.bot &&
           canView(member, target, roles, guild) &&
           !member.roles.some((role) => allowed.includes(role))
@@ -193,6 +203,7 @@ export function createMention(ports: {
       after = next;
     }
     if (!count) throw new Error("EMPTY_MEMBERS");
+    return history;
   }
   return async (event: Mention, signal: AbortSignal) => {
     if (
@@ -259,9 +270,23 @@ export function createMention(ports: {
       const actor = capToMember(
         await assistantPrincipal(event.guildId, event.authorId, ports.get),
       );
-      await verify(event.channelId);
-      const answer = await ports.answer(actor, question, signal);
-      await verify(event.channelId);
+      const history = await verify(event.channelId);
+      let usedContext = false;
+      const answer = await ports.answer(
+        actor,
+        question,
+        signal,
+        history && ports.context
+          ? async (abortSignal) => {
+              const messages =
+                (await ports.context?.(event.channelId, abortSignal)) ?? [];
+              usedContext = messages.length > 0;
+              return messages;
+            }
+          : undefined,
+      );
+      const stillHistory = await verify(event.channelId);
+      if (usedContext && !stillHistory) throw new Error("HISTORY_ACCESS_LOST");
       posted = true;
       await ports.reply(event, answer, signal);
     } catch (error) {
