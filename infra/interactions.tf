@@ -49,7 +49,7 @@ data "aws_iam_policy_document" "interactions" {
     resources = [
       aws_ssm_parameter.secrets["discord_app_public_key"].arn,
       aws_ssm_parameter.secrets["discord_bot_token"].arn,
-      "arn:aws:ssm:us-east-1:${var.aws_account_id}:parameter/wow-forever/parallel_api_key",
+      aws_ssm_parameter.secrets["parallel_api_key"].arn,
     ]
   }
   statement {
