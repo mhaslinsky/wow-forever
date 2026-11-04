@@ -69,7 +69,7 @@ data "aws_iam_policy_document" "interactions" {
     resources = [aws_dynamodb_table.claims.arn]
   }
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"]
     resources = [aws_dynamodb_table.guild.arn]
   }
 }
@@ -96,9 +96,10 @@ resource "aws_lambda_function" "interactions" {
   memory_size      = 256
   environment {
     variables = {
-      PUBLIC_KEY_PARAM = aws_ssm_parameter.secrets["discord_app_public_key"].name
-      CLAIMS_TABLE     = aws_dynamodb_table.claims.name
-      GUILD_ID         = var.guild_id
+      PUBLIC_KEY_PARAM      = aws_ssm_parameter.secrets["discord_app_public_key"].name
+      CLAIMS_TABLE          = aws_dynamodb_table.claims.name
+      GUILD_ID              = var.guild_id
+      WISHLIST_LOCK_MINUTES = tostring(var.wishlist_lock_minutes)
     }
   }
   depends_on = [aws_cloudwatch_log_group.interactions, aws_iam_role_policy.interactions]
@@ -149,4 +150,13 @@ resource "aws_cloudwatch_metric_alarm" "interactions_errors" {
     FunctionName = aws_lambda_function.interactions.function_name
   }
   alarm_actions = [aws_sns_topic.alerts.arn]
+}
+
+variable "wishlist_lock_minutes" {
+  type    = number
+  default = 60
+  validation {
+    condition     = var.wishlist_lock_minutes >= 0 && floor(var.wishlist_lock_minutes) == var.wishlist_lock_minutes
+    error_message = "Wishlist lock minutes must be a nonnegative integer."
+  }
 }
