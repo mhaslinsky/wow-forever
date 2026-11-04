@@ -43,6 +43,7 @@ function fixture() {
     "candidate",
     "officerNote",
   ]);
+  const failures: string[] = [];
   const roster = createRoster(data, "guild");
   const member = () =>
     [...items.values()].find((item) => item.kind === "member");
@@ -52,18 +53,26 @@ function fixture() {
     "guild",
     {
       tags: async () =>
-        ["New", "Accepted", "Apply form"].map((name) => ({ name, id: name })),
+        ["New", "Accepted", "Apply form", "Officer lead"].map((name) => ({
+          name,
+          id: name,
+        })),
       create: async () => "thread",
       tagsFor: async () => ["New", "Apply form"],
       setTags: async () => {},
     },
     () => {},
     (candidate) =>
-      roster.accept(candidate, principal, async (userId) => {
-        assert.equal(userId, "user");
-      }),
+      roster.accept(
+        candidate,
+        principal,
+        async (userId) => {
+          assert.equal(userId, "user");
+        },
+        (failure) => failures.push(failure.code),
+      ),
   );
-  return { data, actor, principal, roster, member, core };
+  return { data, actor, principal, roster, member, core, failures };
 }
 
 test("Accepted grants Member and creates the roster entry", async () => {
@@ -132,4 +141,26 @@ test("characters seen in a snapshot retain confirmation on registration", async 
     setup.member()?.roster?.map((character) => character.confirmed),
     [true, false],
   );
+});
+
+test("Accepted permits leads without a Discord account or declared characters", async () => {
+  for (const discordUserId of [undefined, "user"]) {
+    const setup = fixture();
+    await setup.core.create({
+      name: "Synthetic",
+      source: "Officer lead",
+      actorId: "officer",
+      discordUserId,
+    });
+    await setup.core.setStage("thread", "Accepted", "officer", "lead-accepted");
+    assert.equal(
+      (await setup.core.candidate("thread"))?.recruiting?.stage,
+      "Accepted",
+    );
+    assert.deepEqual(setup.member()?.roster, discordUserId ? [] : undefined);
+    assert.deepEqual(
+      setup.failures,
+      discordUserId ? [] : ["MEMBER_GRANT_SKIPPED"],
+    );
+  }
 });

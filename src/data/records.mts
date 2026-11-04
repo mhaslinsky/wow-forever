@@ -130,7 +130,8 @@ export function decode(raw: unknown): GuildRecord | undefined {
   }
   if (kind === "member" && item.roster !== undefined) {
     if (
-      !characterDeclarations(item.roster) ||
+      !Array.isArray(item.roster) ||
+      (item.roster.length > 0 && !characterDeclarations(item.roster)) ||
       !item.roster.every(
         (character) =>
           "confirmed" in character && typeof character.confirmed === "boolean",

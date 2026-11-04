@@ -2,6 +2,7 @@ export type RecruitingFailure =
   | { code: "RECRUITING_DIGEST_FAILED" }
   | {
       code:
+        | "MEMBER_GRANT_SKIPPED"
         | "MEMBER_ROLE_GRANT_FAILED"
         | "CANDIDATE_SAVE_FAILED"
         | "CANDIDATE_NOT_FOUND"
@@ -26,6 +27,9 @@ export function reportRecruitingFailure(failure: RecruitingFailure): void {
       },
       RecruitingError: 1,
       ...failure,
+      ...(failure.code === "MEMBER_GRANT_SKIPPED"
+        ? { message: `MEMBER_GRANT_SKIPPED:${failure.threadId}` }
+        : {}),
     }),
   );
 }

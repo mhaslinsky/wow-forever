@@ -112,6 +112,7 @@ export function createRecruiting(
     actorId: string,
     eventId: string,
     at: string,
+    acceptanceFailed?: () => Promise<void>,
   ) {
     if (!STAGES.includes(stage)) throw new Error("INVALID_RECRUITING_STAGE");
     if (!record.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
@@ -125,8 +126,13 @@ export function createRecruiting(
       },
     };
     if (stage === "Accepted") {
-      if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
-      await accepted(updated);
+      try {
+        if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
+        await accepted(updated);
+      } catch (cause) {
+        await acceptanceFailed?.();
+        throw cause;
+      }
     }
     await records.write(updated);
     await records.write({
@@ -261,6 +267,8 @@ export function createRecruiting(
                 actor.userId,
                 input.eventId,
                 input.at,
+                () =>
+                  syncTags(input.threadId, state.stage, state.source, current),
               );
         await syncTags(input.threadId, stages[0], state.source, current);
         return updated;
