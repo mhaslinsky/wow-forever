@@ -74,8 +74,13 @@ function fixture() {
     member: { user: { id: "officer" }, roles: ["officer"] },
   });
   const principal = createSystemPrincipal(["candidate", "officerNote"]);
-  const core = createRecruiting(data, principal, "guild", port, (failure) =>
-    failures.push(failure),
+  const core = createRecruiting(
+    data,
+    principal,
+    "guild",
+    port,
+    (failure) => failures.push(failure),
+    async () => {},
   );
   return {
     core,

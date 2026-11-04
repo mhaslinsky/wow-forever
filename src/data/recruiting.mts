@@ -45,3 +45,33 @@ export function recruitingState(raw: unknown): raw is RecruitingState {
     Number.isFinite(Date.parse(value.changedAt))
   );
 }
+
+export type CharacterDeclaration = {
+  name: string;
+  class: string;
+  spec: string;
+  raidRole: "Tank" | "Healer" | "Damage";
+  main: boolean;
+};
+
+export function characterDeclarations(
+  raw: unknown,
+): raw is CharacterDeclaration[] {
+  return (
+    Array.isArray(raw) &&
+    raw.length > 0 &&
+    raw.every(
+      (character) =>
+        character &&
+        typeof character === "object" &&
+        [character.name, character.class, character.spec].every(
+          (value) => typeof value === "string" && !!value.trim(),
+        ) &&
+        ["Tank", "Healer", "Damage"].includes(character.raidRole) &&
+        typeof character.main === "boolean",
+    ) &&
+    raw.filter((character) => character.main).length === 1 &&
+    new Set(raw.map((character) => character.name.trim().toLowerCase()))
+      .size === raw.length
+  );
+}

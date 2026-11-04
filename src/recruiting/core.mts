@@ -2,11 +2,13 @@ import { authority, type Principal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
 import {
+  type CharacterDeclaration,
   SOURCES,
   type Source,
   STAGES,
   type Stage,
 } from "../data/recruiting.mts";
+import { createRoster } from "../roster/core.mts";
 import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
 
 export type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
@@ -18,6 +20,8 @@ export type CreateCandidateInput = {
   content?: string;
   owner?: string;
   nextActionAt?: string;
+  discordUserId?: string;
+  characters?: CharacterDeclaration[];
 };
 export type ForumTag = { id: string; name: string };
 export type ForumPort = {
@@ -58,6 +62,7 @@ export function createRecruiting(
   guildId: string,
   forum: ForumPort,
   report: (failure: RecruitingFailure) => void = reportRecruitingFailure,
+  accepted?: (candidate: Candidate) => Promise<void>,
 ) {
   const records = data.forSystem(principal);
   async function candidate(threadId: string): Promise<Candidate | undefined> {
@@ -119,6 +124,10 @@ export function createRecruiting(
         changedAt: at,
       },
     };
+    if (stage === "Accepted") {
+      if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
+      await accepted(updated);
+    }
     await records.write(updated);
     await records.write({
       ...recordKey(
@@ -139,6 +148,7 @@ export function createRecruiting(
   }
   return {
     candidate,
+    registerRoster: createRoster(data, guildId).register,
     async create(input: CreateCandidateInput) {
       if (
         !input.name.trim() ||
@@ -171,6 +181,8 @@ export function createRecruiting(
         kind: "candidate",
         ownerId: guildId,
         name: input.name,
+        ...(input.discordUserId ? { discordUserId: input.discordUserId } : {}),
+        ...(input.characters ? { characters: input.characters } : {}),
         recruiting: {
           threadId,
           source: input.source,

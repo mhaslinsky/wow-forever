@@ -2,6 +2,7 @@ export type RecruitingFailure =
   | { code: "RECRUITING_DIGEST_FAILED" }
   | {
       code:
+        | "MEMBER_ROLE_GRANT_FAILED"
         | "CANDIDATE_SAVE_FAILED"
         | "CANDIDATE_NOT_FOUND"
         | "RECRUITING_MEMBER_LOOKUP_FAILED"
