@@ -17,7 +17,11 @@ import { createDataAccess } from "../src/data/index.mts";
 import type { GuildRecord } from "../src/data/records.mts";
 import { SOURCES, STAGES } from "../src/data/recruiting.mts";
 import type { RecruitingFailure } from "../src/recruiting/alarm.mts";
-import { createRecruiting, type ForumPort } from "../src/recruiting/core.mts";
+import {
+  type Candidate,
+  createRecruiting,
+  type ForumPort,
+} from "../src/recruiting/core.mts";
 import {
   checkRecruitingAuditAccess,
   discordForum,
@@ -33,7 +37,9 @@ async function seed(
   return setup.core.create({ name: "Synthetic", source, actorId: "officer" });
 }
 
-function fixture() {
+function fixture(
+  accepted: (candidate: Candidate) => Promise<void> = async () => {},
+) {
   const items = new Map<string, GuildRecord>();
   const failures: RecruitingFailure[] = [];
   let failWrites: GuildRecord["kind"] | undefined;
@@ -74,8 +80,13 @@ function fixture() {
     member: { user: { id: "officer" }, roles: ["officer"] },
   });
   const principal = createSystemPrincipal(["candidate", "officerNote"]);
-  const core = createRecruiting(data, principal, "guild", port, (failure) =>
-    failures.push(failure),
+  const core = createRecruiting(
+    data,
+    principal,
+    "guild",
+    port,
+    (failure) => failures.push(failure),
+    accepted,
   );
   return {
     core,
@@ -297,4 +308,34 @@ test("concurrent correction keeps the newer edit through the Discord adapter", a
     "Trial",
   );
   assert.equal(writes, 0);
+});
+
+test("failed officer acceptance restores tags without overwriting a newer edit", async () => {
+  for (const newerEdit of [false, true]) {
+    const setup = fixture(async () => {
+      if (newerEdit) await setup.port.setTags(threadId, ["TAG_TRIAL_ID"], []);
+      throw new Error("MEMBER_ROLE_GRANT_FAILED");
+    });
+    await seed(setup);
+    const tags = ["TAG_ACCEPTED_ID", "TAG_APPLY FORM_ID"];
+    await setup.port.setTags(threadId, tags, []);
+    await assert.rejects(
+      setup.core.officerTags({
+        threadId,
+        tags,
+        actor: setup.actor,
+        eventId: "failed-acceptance",
+        at: new Date().toISOString(),
+      }),
+      /CANDIDATE_SAVE_FAILED/,
+    );
+    assert.equal(
+      (await setup.core.candidate(threadId))?.recruiting?.stage,
+      "New",
+    );
+    assert.deepEqual(
+      setup.applied(),
+      newerEdit ? ["TAG_TRIAL_ID"] : ["TAG_APPLY FORM_ID", "TAG_NEW_ID"],
+    );
+  }
 });

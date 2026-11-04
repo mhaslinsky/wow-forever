@@ -6,9 +6,14 @@ import {
   type Guild,
   PermissionFlagsBits,
 } from "discord.js";
-import { createPrincipalFactory, type Principal } from "../auth/index.mts";
+import {
+  createPrincipalFactory,
+  createSystemPrincipal,
+  type Principal,
+} from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import type { Handlers } from "../gateway/client.mts";
+import { createRoster } from "../roster/core.mts";
 import { reportRecruitingFailure } from "./alarm.mts";
 import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
@@ -88,13 +93,42 @@ export function discordForum(forum: ForumChannel): ForumPort {
   };
 }
 
+export function acceptForGuild(
+  guild: Guild,
+  data: ReturnType<typeof createDataAccess>,
+) {
+  const roster = createRoster(data, guild.id);
+  return (candidate: import("./core.mts").Candidate) =>
+    roster.accept(
+      candidate,
+      createSystemPrincipal(["member"]),
+      async (userId) => {
+        const roles = (await guild.roles.fetch()).filter(
+          (role) => role.name === "Member",
+        );
+        const memberRole = roles.first();
+        if (roles.size !== 1 || !memberRole)
+          throw new Error("MEMBER_ROLE_MISSING_OR_AMBIGUOUS");
+        const member = await guild.members.fetch({ user: userId, force: true });
+        await member.roles.add(memberRole);
+      },
+    );
+}
+
 export async function recruitingForGuild(
   guild: Guild,
   data: ReturnType<typeof createDataAccess>,
   principal: Principal<"system">,
 ) {
   const { forum } = await recruitingContext(guild);
-  return createRecruiting(data, principal, guild.id, discordForum(forum));
+  return createRecruiting(
+    data,
+    principal,
+    guild.id,
+    discordForum(forum),
+    reportRecruitingFailure,
+    acceptForGuild(guild, data),
+  );
 }
 
 export function recruitingHandlers(
@@ -158,6 +192,8 @@ export function recruitingHandlers(
           principal,
           guild.id,
           discordForum(forum),
+          reportRecruitingFailure,
+          acceptForGuild(guild, data),
         );
         await core.officerTags({
           threadId: thread.id,

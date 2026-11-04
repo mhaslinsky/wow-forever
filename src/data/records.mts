@@ -1,4 +1,9 @@
-import { type RecruitingState, recruitingState } from "./recruiting.mts";
+import {
+  type CharacterDeclaration,
+  characterDeclarations,
+  type RecruitingState,
+  recruitingState,
+} from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
   candidate: "Officer",
@@ -51,8 +56,14 @@ export type GuildRecord = {
     (Current extends "voicePresence"
       ? { leftAt?: string; endUnknown?: boolean }
       : Current extends "candidate"
-        ? { recruiting?: RecruitingState }
-        : Record<never, never>);
+        ? {
+            recruiting?: RecruitingState;
+            discordUserId?: string;
+            characters?: CharacterDeclaration[];
+          }
+        : Current extends "member"
+          ? { roster?: (CharacterDeclaration & { confirmed: boolean })[] }
+          : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -103,6 +114,31 @@ export function decode(raw: unknown): GuildRecord | undefined {
   if (kind === "candidate" && item.recruiting !== undefined) {
     if (!recruitingState(item.recruiting)) return;
     output.recruiting = { ...item.recruiting };
+  }
+  if (kind === "candidate") {
+    if (item.discordUserId !== undefined) {
+      if (typeof item.discordUserId !== "string" || !item.discordUserId.trim())
+        return;
+      output.discordUserId = item.discordUserId;
+    }
+    if (item.characters !== undefined) {
+      if (!characterDeclarations(item.characters)) return;
+      output.characters = item.characters.map((character) => ({
+        ...character,
+      }));
+    }
+  }
+  if (kind === "member" && item.roster !== undefined) {
+    if (
+      !Array.isArray(item.roster) ||
+      (item.roster.length > 0 && !characterDeclarations(item.roster)) ||
+      !item.roster.every(
+        (character) =>
+          "confirmed" in character && typeof character.confirmed === "boolean",
+      )
+    )
+      return;
+    output.roster = item.roster.map((character) => ({ ...character }));
   }
   return output as GuildRecord;
 }
