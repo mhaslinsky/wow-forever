@@ -121,3 +121,52 @@ test("digest uses a stepped clock", async () => {
   assert.deepEqual(await setup.digest(), { overdue: 1 });
   assert.match(setup.messages[1], /thread-1.*unassigned/);
 });
+
+test("digest excludes closed candidates", async () => {
+  const setup = fixture();
+  for (const stage of ["Accepted", "Declined", "Withdrawn"] as const) {
+    const record = await setup.candidate("2030-01-01T15:00:00Z");
+    assert.ok(record.recruiting);
+    record.recruiting.stage = stage;
+    setup.items.set(record.sk, record);
+  }
+  assert.deepEqual(await setup.digest(), { overdue: 0 });
+});
+
+test("alerts refuses access through other roles and member overwrites", async () => {
+  const { discordAlerts } = await import("../src/recruiting/alerts.mts");
+  for (const type of [0, 1]) {
+    let posts = 0;
+    const post = discordAlerts(
+      {
+        get: async (path) => {
+          if (path.endsWith("/roles"))
+            return [
+              { id: "guild", name: "@everyone", permissions: "0" },
+              { id: "member", name: "Member", permissions: "0" },
+              { id: "other", name: "Guest", permissions: "0" },
+            ];
+          if (path === "/users/@me") return { id: "bot" };
+          if (path.includes("/members/")) return { roles: ["other"] };
+          return [
+            {
+              id: "alerts",
+              name: "alerts",
+              type: 0,
+              permission_overwrites: [
+                { id: "guild", type: 0, deny: "1024", allow: "0" },
+                { id: "other", type, deny: "0", allow: "1024" },
+              ],
+            },
+          ];
+        },
+        post: async () => {
+          posts++;
+        },
+      },
+      "guild",
+    );
+    await assert.rejects(post("private"), /ALERTS_CHANNEL_PUBLIC/);
+    assert.equal(posts, 0);
+  }
+});

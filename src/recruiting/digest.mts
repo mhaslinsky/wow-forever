@@ -22,6 +22,9 @@ export function createOverdueDigest(ports: DigestPorts) {
       (record) =>
         record.kind === "candidate" &&
         record.recruiting?.nextActionAt !== undefined &&
+        !["Accepted", "Declined", "Withdrawn"].includes(
+          record.recruiting.stage,
+        ) &&
         Date.parse(record.recruiting.nextActionAt) < now,
     );
     if (!overdue.length) {

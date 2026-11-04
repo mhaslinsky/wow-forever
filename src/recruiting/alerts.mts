@@ -1,6 +1,8 @@
 import {
   type APIGuildChannel,
+  type APIGuildMember,
   type APIRole,
+  type APIUser,
   ChannelType,
   type GuildChannelType,
   PermissionFlagsBits,
@@ -28,24 +30,62 @@ export function discordAlerts(
       throw new Error("DIGEST_ROLES_MISSING_OR_AMBIGUOUS");
     const overwrites = channel.permission_overwrites;
     if (!overwrites) throw new Error("ALERTS_PERMISSIONS_MISSING");
-    const canView = (role: APIRole) => {
-      const permissions = new PermissionsBitField(
-        BigInt(everyone.permissions) | BigInt(role.permissions),
+    const privileged = (role: APIRole) =>
+      role.name === "Officer" ||
+      role.name === "GM" ||
+      new PermissionsBitField(BigInt(role.permissions)).has(
+        PermissionFlagsBits.Administrator,
       );
+    const canView = (assigned: APIRole[], memberId?: string) => {
+      const permissions = new PermissionsBitField(BigInt(everyone.permissions));
+      for (const role of assigned) permissions.add(BigInt(role.permissions));
       if (permissions.has(PermissionFlagsBits.Administrator)) return true;
-      for (const roleId of [...new Set([guildId, role.id])]) {
-        const overwrite = overwrites.find(
-          (entry) => entry.type === 0 && entry.id === roleId,
-        );
-        if (overwrite)
-          permissions
-            .remove(BigInt(overwrite.deny))
-            .add(BigInt(overwrite.allow));
+      const apply = (deny: bigint, allow: bigint) =>
+        permissions.remove(deny).add(allow);
+      const base = overwrites.find(
+        (entry) => entry.type === 0 && entry.id === guildId,
+      );
+      if (base) apply(BigInt(base.deny), BigInt(base.allow));
+      let deny = 0n;
+      let allow = 0n;
+      for (const entry of overwrites) {
+        if (
+          entry.type === 0 &&
+          entry.id !== guildId &&
+          assigned.some((role) => role.id === entry.id)
+        ) {
+          deny |= BigInt(entry.deny);
+          allow |= BigInt(entry.allow);
+        }
       }
+      apply(deny, allow);
+      const member = overwrites.find(
+        (entry) => entry.type === 1 && entry.id === memberId,
+      );
+      if (member) apply(BigInt(member.deny), BigInt(member.allow));
       return permissions.has(PermissionFlagsBits.ViewChannel);
     };
-    if (canView(everyone) || canView(members[0]))
+    if (roles.some((role) => !privileged(role) && canView([role])))
       throw new Error("ALERTS_CHANNEL_PUBLIC");
+    const bot = (await rest.get(Routes.user())) as APIUser;
+    for (const entry of overwrites) {
+      if (entry.type === 0) {
+        if (!roles.some((role) => role.id === entry.id))
+          throw new Error("ALERTS_ROLE_UNKNOWN");
+        continue;
+      }
+      if (entry.id === bot.id) continue;
+      const member = (await rest.get(
+        Routes.guildMember(guildId, entry.id),
+      )) as APIGuildMember;
+      const assigned = member.roles.map((roleId) => {
+        const role = roles.find((value) => value.id === roleId);
+        if (!role) throw new Error("ALERTS_ROLE_UNKNOWN");
+        return role;
+      });
+      if (!assigned.some(privileged) && canView(assigned, entry.id))
+        throw new Error("ALERTS_CHANNEL_PUBLIC");
+    }
     await rest.post(Routes.channelMessages(channel.id), {
       body: { content, allowed_mentions: { parse: [] } },
     });
@@ -54,7 +94,7 @@ export function discordAlerts(
 
 export function createDigestDiscord(token: string, guildId: string) {
   return discordAlerts(
-    new REST({ version: "10", timeout: 15_000 }).setToken(token),
+    new REST({ version: "10", timeout: 15_000, retries: 0 }).setToken(token),
     guildId,
   );
 }
