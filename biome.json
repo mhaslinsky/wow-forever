@@ -44,6 +44,8 @@
     {
       "includes": [
         "src/data/index.mts",
+        "src/data/retention.mts",
+        "test/recruiting-retention.test.mts",
         "test/data-local.test.mts",
         "src/interactions/index.mts"
       ],
