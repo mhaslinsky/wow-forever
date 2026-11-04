@@ -8,11 +8,13 @@ import type { createDataAccess } from "../data/index.mts";
 import { decode, type GuildRecord, recordKey } from "../data/records.mts";
 import { bounded, type Clock } from "../interactions/core.mts";
 
-export const NOT_VERIFIED = "Game numbers are not verified.";
-export const SEARCH_UNAVAILABLE = "Web search is unavailable.";
-export const REFUSAL = "Members only.";
-export const COOLDOWN = "Try again in 60 seconds.";
-const FAILURE = "Answer unavailable.";
+export const NOT_VERIFIED =
+  "Heads up, I couldn't verify any game numbers here.";
+export const SEARCH_UNAVAILABLE =
+  "Web search didn't work, so this is from guild info only.";
+export const REFUSAL = "Sorry, this one's for guild members.";
+export const COOLDOWN = "Give it a minute and try again.";
+const FAILURE = "Couldn't come up with an answer, try again in a bit.";
 export type Evidence = { url: string; title: string; excerpts: string[] };
 export type SearchResult =
   | { status: "found"; results: Evidence[] }
@@ -232,8 +234,8 @@ export function createAssistant(ports: {
     const identity = authority(actor);
     if (identity.mode !== "user" || !identity.roles.includes("Member"))
       return REFUSAL;
-    if (!question.trim()) return "Enter a question.";
-    if (question.length > 2000) return "Use 2,000 characters or fewer.";
+    if (!question.trim()) return "You forgot the question.";
+    if (question.length > 2000) return "Keep it under 2,000 characters.";
     if (!(await ports.claim(identity.userId, signal))) return COOLDOWN;
     const records = await ports.data
       .forUser(actor)

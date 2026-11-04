@@ -31,13 +31,14 @@ export function createAskRoutes(
         {
           type: 5,
           name: "web",
-          description: "Send your question to a web search service",
+          description:
+            "Also search the web (sends your question to a search service)",
           required: false,
         },
       ],
       async handler(interaction, signal) {
         const options = interaction.data?.options;
-        if (!Array.isArray(options)) return message("Enter a question.");
+        if (!Array.isArray(options)) return message("You forgot the question.");
         const question = options.find(
           (option) => option?.name === "question",
         )?.value;
@@ -46,7 +47,7 @@ export function createAskRoutes(
           typeof question !== "string" ||
           (web !== undefined && typeof web !== "boolean")
         )
-          return message("Enter a question.");
+          return message("You forgot the question.");
         return message(
           await answer(interaction, question, web === true, signal),
         );

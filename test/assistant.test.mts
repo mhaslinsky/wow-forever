@@ -339,7 +339,7 @@ test("search failures and empty results disclose unverified numbers; deadline co
       },
       signal,
     );
-    assert.match(answer, /Game numbers are not verified/);
+    assert.match(answer, /Heads up, I couldn't verify any game numbers here\./);
     if (evidence.status === "unavailable")
       assert.ok(answer.includes(SEARCH_UNAVAILABLE));
   }
