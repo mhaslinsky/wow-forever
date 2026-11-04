@@ -1,6 +1,8 @@
 import { createPublicKey, verify } from "node:crypto";
 import { createAskRoutes } from "../assistant/interactions.mts";
 import { assistantAnswer } from "../assistant/runtime.mts";
+import { createNeedsRoutes } from "../needs/interactions.mts";
+import { needsContextForInteraction } from "../needs/runtime.mts";
 import { createFollowUpRoutes } from "../recruiting/followup.mts";
 import { createRecruitingRoutes } from "../recruiting/interactions.mts";
 import { recruitingContextForInteraction } from "../recruiting/runtime.mts";
@@ -105,6 +107,7 @@ export const registry: readonly Route[] = [
   ...createWishlistRoutes(wishlistContextForInteraction),
   ...createRecruitingRoutes(recruitingContextForInteraction),
   ...createRegisterRoutes(recruitingContextForInteraction),
+  ...createNeedsRoutes(needsContextForInteraction),
   ...createFollowUpRoutes(recruitingContextForInteraction),
 ];
 export function commandDefinitions(routes: readonly Route[] = registry) {

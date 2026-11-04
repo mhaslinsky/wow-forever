@@ -6,6 +6,7 @@ import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Client, GatewayIntentBits } from "discord.js";
 import { createSystemPrincipal } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
+import { refreshNeedsBoard } from "../needs/discord.mts";
 import {
   checkRecruitingAuditAccess,
   recruitingHandlers,
@@ -55,6 +56,39 @@ async function main() {
     createDynamoDataAccess({ tableName: "wow-forever", region }),
     guildId,
   );
+  const needsData = createDynamoDataAccess({
+    tableName: "wow-forever",
+    region,
+  });
+  let needsPending = false;
+  async function refreshNeeds() {
+    if (needsPending || !client.isReady()) return;
+    needsPending = true;
+    try {
+      const guild = client.guilds.cache.get(guildId as string);
+      if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
+      await refreshNeedsBoard(guild, needsData);
+    } catch {
+      log({ event: "needs_board_refresh_failed" });
+      await cloudwatch
+        .send(
+          new PutMetricDataCommand({
+            Namespace: "wow-forever/gateway",
+            MetricData: [
+              {
+                MetricName: "HandlerError",
+                Value: 1,
+                Unit: "Count",
+                Dimensions: [{ Name: "InstanceId", Value: instance as string }],
+              },
+            ],
+          }),
+        )
+        .catch(() => log({ event: "metric_failed", metric: "HandlerError" }));
+    } finally {
+      needsPending = false;
+    }
+  }
   const heartbeat = attachGateway(
     client,
     {
@@ -69,6 +103,7 @@ async function main() {
       clientReady: async (readyClient) => {
         const guild = readyClient.guilds.cache.get(guildId);
         if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
+        await refreshNeeds();
         await checkRecruitingAuditAccess(guild);
         await voicePresence.ready(guild.voiceStates.cache.values());
       },
@@ -92,8 +127,12 @@ async function main() {
     log,
   );
   const timer = scheduleHeartbeat(heartbeat);
+  const needsTimer = setInterval(() => {
+    void refreshNeeds();
+  }, 60_000);
   const stop = () => {
     clearInterval(timer);
+    clearInterval(needsTimer);
     client.destroy();
   };
   process.once("SIGTERM", stop);
