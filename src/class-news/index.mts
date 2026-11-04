@@ -19,14 +19,36 @@ export async function handler() {
     AbortSignal.timeout(15_000),
   );
   const discord = createNewsDiscord(token, guildId);
-  return postClassNews({
-    items,
-    channels: await discord.channels(),
-    store: createNewsStore(
-      required("GUILD_TABLE"),
-      guildId,
-      createSystemPrincipal(["classNews"]),
-    ),
-    post: discord.post,
-  });
+  try {
+    return await postClassNews({
+      items,
+      channels: await discord.channels(),
+      store: createNewsStore(
+        required("GUILD_TABLE"),
+        guildId,
+        createSystemPrincipal(["classNews"]),
+      ),
+      post: discord.post,
+    });
+  } catch (error) {
+    if (error instanceof AggregateError) {
+      for (const failure of error.errors) {
+        console.error(
+          JSON.stringify({
+            event: "NEWS_POST_FAILED",
+            message:
+              failure instanceof Error ? failure.message : String(failure),
+            status:
+              typeof failure === "object" &&
+              failure !== null &&
+              "status" in failure &&
+              typeof failure.status === "number"
+                ? failure.status
+                : null,
+          }),
+        );
+      }
+    }
+    throw error;
+  }
 }
