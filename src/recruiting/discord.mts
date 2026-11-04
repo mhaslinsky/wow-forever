@@ -87,11 +87,14 @@ export function recruitingHandlers(
   client: Client,
   data: ReturnType<typeof createDataAccess>,
   principal: Principal<"system">,
+  guildId: string,
 ): Handlers {
+  if (!guildId.trim()) throw new Error("GUILD_ID_REQUIRED");
   const pending = new Map<string, Promise<void>>();
   return {
     async guildAuditLogEntryCreate(entry, guild) {
       if (
+        guild.id !== guildId ||
         entry.action !== AuditLogEvent.ThreadUpdate ||
         !entry.targetId ||
         !entry.executorId ||

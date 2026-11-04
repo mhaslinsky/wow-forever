@@ -149,6 +149,7 @@ test("officer tag change updates the stored stage with actor", async (context) =
     { user: { id: "bot" } } as Client,
     setup.data,
     setup.principal,
+    "guild",
   ).guildAuditLogEntryCreate;
   assert.ok(handler);
   await handler(entry, guild);
