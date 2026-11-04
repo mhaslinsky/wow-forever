@@ -73,7 +73,10 @@ export interface Interaction {
 }
 export type Reply =
   | { type: 1 | 6 }
-  | { type: 4 | 5; data: { content?: string; flags?: number } }
+  | {
+      type: 4 | 5;
+      data: { content?: string; flags?: number; components?: unknown[] };
+    }
   | { type: 8; data: { choices: { name: string; value: string | number }[] } }
   | {
       type: 9;
