@@ -1,4 +1,5 @@
 import { authority, type Principal } from "../auth/index.mts";
+import { type Application, applicationAnswers } from "../data/application.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
 import {
@@ -22,6 +23,7 @@ export type CreateCandidateInput = {
   nextActionAt?: string;
   discordUserId?: string;
   characters?: CharacterDeclaration[];
+  application?: Application;
 };
 export type ForumTag = { id: string; name: string };
 export type ForumPort = {
@@ -162,6 +164,14 @@ export function createRecruiting(
         !SOURCES.includes(input.source)
       )
         throw new Error("INVALID_CANDIDATE");
+      if (
+        input.application !== undefined &&
+        !applicationAnswers(
+          input.application,
+          input.characters?.find((character) => character.main),
+        )
+      )
+        throw new Error("INVALID_APPLICATION");
       const createdAt = new Date();
       const actor = input.actor ? authority(input.actor) : undefined;
       const owner =
@@ -189,6 +199,7 @@ export function createRecruiting(
         name: input.name,
         ...(input.discordUserId ? { discordUserId: input.discordUserId } : {}),
         ...(input.characters ? { characters: input.characters } : {}),
+        ...(input.application ? { application: input.application } : {}),
         recruiting: {
           threadId,
           source: input.source,
