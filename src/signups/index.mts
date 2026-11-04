@@ -1,4 +1,4 @@
-import { createPrincipalFactory } from "../auth/index.mts";
+import { createSystemPrincipal } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { readSecret } from "../interactions/index.mts";
 import { createRaidHelper, createSignUpPoller } from "./poller.mts";
@@ -11,16 +11,10 @@ function required(name: string): string {
 
 export async function handler() {
   const guildId = required("GUILD_ID");
-  const principals = createPrincipalFactory({
-    guildId,
-    memberRoleId: required("MEMBER_ROLE_ID"),
-    officerRoleId: required("OFFICER_ROLE_ID"),
-    jobs: { signups: ["signup"] },
-  });
   const data = createDynamoDataAccess({
     tableName: required("GUILD_TABLE"),
     region: required("AWS_REGION"),
-  }).forSystem(principals.systemPrincipal("signups"));
+  }).forSystem(createSystemPrincipal(["signup"]));
   return createSignUpPoller({
     guildId,
     data,

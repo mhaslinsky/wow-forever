@@ -8,12 +8,13 @@ import {
   createSignUpPoller,
 } from "../src/signups/poller.mts";
 
-function fixture() {
+function fixture(empty = false) {
   const items = new Map<string, GuildRecord>();
   const errors: string[] = [];
   let fail = false;
   let signUps = [
     { userId: "synthetic-user", className: "Mage", status: "primary" },
+    { userId: "synthetic-alt", className: "Priest", status: "secondary" },
   ];
   const principal = createPrincipalFactory({
     guildId: "guild",
@@ -35,18 +36,18 @@ function fixture() {
     http: async (input, init) => {
       if (fail) return new Response("unavailable", { status: 503 });
       const url = String(input);
-      if (url.includes("/servers/")) {
-        const page = Number((init?.headers as Record<string, string>).Page);
-        return Response.json({
-          pages: 2,
-          currentPage: page,
-          postedEvents: [{ id: `raid-${page}` }],
-        });
-      }
+      assert.equal(url, "https://raid-helper.xyz/api/v4/servers/guild/events");
+      assert.equal(
+        (init?.headers as Record<string, string>).IncludeSignUps,
+        "true",
+      );
+      const page = Number((init?.headers as Record<string, string>).Page);
       return Response.json({
-        id: url.split("/").at(-1),
-        startTime: 1800000000,
-        signUps,
+        pages: empty ? 0 : 2,
+        currentPage: page,
+        postedEvents: empty
+          ? []
+          : [{ id: `raid-${page}`, startTime: 1800000000, signUps }],
       });
     },
   });
@@ -75,6 +76,7 @@ test("sign-up changes are stored per raid", async () => {
   assert.ok(
     before[0].kind === "signup" && before[0].signUps.includes("synthetic-user"),
   );
+  assert.ok(before[0].signUps.includes('"status":"secondary"'));
   assert.equal(
     (await setup.data.get(recordKey("signup", "guild", "raid-2"))).length,
     1,
@@ -94,4 +96,14 @@ test("API failure keeps the last good record and reports the error", async () =>
   await assert.rejects(setup.poll(), /SIGNUP_POLL_FAILED/);
   assert.deepEqual(await setup.data.get(key), previous);
   assert.deepEqual(setup.errors, ["SIGNUP_POLL_FAILED"]);
+});
+
+test("an empty v4 event list stores nothing", async () => {
+  const setup = fixture(true);
+  assert.deepEqual(await setup.poll(), { raids: 0 });
+  assert.deepEqual(
+    await setup.data.get(recordKey("signup", "guild", "raid-1")),
+    [],
+  );
+  assert.deepEqual(setup.errors, []);
 });
