@@ -5,6 +5,7 @@ import {
   GuildAuditLogsEntry as AuditEntry,
   Client,
   Collection,
+  type ForumChannel,
   type Guild,
 } from "discord.js";
 import fc from "fast-check";
@@ -19,6 +20,7 @@ import type { RecruitingFailure } from "../src/recruiting/alarm.mts";
 import { createRecruiting, type ForumPort } from "../src/recruiting/core.mts";
 import {
   checkRecruitingAuditAccess,
+  discordForum,
   recruitingHandlers,
 } from "../src/recruiting/discord.mts";
 
@@ -145,7 +147,11 @@ test("officer tag change updates the stored stage with actor", async (context) =
       "utf8",
     ),
   );
-  await setup.port.setTags(threadId, sample.changes[0].new_value);
+  await setup.port.setTags(
+    threadId,
+    sample.changes[0].new_value,
+    setup.applied(),
+  );
   sample.id = ((BigInt(Date.now()) - 1420070400000n) << 22n).toString();
   const entry = Reflect.construct(AuditEntry, [guild, sample]) as AuditEntry;
   const handler = recruitingHandlers(
@@ -187,10 +193,10 @@ test("bot stage change updates the tag", async () => {
             (await setup.core.candidate(threadId))?.recruiting?.stage,
             stage,
           );
-          assert.deepEqual(setup.applied(), [
-            "TAG_APPLY FORM_ID",
-            `TAG_${stage.toUpperCase()}_ID`,
-          ]);
+          assert.deepEqual(
+            new Set(setup.applied()),
+            new Set(["TAG_APPLY FORM_ID", `TAG_${stage.toUpperCase()}_ID`]),
+          );
         }
       },
     ),
@@ -222,11 +228,11 @@ test("stage failures alarm after candidate-first persistence", async () => {
 test("old audit corrections preserve the current officer edit", async () => {
   const setup = fixture();
   await seed(setup);
-  await setup.port.setTags(threadId, [
-    "TAG_TRIAL_ID",
-    "TAG_APPLY FORM_ID",
-    "TAG_OFFICER LEAD_ID",
-  ]);
+  await setup.port.setTags(
+    threadId,
+    ["TAG_TRIAL_ID", "TAG_APPLY FORM_ID", "TAG_OFFICER LEAD_ID"],
+    setup.applied(),
+  );
   const reconcile = (
     tags: readonly string[],
     at = "2099-01-01T00:00:00.000Z",
@@ -248,4 +254,47 @@ test("old audit corrections preserve the current officer edit", async () => {
   assert.deepEqual(setup.applied(), ["TAG_APPLY FORM_ID", "TAG_TRIAL_ID"]);
   setup.port.setTags = async () => assert.fail("Old event wrote tags");
   await reconcile([], "2098-01-01T00:00:00.000Z");
+});
+
+test("concurrent correction keeps the newer edit through the Discord adapter", async () => {
+  const setup = fixture();
+  await seed(setup);
+  const trial = ["TAG_TRIAL_ID", "TAG_APPLY FORM_ID"];
+  let current = ["TAG_INTERVIEW_ID"];
+  let reads = 0;
+  let writes = 0;
+  const forum = {
+    id: "forum",
+    fetch: async () => ({ availableTags: setup.tags }),
+    threads: {
+      fetch: async () => {
+        if (++reads === 3) current = [...trial];
+        return {
+          parentId: "forum",
+          appliedTags: [...current],
+          setAppliedTags: async (tags: string[]) => {
+            writes++;
+            current = tags;
+          },
+        };
+      },
+    },
+  } as unknown as ForumChannel;
+  Object.assign(setup.port, discordForum(forum));
+  const edit = (tags: string[], at: string) =>
+    setup.core.officerTags({
+      threadId,
+      tags,
+      actor: setup.actor,
+      eventId: at,
+      at,
+    });
+  await edit(["TAG_INTERVIEW_ID"], "2099-01-01T00:00:00.000Z");
+  assert.deepEqual(current, trial);
+  await edit(trial, "2099-01-02T00:00:00.000Z");
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.stage,
+    "Trial",
+  );
+  assert.equal(writes, 0);
 });

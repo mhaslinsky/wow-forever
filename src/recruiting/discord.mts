@@ -10,7 +10,7 @@ import { createPrincipalFactory, type Principal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import type { Handlers } from "../gateway/client.mts";
 import { reportRecruitingFailure } from "./alarm.mts";
-import { createRecruiting, type ForumPort } from "./core.mts";
+import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
 type AppliedTagsChange = { key: "applied_tags"; new?: unknown };
 
@@ -77,10 +77,12 @@ export function discordForum(forum: ForumChannel): ForumPort {
         throw new Error("CANDIDATE_THREAD_MISSING");
       return thread.appliedTags;
     },
-    async setTags(threadId, tags) {
+    async setTags(threadId, tags, expected) {
       const thread = await forum.threads.fetch(threadId, { force: true });
       if (!thread || thread.parentId !== forum.id)
         throw new Error("CANDIDATE_THREAD_MISSING");
+      // A correction must not erase an edit that arrived during the fetch.
+      if (!sameTags(thread.appliedTags, expected)) return;
       await thread.setAppliedTags(tags);
     },
   };

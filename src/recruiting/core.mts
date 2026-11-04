@@ -19,8 +19,22 @@ export type ForumPort = {
     tags: string[];
   }): Promise<string>;
   tagsFor(threadId: string): Promise<readonly string[]>;
-  setTags(threadId: string, tags: string[]): Promise<void>;
+  setTags(
+    threadId: string,
+    tags: string[],
+    expected: readonly string[],
+  ): Promise<void>;
 };
+
+export function sameTags(
+  actual: readonly string[],
+  expected: readonly string[],
+): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((tag) => expected.includes(tag))
+  );
+}
 
 function tagId(tags: readonly ForumTag[], name: string): string {
   const matches = tags.filter((tag) => tag.name === name);
@@ -58,12 +72,7 @@ export function createRecruiting(
     expected?: readonly string[],
   ) {
     const tags = await forum.tagsFor(threadId);
-    if (
-      expected &&
-      (tags.length !== expected.length ||
-        tags.some((tag) => !expected.includes(tag)))
-    )
-      return;
+    if (expected && !sameTags(tags, expected)) return;
     const available = await forum.tags();
     const stageIds = new Set(
       available
@@ -80,7 +89,8 @@ export function createRecruiting(
       tagId(available, source),
       tagId(available, stage),
     ];
-    await forum.setTags(threadId, next);
+    if (sameTags(tags, next)) return;
+    await forum.setTags(threadId, next, tags);
   }
   async function saveStage(
     record: Candidate,
@@ -178,11 +188,7 @@ export function createRecruiting(
       return saving(input.threadId, async () => {
         const current = await forum.tagsFor(input.threadId);
         // A newer Discord edit must keep its own actor.
-        if (
-          current.length !== input.tags.length ||
-          current.some((tag) => !input.tags.includes(tag))
-        )
-          return;
+        if (!sameTags(current, input.tags)) return;
         const available = await forum.tags();
         const stages = STAGES.filter((stage) =>
           available.some(
