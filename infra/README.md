@@ -13,7 +13,11 @@ Bootstrap state lives in the bucket it creates (`bootstrap/terraform.tfstate`). 
 
 The bucket requires TLS, enforces bucket ownership, and expires noncurrent state versions after 90 days. The main stack uses native S3 locking.
 
-The three SecureString parameters start as `None`. Set their real values out of band in SSM after provisioning. Terraform uses write-only `value_wo` with version 1, so parameter values are not retained in state. Leave the version unchanged when rotating secrets out of band. The forwarder reads its webhook at invocation time and fails if it is unset or delivery fails.
+Terraform tracks six SecureString parameters. The three secrets in `aws_ssm_parameter.secrets` (`discord_bot_token`, `discord_app_public_key`, and `alarm_webhook_url`) start as `None`. Set their real values out of band in SSM after provisioning. Terraform uses write-only `value_wo` with version 1; leave the version unchanged when rotating secrets out of band. The forwarder reads its webhook at invocation time and fails if it is unset or delivery fails.
+
+The three operator-managed API keys (`raid_helper_api_key`, `guildsofwow_api_key`, and `parallel_api_key`) must already exist in SSM. Native import blocks in `ssm.tf` import them into `aws_ssm_parameter.external_api_keys`; a missing key makes import fail instead of creating a placeholder parameter. Terraform 1.15.6 supports the import blocks' `for_each`. These resources use `ignore_changes = all` to prevent Terraform from updating their values or attributes. Rotate keys and change their attributes out of band. wow-orch reviews the post-import plan and applies only if it shows no PutParameter for these three parameters.
+
+The API key resources also use `prevent_destroy = true`, which rejects plans that would destroy or replace them, including `terraform destroy`. Keep their resource definition in place: removing it also removes that protection. To stop tracking a key without deleting it, remove its import entry and remove its address from state before removing its resource instance.
 
 The monthly budget covers the whole account and sends actual-spend notifications at 80 and 100 percent of the configured amount (default $25). Budget data can be delayed. Budget alerts also go straight to the operator's email, so they arrive even when the Discord webhook is unset or failing. Other alarms on the topic reach Discord only.
 
