@@ -7,6 +7,7 @@ import {
   createRaidHelper,
   createSignUpPoller,
 } from "../src/signups/poller.mts";
+
 function fixture() {
   const items = new Map<string, GuildRecord>();
   const errors: string[] = [];
