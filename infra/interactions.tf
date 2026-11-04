@@ -51,6 +51,10 @@ data "aws_iam_policy_document" "interactions" {
   }
 
   statement {
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.guild.arn}/index/gsi1"]
+  }
+  statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.interactions.arn}:*"]
   }

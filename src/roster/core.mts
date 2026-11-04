@@ -47,6 +47,12 @@ export function createRoster(
       kind: "member",
       ownerId: userId,
       name: memberName,
+      ...(previous?.kind === "member" && previous.raidTeam !== undefined
+        ? { raidTeam: previous.raidTeam }
+        : {}),
+      ...(previous?.kind === "member" && previous.active !== undefined
+        ? { active: previous.active }
+        : {}),
       roster: characters.map((character) => ({
         ...character,
         confirmed: confirmed.has(character.name.toLowerCase()),
