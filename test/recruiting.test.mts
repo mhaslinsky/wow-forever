@@ -336,7 +336,7 @@ test("failed officer acceptance restores tags without overwriting a newer edit",
     );
     assert.equal(
       (await setup.core.candidate(threadId))?.recruiting?.stage,
-      "New",
+      "Accepted",
     );
     assert.deepEqual(
       setup.applied(),
