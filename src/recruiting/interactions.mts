@@ -81,7 +81,7 @@ function applicationModal(
         ["logsUrl", "Logs or armory link", 1, false, 300, "https://..."],
         [
           "about",
-          "Why us / anything else?",
+          "Why us? Anything else?",
           2,
           false,
           500,
@@ -117,7 +117,7 @@ function offspecStep(
       ...Object.keys(specsFor(characterClass) ?? {}).filter(
         (other) => other !== spec,
       ),
-      "Skip",
+      "No offspec",
     ],
     true,
   );
@@ -246,10 +246,10 @@ export function createRecruitingRoutes(
         ) {
           if (
             values.every((value) => otherSpecs.includes(value)) ||
-            (values.length === 1 && selected === "Skip")
+            (values.length === 1 && selected === "No offspec")
           ) {
             const encoded =
-              selected === "Skip"
+              selected === "No offspec"
                 ? "-"
                 : values
                     .map((value) => otherSpecs.indexOf(value))
@@ -331,7 +331,7 @@ export function createRecruitingRoutes(
         };
         if (!application.raidHistory) return message("Need your raid history");
         if (!applicationAnswers(application, character))
-          return message("Check your answers and run /apply again");
+          return message("Something looked off, run /apply again");
         const { core, actor } = await resolveContext(interaction, signal);
         const actorId = authority(actor).userId;
         const candidate = await core.create({
@@ -341,7 +341,7 @@ export function createRecruitingRoutes(
           discordUserId: actorId,
           characters: [character],
           application,
-          content: `${character.name}\nClass: ${character.class}\nSpec: ${character.spec}\nRole: ${character.raidRole}\nOffspecs: ${application.offspecs.join(", ") || "None"}\nRaid nights: ${application.nights.join(", ")}\nRaid history: ${application.raidHistory}\nLogs or armory: ${application.logsUrl || "Not provided"}\nWhy us / anything else: ${application.about || "Not provided"}`,
+          content: `${character.name}\nClass: ${character.class}\nSpec: ${character.spec}\nRole: ${character.raidRole === "Damage" ? "DPS" : character.raidRole}\nOffspecs: ${application.offspecs.join(", ") || "None"}\nRaid nights: ${application.nights.join(", ")}\nRaid history: ${application.raidHistory}\nLogs or armory: ${application.logsUrl || "None"}\nWhy us: ${application.about || "None"}`,
         });
         if (!candidate.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
         await core.setStage(

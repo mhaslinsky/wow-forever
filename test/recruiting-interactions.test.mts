@@ -128,7 +128,7 @@ test("the officer thread post includes every answer", async () => {
   });
   assert.equal(
     setup.content(),
-    "Synthetic\nClass: Mage\nSpec: Frost\nRole: Damage\nOffspecs: Arcane\nRaid nights: Monday, Friday\nRaid history: Cleared synthetic raids; left for a new schedule\nLogs or armory: https://example.com/logs\nWhy us / anything else: Friends here",
+    "Synthetic\nClass: Mage\nSpec: Frost\nRole: DPS\nOffspecs: Arcane\nRaid nights: Monday, Friday\nRaid history: Cleared synthetic raids; left for a new schedule\nLogs or armory: https://example.com/logs\nWhy us: Friends here",
   );
 });
 test("/lead creates a New candidate owned by the officer", async () => {
@@ -195,7 +195,7 @@ test("the offspec step lists only the class's other specs", async () => {
   assert.equal(menu.custom_id, "apply:offspec:Mage:Frost:Damage");
   assert.deepEqual(
     menu.options.map((option: { value: string }) => option.value),
-    ["Arcane", "Fire", "Skip"],
+    ["Arcane", "Fire", "No offspec"],
   );
   const nights = await setup.run({
     ...setup.interaction,
