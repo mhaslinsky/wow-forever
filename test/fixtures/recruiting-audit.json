@@ -1,0 +1,13 @@
+{
+  "id": "AUDIT_ENTRY_ID",
+  "action_type": 111,
+  "user_id": "ACTOR_USER_ID",
+  "target_id": "THREAD_ID",
+  "changes": [
+    {
+      "key": "applied_tags",
+      "new_value": ["TAG_INTERVIEW_ID"],
+      "old_value": ["TAG_NEW_ID"]
+    }
+  ]
+}
