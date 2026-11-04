@@ -1,4 +1,5 @@
 import { type Application, applicationAnswers } from "./application.mts";
+import { parseTargets } from "./needs.mts";
 import {
   type CharacterDeclaration,
   characterDeclarations,
@@ -7,6 +8,8 @@ import {
 } from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
+  needsBoard: "Officer",
+  raidTeam: "Member",
   candidate: "Officer",
   gowApplication: "Officer",
   classNews: "Member",
@@ -25,6 +28,8 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  needsBoard: { prefix: "NEEDS_BOARD", fields: ["channelId", "messageId"] },
+  raidTeam: { prefix: "RAID_TEAM", fields: ["name", "targets"] },
   classNews: { prefix: "CLASS_NEWS", fields: ["guid", "className", "status"] },
   gowApplication: { prefix: "GOW_APPLICATION", fields: ["payload"] },
   candidate: { prefix: "CANDIDATE", fields: ["name"] },
@@ -68,7 +73,11 @@ export type GuildRecord = {
             characters?: CharacterDeclaration[];
           }
         : Current extends "member"
-          ? { roster?: (CharacterDeclaration & { confirmed: boolean })[] }
+          ? {
+              roster?: (CharacterDeclaration & { confirmed: boolean })[];
+              raidTeam?: string;
+              active?: boolean;
+            }
           : Record<never, never>);
 }[Kind];
 export type RecordInput =
@@ -149,6 +158,23 @@ export function decode(raw: unknown): GuildRecord | undefined {
       offspecs: [...item.application.offspecs],
       nights: [...item.application.nights],
     };
+  }
+  if (kind === "raidTeam") {
+    try {
+      parseTargets(item.targets as string);
+    } catch {
+      return;
+    }
+  }
+  if (kind === "member") {
+    if (item.raidTeam !== undefined) {
+      if (typeof item.raidTeam !== "string" || !item.raidTeam.trim()) return;
+      output.raidTeam = item.raidTeam;
+    }
+    if (item.active !== undefined) {
+      if (typeof item.active !== "boolean") return;
+      output.active = item.active;
+    }
   }
   if (kind === "member" && item.roster !== undefined) {
     if (
