@@ -22,12 +22,19 @@ export type RecruitingState = {
   stage: Stage;
   changedBy: string;
   changedAt: string;
+  owner?: string;
+  nextActionAt?: string;
 };
 
 export function recruitingState(raw: unknown): raw is RecruitingState {
   if (!raw || typeof raw !== "object") return false;
   const value = raw as Record<string, unknown>;
   return (
+    (value.owner === undefined ||
+      (typeof value.owner === "string" && !!value.owner.trim())) &&
+    (value.nextActionAt === undefined ||
+      (typeof value.nextActionAt === "string" &&
+        Number.isFinite(Date.parse(value.nextActionAt)))) &&
     typeof value.threadId === "string" &&
     !!value.threadId &&
     SOURCES.some((source) => source === value.source) &&

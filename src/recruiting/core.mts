@@ -10,6 +10,15 @@ import {
 import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
 
 export type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
+export type CreateCandidateInput = {
+  name: string;
+  source: Source;
+  actorId: string;
+  actor?: Principal<"user">;
+  content?: string;
+  owner?: string;
+  nextActionAt?: string;
+};
 export type ForumTag = { id: string; name: string };
 export type ForumPort = {
   tags(): Promise<readonly ForumTag[]>;
@@ -130,18 +139,26 @@ export function createRecruiting(
   }
   return {
     candidate,
-    async create(input: {
-      name: string;
-      source: Source;
-      actorId: string;
-      content?: string;
-    }) {
+    async create(input: CreateCandidateInput) {
       if (
         !input.name.trim() ||
         !input.actorId ||
         !SOURCES.includes(input.source)
       )
         throw new Error("INVALID_CANDIDATE");
+      const createdAt = new Date();
+      const actor = input.actor ? authority(input.actor) : undefined;
+      const owner =
+        input.owner ??
+        (actor?.roles.includes("Officer") ? actor.userId : undefined);
+      const nextActionAt =
+        input.nextActionAt ??
+        new Date(createdAt.getTime() + 86_400_000).toISOString();
+      if (
+        (owner !== undefined && !owner.trim()) ||
+        !Number.isFinite(Date.parse(nextActionAt))
+      )
+        throw new Error("INVALID_FOLLOW_UP");
       const tags = await forum.tags();
       const applied = [tagId(tags, "New"), tagId(tags, input.source)];
       const threadId = await forum.create({
@@ -159,11 +176,35 @@ export function createRecruiting(
           source: input.source,
           stage: "New",
           changedBy: input.actorId,
-          changedAt: new Date().toISOString(),
+          changedAt: createdAt.toISOString(),
+          ...(owner ? { owner } : {}),
+          nextActionAt,
         },
       };
       await saving(threadId, () => records.write(record));
       return record;
+    },
+    async setFollowUp(
+      threadId: string,
+      actor: Principal<"user">,
+      update: { owner?: string; nextActionAt?: string },
+    ) {
+      if (!authority(actor).roles.includes("Officer"))
+        throw new Error("WRITE_DENIED");
+      if (
+        (update.owner !== undefined && !update.owner.trim()) ||
+        (update.nextActionAt !== undefined &&
+          !Number.isFinite(Date.parse(update.nextActionAt)))
+      )
+        throw new Error("INVALID_FOLLOW_UP");
+      const record = await candidate(threadId);
+      if (!record?.recruiting) throw new Error("CANDIDATE_NOT_FOUND");
+      const updated: Candidate = {
+        ...record,
+        recruiting: { ...record.recruiting, ...update },
+      };
+      await saving(threadId, () => records.write(updated));
+      return updated;
     },
     async officerTags(input: {
       threadId: string;
