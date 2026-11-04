@@ -250,6 +250,17 @@ test("Officer Converse request contains only selected own-roster fields (C1)", a
   );
   assert.equal(state.requests.length, 1);
 });
+test("replies omit the persona header and warn only for digits without search results", async () => {
+  for (const output of ["Hello!", "The value is 42."]) {
+    const state = setup();
+    state.output(output);
+    const answer = await state.ask(actor("member"), "Question", false, signal);
+    assert.equal(
+      answer,
+      output.includes("42") ? `${output}\n${NOT_VERIFIED}` : output,
+    );
+  }
+});
 test("unverifiable game numbers get a code-appended disclosure; missing or malformed roster stays empty", async () => {
   for (const record of [
     undefined,
@@ -258,7 +269,7 @@ test("unverifiable game numbers get a code-appended disclosure; missing or malfo
   ]) {
     const state = setup();
     state.stored(record);
-    state.output("The value is not verified.");
+    state.output("The value is 42.");
     assert.ok(
       (
         await state.ask(actor("member"), "What is the value?", false, signal)
@@ -273,7 +284,7 @@ test("unverifiable game numbers get a code-appended disclosure; missing or malfo
   state.output("oversize ".repeat(300));
   const response = await state.ask(actor("member"), "Question", false, signal);
   assert.ok(response.length < 1900);
-  assert.ok(response.endsWith(NOT_VERIFIED));
+  assert.ok(!response.includes(NOT_VERIFIED));
   state.advance(60000);
   state.output("");
   await assert.rejects(
@@ -326,6 +337,7 @@ test("search failures and empty results disclose unverified numbers; deadline co
       http,
     })("Question", signal);
     const state = setup();
+    state.output("The value is 42.");
     const records = await state.data
       .forUser(actor("member"))
       .get(recordKey("member", "asker", "guild"));
