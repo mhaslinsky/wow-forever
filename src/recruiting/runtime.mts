@@ -13,6 +13,11 @@ export type ResolveRecruitingContext = (
   actor: Principal<"user">;
 }>;
 
+const client = new Client({
+  intents: [],
+  rest: { timeout: 5000, retries: 0 },
+});
+
 export const recruitingContextForInteraction: ResolveRecruitingContext = async (
   interaction,
   signal,
@@ -27,10 +32,6 @@ export const recruitingContextForInteraction: ResolveRecruitingContext = async (
   const { readSecret } = await import("../interactions/index.mts");
   const token = await readSecret("/wow-forever/discord_bot_token", signal);
   signal.throwIfAborted();
-  const client = new Client({
-    intents: [],
-    rest: { timeout: 5000, retries: 0 },
-  });
   client.rest.setToken(token);
   const guild = await client.guilds.fetch(guildId);
   const { factory } = await recruitingContext(guild);
