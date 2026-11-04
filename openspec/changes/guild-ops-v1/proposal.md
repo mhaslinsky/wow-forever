@@ -5,7 +5,7 @@ A new Alliance PvE guild in World of Warcraft: Forever needs to recruit stranger
 ## What Changes
 
 - A guild Discord bot with two runtimes: a Lambda endpoint for slash commands, buttons and scheduled jobs, and a small always-connected process for live events (new messages, members leaving, voice presence).
-- A single officer-only recruiting forum channel. Every candidate source (Guilds of WoW application alerts, an in-Discord `/apply`, an officer `/lead`, in-game recruits) becomes one thread with stage tags, deduplicated, with an overdue digest.
+- A single officer-only recruiting forum channel. Every candidate source (Guilds of WoW applications, an in-Discord `/apply`, an officer `/lead`, in-game recruits) becomes one thread with stage tags, deduplicated, with an overdue digest.
 - A guild roster and a needs board built from guild data rather than any Blizzard API.
 - A reader on the guild master's Windows PC that parses the Guild OS addon's saved data (roster, measured attendance, loot history) and sends it to the bot. The addon is MIT; the closed Guild OS site, bot and companion are not used.
 - Raid sign-ups on Raid-Helper, compared with measured attendance to show who signed up and who came.
@@ -33,5 +33,5 @@ A new Alliance PvE guild in World of Warcraft: Forever needs to recruit stranger
 
 - New public repository `wow-forever` (TypeScript, Terraform) and a new AWS stack: Lambda, DynamoDB on-demand, SSM parameters, SNS alarms, EventBridge Scheduler, one t4g.nano instance, Bedrock.
 - Two new Discord applications: the guild bot and the operator's setup identity.
-- Third-party dependencies: Guild OS addon (in game, forkable), Raid-Helper (Discord bot and API), Guilds of WoW (application page and Discord alerts).
+- Third-party dependencies: Guild OS addon (in game, forkable), Raid-Helper (Discord bot and API), Guilds of WoW (application page and Management API).
 - The `palworld-server` repository loses its Valheim AWS resources in one teardown change.

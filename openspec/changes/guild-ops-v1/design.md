@@ -43,7 +43,7 @@ Prior art reused from the operator's Palworld and Valheim server bot: Discord in
 
 - [Guild OS changes its saved-data shape or stops updating] → Pin the addon version the reader was built against, fail loudly on unknown shapes, fork when needed.
 - [Guild OS records less inside raid instances than claimed] → First raid week check; fallback is raid voice presence for attendance and officer entry for loot.
-- [Guilds of WoW changes its application shape] → The raw JSON is kept, that record is not mapped, and the run fails so it shows up.
+- [Guilds of WoW changes its application shape] → The raw JSON is kept, that record is not mapped, and the recruiting alarm reports it.
 - [The reader only uploads when the GM logs out or reloads] → Attendance and loot land after the raid, which is when loot history matters; live votes use the last upload plus officer entry.
 - [Spend creep on the assistant] → Cooldown, monthly circuit breaker, billing alarm.
 - [A bad layout apply exposes private channels] → Plan output reviewed by the operator before every apply; permission readback after.
