@@ -43,6 +43,7 @@ export async function mapApplications(input: {
     recordKey("gowApplication", input.guildId, "unused").pk,
   );
   let mapped = 0;
+  let failed = false;
   for (const record of records) {
     if (record.kind !== "gowApplication" || record.mappedThreadId) continue;
     let candidate: CreateCandidateInput | undefined;
@@ -56,15 +57,24 @@ export async function mapApplications(input: {
       continue;
     }
     if (!candidate) continue;
-    const result = await input.create(candidate);
-    if (!result.recruiting?.threadId)
-      throw new Error("CANDIDATE_THREAD_MISSING");
-    const updated: GuildRecord = {
-      ...record,
-      mappedThreadId: result.recruiting.threadId,
-    };
-    await input.records.write(updated);
-    mapped++;
+    try {
+      const result = await input.create(candidate);
+      if (!result.recruiting?.threadId)
+        throw new Error("CANDIDATE_THREAD_MISSING");
+      const updated: GuildRecord = {
+        ...record,
+        mappedThreadId: result.recruiting.threadId,
+      };
+      await input.records.write(updated);
+      mapped++;
+    } catch {
+      failed = true;
+      (input.report ?? reportRecruitingFailure)({
+        code: "GOW_APPLICATION_PARSE_FAILED",
+        recordKey: record.sk,
+      });
+    }
   }
+  if (failed) throw new Error("GOW_APPLICATION_MAPPING_FAILED");
   return { mapped };
 }

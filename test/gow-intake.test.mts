@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DynamoDBDocumentClient, type PutCommand } from "@aws-sdk/lib-dynamodb";
+import type { ForumChannel } from "discord.js";
 import { createSystemPrincipal } from "../src/auth/index.mts";
 import {
   applicationRecord,
@@ -11,6 +12,7 @@ import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { captureApplications } from "../src/gow-intake/core.mts";
 import { mapApplications } from "../src/gow-intake/mapping.mts";
 import { createRecruiting } from "../src/recruiting/core.mts";
+import { discordForum } from "../src/recruiting/discord.mts";
 
 test("unseen recruit is stored once across polls and alerts without its payload", async (context) => {
   const records = new Map<string, unknown>();
@@ -103,7 +105,7 @@ function mappingFixture() {
   const records = data.forSystem(
     createSystemPrincipal(["gowApplication", "candidate", "officerNote"]),
   );
-  const threads: { name: string; content: string }[] = [];
+  const threads: { name: string; content: string; tags: string[] }[] = [];
   const core = createRecruiting(
     data,
     createSystemPrincipal(["candidate", "officerNote"]),
@@ -113,10 +115,22 @@ function mappingFixture() {
         { id: "new", name: "New" },
         { id: "gow", name: "Guilds of WoW" },
       ],
-      create: async (input) => {
-        threads.push(input);
-        return "synthetic-thread";
-      },
+      create: discordForum({
+        threads: {
+          create: async (posted: {
+            name: string;
+            message: { content: string };
+            appliedTags: string[];
+          }) => {
+            threads.push({
+              name: posted.name,
+              content: posted.message.content,
+              tags: posted.appliedTags,
+            });
+            return { id: "synthetic-thread" };
+          },
+        },
+      } as unknown as ForumChannel).create,
       post: async () => {
         assert.fail("already mapped application must not post again");
       },
@@ -231,4 +245,59 @@ test("missing character name retains raw JSON and raises the parse-failure alarm
   assert.equal(JSON.parse(logs[0]).RecruitingError, 1);
   assert.equal(JSON.parse(logs[0]).code, "GOW_APPLICATION_PARSE_FAILED");
   assert.ok(!logs[0].includes("Warrior"));
+});
+
+test("long application maps with bounded Discord text and full stored content", async () => {
+  const setup = mappingFixture();
+  const payload = {
+    ...capturedPayload,
+    character: { ...capturedPayload.character, name: "N".repeat(101) },
+    message: "M".repeat(2001),
+  };
+  const record = applicationRecord("synthetic-guild", payload);
+  await setup.records.write(record);
+  await mapApplications({
+    guildId: "synthetic-guild",
+    records: setup.records,
+    create: setup.core.create,
+  });
+  assert.equal(setup.threads[0].name, `${"N".repeat(97)}...`);
+  assert.equal(setup.threads[0].content.length, 2000);
+  assert.ok(setup.threads[0].content.endsWith("..."));
+  assert.ok(
+    [...setup.items.values()].some(
+      (item) =>
+        item.kind === "officerNote" &&
+        JSON.parse(item.text).content.endsWith(payload.message),
+    ),
+  );
+  assert.deepEqual(JSON.parse(record.payload), payload);
+});
+
+test("failed creation alarms once and leaves the next record mapped", async (context) => {
+  const setup = mappingFixture();
+  const failed = applicationRecord("synthetic-guild", capturedPayload);
+  await setup.records.write(failed);
+  await setup.records.write(
+    applicationRecord("synthetic-guild", { ...capturedPayload, id: 102 }),
+  );
+  const logs: string[] = [];
+  context.mock.method(console, "error", (line: string) => logs.push(line));
+  let attempts = 0;
+  await assert.rejects(
+    mapApplications({
+      guildId: "synthetic-guild",
+      records: setup.records,
+      create: async (input) => {
+        if (++attempts === 1) throw new Error("private failure");
+        return setup.core.create(input);
+      },
+    }),
+    /GOW_APPLICATION_MAPPING_FAILED/,
+  );
+  assert.equal(setup.threads.length, 1);
+  assert.equal(logs.length, 1);
+  assert.equal(JSON.parse(logs[0]).recordKey, failed.sk);
+  assert.equal(JSON.parse(logs[0]).RecruitingError, 1);
+  assert.ok(!logs[0].includes("private failure"));
 });

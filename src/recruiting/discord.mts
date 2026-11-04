@@ -63,6 +63,10 @@ export async function checkRecruitingAuditAccess(guild: Guild) {
   });
 }
 
+function discordText(value: string, limit: number): string {
+  return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
 export function discordForum(forum: ForumChannel): ForumPort {
   return {
     async tags() {
@@ -70,8 +74,11 @@ export function discordForum(forum: ForumChannel): ForumPort {
     },
     async create(input) {
       const thread = await forum.threads.create({
-        name: input.name,
-        message: { content: input.content, allowedMentions: { parse: [] } },
+        name: discordText(input.name, 100),
+        message: {
+          content: discordText(input.content, 2000),
+          allowedMentions: { parse: [] },
+        },
         appliedTags: input.tags,
       });
       return thread.id;
