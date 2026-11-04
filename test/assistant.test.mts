@@ -291,10 +291,10 @@ test("Officer Converse request contains only selected own-roster fields (C1)", a
 });
 test("answers replace every em dash with a comma", async () => {
   const state = setup();
-  state.output("One\u2014two\u2014three");
+  state.output("One\u2014two \u2014 three");
   assert.equal(
     await state.ask(actor("member"), "Question", signal),
-    "One,two,three",
+    "One, two, three",
   );
 });
 test("answer prompt requires plain uncertainty and no em dashes", async () => {

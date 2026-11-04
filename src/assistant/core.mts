@@ -321,7 +321,7 @@ export function createConverse(
     if (result.stopReason !== "end_turn" || !text)
       throw new Error("ASSISTANT_GENERATION_FAILED");
     const answerText = text
-      .replace(/\u2014/g, ",")
+      .replace(/\s*\u2014\s*/g, ", ")
       .replace(/https?:\/\/[^\s<>]+/g, "")
       .trim();
     if (!answerText) throw new Error("ASSISTANT_GENERATION_FAILED");
