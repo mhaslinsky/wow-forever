@@ -257,7 +257,9 @@ test("replies omit the persona header and warn only for digits without search re
     const answer = await state.ask(actor("member"), "Question", false, signal);
     assert.equal(
       answer,
-      output.includes("42") ? `${output}\n${NOT_VERIFIED}` : output,
+      output.includes("42")
+        ? `${output}\n${NOT_VERIFIED}\nTurn on web for a checked answer.`
+        : output,
     );
   }
 });
@@ -273,7 +275,7 @@ test("unverifiable game numbers get a code-appended disclosure; missing or malfo
     assert.ok(
       (
         await state.ask(actor("member"), "What is the value?", false, signal)
-      ).endsWith(NOT_VERIFIED),
+      ).endsWith(`${NOT_VERIFIED}\nTurn on web for a checked answer.`),
     );
     assert.match(
       String(state.requests[0].system?.[0].text),
@@ -315,7 +317,14 @@ test("web defaults false with zero Parallel requests; opt-in sends only question
   assert.equal(answer.type, 4);
   if (answer.type === 4) assert.equal(answer.data.flags, 64);
   state.advance(60000);
-  await state.ask(actor("member"), "<@123> Current patch?", true, signal);
+  state.output("The value is 42.");
+  const webAnswer = await state.ask(
+    actor("member"),
+    "<@123> Current patch?",
+    true,
+    signal,
+  );
+  assert.ok(!webAnswer.includes("Turn on web for a checked answer."));
   assert.deepEqual(state.searches, [
     {
       search_queries: ["Current patch?"],
@@ -352,6 +361,7 @@ test("search failures and empty results disclose unverified numbers; deadline co
       signal,
     );
     assert.match(answer, /Heads up, I couldn't verify any game numbers here\./);
+    assert.ok(!answer.includes("Turn on web for a checked answer."));
     if (evidence.status === "unavailable")
       assert.ok(answer.includes(SEARCH_UNAVAILABLE));
   }
