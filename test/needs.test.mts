@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Collection, DiscordAPIError, type Guild } from "discord.js";
 import {
   createPrincipalFactory,
   createSystemPrincipal,
@@ -7,6 +8,7 @@ import {
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { createNeeds } from "../src/needs/core.mts";
+import { refreshNeedsBoard } from "../src/needs/discord.mts";
 import { createNeedsRoutes } from "../src/needs/interactions.mts";
 import { createRoster } from "../src/roster/core.mts";
 
@@ -130,4 +132,62 @@ test("/needs message lists only current gaps", async () => {
     type: 4,
     data: { content: "Team 1: looking for 2 Damage, 1 Mage.", flags: 64 },
   });
+});
+
+test("stored board IDs prevent duplicates after unpinning; only missing messages are replaced", async () => {
+  const { data, core, actor } = fixture();
+  let posts = 0;
+  let edits = 0;
+  let failure: Error | undefined;
+  const channel = {
+    id: "channel",
+    name: "apply-here",
+    type: 0,
+    send: async () => ({ id: `message${++posts}`, pin: async () => {} }),
+  };
+  const guild = {
+    id: "guild",
+    channels: { fetch: async () => new Collection([[channel.id, channel]]) },
+    client: {
+      rest: {
+        patch: async (path: string) => {
+          assert.equal(path, `/channels/channel/messages/message${posts}`);
+          edits++;
+          if (failure) throw failure;
+        },
+      },
+    },
+  } as unknown as Guild;
+  await refreshNeedsBoard(guild, data);
+  await core.setTargets(actor, "Team 1", { roles: { Healer: 1 }, classes: {} });
+  await refreshNeedsBoard(guild, data);
+  await refreshNeedsBoard(guild, data);
+  assert.deepEqual([posts, edits], [1, 1]);
+  await core.setTargets(actor, "Team 1", { roles: { Healer: 2 }, classes: {} });
+  failure = new DiscordAPIError(
+    { message: "Missing Permissions", code: 50013 },
+    50013,
+    403,
+    "PATCH",
+    "synthetic",
+    {},
+  );
+  await assert.rejects(refreshNeedsBoard(guild, data), /Missing Permissions/);
+  assert.equal(posts, 1);
+  failure = new DiscordAPIError(
+    { message: "Unknown Message", code: 10008 },
+    10008,
+    404,
+    "PATCH",
+    "synthetic",
+    {},
+  );
+  await refreshNeedsBoard(guild, data);
+  const stored = (
+    await data
+      .forSystem(createSystemPrincipal([]))
+      .get(recordKey("needsBoard", "guild", "board"))
+  )[0];
+  assert.equal(stored?.kind === "needsBoard" && stored.messageId, "message2");
+  assert.equal(posts, 2);
 });

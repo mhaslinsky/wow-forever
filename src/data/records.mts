@@ -8,6 +8,7 @@ import {
 } from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
+  needsBoard: "Officer",
   raidTeam: "Member",
   candidate: "Officer",
   gowApplication: "Officer",
@@ -27,6 +28,7 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  needsBoard: { prefix: "NEEDS_BOARD", fields: ["channelId", "messageId"] },
   raidTeam: { prefix: "RAID_TEAM", fields: ["name", "targets"] },
   classNews: { prefix: "CLASS_NEWS", fields: ["guid", "className", "status"] },
   gowApplication: { prefix: "GOW_APPLICATION", fields: ["payload"] },

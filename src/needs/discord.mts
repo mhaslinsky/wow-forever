@@ -1,6 +1,13 @@
-import { ChannelType, type Guild } from "discord.js";
+import {
+  ChannelType,
+  DiscordAPIError,
+  type Guild,
+  HTTPError,
+  Routes,
+} from "discord.js";
 import { createSystemPrincipal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
+import { recordKey } from "../data/records.mts";
 import { createNeeds } from "./core.mts";
 
 const BOARD_TITLE = "What we're recruiting";
@@ -23,42 +30,44 @@ export async function refreshNeedsBoard(
   ].join("\n");
   if (content.length > 2000) throw new Error("NEEDS_BOARD_TOO_LONG");
   if (lastPosted.get(cacheKey) === content) return;
+  const records = data.forSystem(createSystemPrincipal(["needsBoard"]));
+  const key = recordKey("needsBoard", guild.id, "board");
+  const stored = (await records.get(key))[0];
+  if (stored?.kind === "needsBoard") {
+    try {
+      await guild.client.rest.patch(
+        Routes.channelMessage(stored.channelId, stored.messageId),
+        {
+          body: { content, allowed_mentions: { parse: [] } },
+        },
+      );
+      lastPosted.set(cacheKey, content);
+      return;
+    } catch (error) {
+      const missing =
+        (error instanceof DiscordAPIError &&
+          (error.code === 10008 || error.status === 404)) ||
+        (error instanceof HTTPError && error.status === 404);
+      if (!missing) throw error;
+    }
+  }
   const matches = (await guild.channels.fetch()).filter(
     (channel) => channel?.name === name,
   );
   const channel = matches.first();
   if (matches.size !== 1 || channel?.type !== ChannelType.GuildText)
     throw new Error("NEEDS_CHANNEL_MISSING_OR_AMBIGUOUS");
-  const isBoard = (message: import("discord.js").Message) =>
-    message.author.id === guild.client.user.id &&
-    message.content.startsWith(`${BOARD_TITLE}\n`);
-  const existing: import("discord.js").Message[] = [];
-  let before: Date | undefined;
-  while (true) {
-    const pins = await channel.messages.fetchPins({ before, limit: 50 });
-    existing.push(...pins.items.map((pin) => pin.message).filter(isBoard));
-    if (!pins.hasMore) break;
-    const last = pins.items.at(-1);
-    if (!last || (before && last.pinnedTimestamp >= before.getTime()))
-      throw new Error("NEEDS_PINS_INCOMPLETE");
-    before = last.pinnedAt;
-  }
-  if (!existing.length) {
-    const recent = await channel.messages.fetch({ limit: 100 });
-    existing.push(...recent.filter(isBoard).values());
-  }
-  if (existing.length > 1) throw new Error("NEEDS_BOARD_AMBIGUOUS");
-  const message = existing[0];
-  if (message) {
-    if (message.content !== content)
-      await message.edit({ content, allowedMentions: { parse: [] } });
-    if (!message.pinned) await message.pin();
-  } else {
-    const created = await channel.send({
-      content,
-      allowedMentions: { parse: [] },
-    });
-    await created.pin();
-  }
+  const created = await channel.send({
+    content,
+    allowedMentions: { parse: [] },
+  });
+  await created.pin();
+  await records.write({
+    ...key,
+    kind: "needsBoard",
+    ownerId: guild.id,
+    channelId: channel.id,
+    messageId: created.id,
+  });
   lastPosted.set(cacheKey, content);
 }
