@@ -1,4 +1,6 @@
 import { createPublicKey, verify } from "node:crypto";
+import { createRecruitingRoutes } from "../recruiting/interactions.mts";
+import { recruitingContextForInteraction } from "../recruiting/runtime.mts";
 
 export interface Clock {
   now(): number;
@@ -60,6 +62,7 @@ export function pause(time: Clock, milliseconds: number, signal: AbortSignal) {
 export interface Interaction {
   id: string;
   application_id: string;
+  guild_id?: string;
   token: string;
   type: 1 | 2 | 3 | 4 | 5;
   data?: { name?: string; custom_id?: string; [key: string]: unknown };
@@ -87,7 +90,9 @@ export type Route = RouteDefinition &
     | { mode: "fast"; cooldownSeconds?: never }
     | { mode: "slow"; cooldownSeconds?: number }
   );
-export const registry: readonly Route[] = [];
+export const registry: readonly Route[] = [
+  ...createRecruitingRoutes(recruitingContextForInteraction),
+];
 export function commandDefinitions(routes: readonly Route[] = registry) {
   return routes
     .filter((route) => route.type === 2)

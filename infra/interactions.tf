@@ -68,6 +68,10 @@ data "aws_iam_policy_document" "interactions" {
     actions   = ["dynamodb:PutItem"]
     resources = [aws_dynamodb_table.claims.arn]
   }
+  statement {
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "interactions" {
@@ -94,6 +98,7 @@ resource "aws_lambda_function" "interactions" {
     variables = {
       PUBLIC_KEY_PARAM = aws_ssm_parameter.secrets["discord_app_public_key"].name
       CLAIMS_TABLE     = aws_dynamodb_table.claims.name
+      GUILD_ID         = var.guild_id
     }
   }
   depends_on = [aws_cloudwatch_log_group.interactions, aws_iam_role_policy.interactions]

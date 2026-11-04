@@ -19,7 +19,7 @@ import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
 type AppliedTagsChange = { key: "applied_tags"; new?: unknown };
 
-async function recruitingContext(guild: Guild) {
+export async function recruitingContext(guild: Guild) {
   const roles = await guild.roles.fetch();
   function roleId(name: string) {
     const matches = roles.filter((role) => role.name === name);
