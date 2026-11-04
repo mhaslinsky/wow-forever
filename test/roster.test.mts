@@ -58,6 +58,7 @@ function fixture() {
           id: name,
         })),
       create: async () => "thread",
+      post: async () => {},
       tagsFor: async () => ["New", "Apply form"],
       setTags: async () => {},
     },

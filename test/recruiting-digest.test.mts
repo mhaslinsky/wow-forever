@@ -21,7 +21,7 @@ function fixture() {
       items.set(item.sk, item);
     },
   });
-  const principal = createSystemPrincipal(["candidate"]);
+  const principal = createSystemPrincipal(["candidate", "officerNote"]);
   const actor = createPrincipalFactory({
     guildId: "guild",
     memberRoleId: "member",
@@ -36,6 +36,7 @@ function fixture() {
     tags: async () =>
       [...STAGES, ...SOURCES].map((name) => ({ id: name, name })),
     create: async () => `thread-${++sequence}`,
+    post: async () => {},
     tagsFor: async () => [],
     setTags: async () => {},
   });
@@ -51,7 +52,7 @@ function fixture() {
   });
   const candidate = (nextActionAt?: string, owner?: string) =>
     core.create({
-      name: "Synthetic",
+      name: `Synthetic-${items.size}`,
       source: "Apply form",
       actorId: "applicant",
       nextActionAt,
