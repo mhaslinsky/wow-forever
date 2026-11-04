@@ -21,6 +21,8 @@ const cloudwatch = new CloudWatchClient({ region });
 const log = (record: Readonly<Record<string, unknown>>) =>
   console.log(JSON.stringify(record));
 async function main() {
+  const guildId = process.env.GUILD_ID?.trim();
+  if (!guildId) throw new StartupError("GUILD_ID_REQUIRED");
   const result = await ssm
     .send(
       new GetParameterCommand({
@@ -43,13 +45,20 @@ async function main() {
       GatewayIntentBits.GuildVoiceStates,
     ],
   });
+  const voicePresence = createVoicePresenceHandler(
+    createDynamoDataAccess({ tableName: "wow-forever", region }),
+    guildId,
+  );
   const heartbeat = attachGateway(
     client,
     {
       ...handlers,
-      voiceStateUpdate: createVoicePresenceHandler(
-        createDynamoDataAccess({ tableName: "wow-forever", region }),
-      ),
+      voiceStateUpdate: voicePresence,
+      clientReady: async (readyClient) => {
+        const guild = readyClient.guilds.cache.get(guildId);
+        if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
+        await voicePresence.ready(guild.voiceStates.cache.values());
+      },
     },
     async (name) => {
       await cloudwatch.send(

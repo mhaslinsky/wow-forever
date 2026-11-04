@@ -22,7 +22,7 @@ const CODECS = Object.freeze({
   raid: { prefix: "RAID", fields: ["date"] },
   voicePresence: {
     prefix: "VOICE_PRESENCE",
-    fields: ["guildId", "channelId", "joinedAt"],
+    fields: ["guildId", "memberId", "channelId", "joinedAt"],
   },
   attendance: { prefix: "ATTENDANCE", fields: ["raidId"] },
   signup: {
@@ -47,7 +47,7 @@ export type GuildRecord = {
       string
     > &
     (Current extends "voicePresence"
-      ? { leftAt?: string }
+      ? { leftAt?: string; endUnknown?: boolean }
       : Record<never, never>);
 }[Kind];
 export type RecordInput =
@@ -78,7 +78,7 @@ export function decode(raw: unknown): GuildRecord | undefined {
     item.sk.length === prefix.length
   )
     return;
-  const output: Record<string, string> = {
+  const output: Record<string, string | boolean> = {
     kind,
     pk: item.pk,
     sk: item.sk,
@@ -91,6 +91,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
   if (kind === "voicePresence" && item.leftAt !== undefined) {
     if (typeof item.leftAt !== "string" || !item.leftAt) return;
     output.leftAt = item.leftAt;
+  }
+  if (kind === "voicePresence" && item.endUnknown !== undefined) {
+    if (typeof item.endUnknown !== "boolean" || !item.leftAt) return;
+    output.endUnknown = item.endUnknown;
   }
   return output as GuildRecord;
 }

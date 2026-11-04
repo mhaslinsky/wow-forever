@@ -89,7 +89,11 @@ export function scheduleHeartbeat(heartbeat: () => Promise<void>) {
   }, 60_000);
 }
 
-type StartupCode = "TOKEN_NOT_CONFIGURED" | "SSM_READ_FAILED" | "LOGIN_FAILED";
+type StartupCode =
+  | "GUILD_ID_REQUIRED"
+  | "TOKEN_NOT_CONFIGURED"
+  | "SSM_READ_FAILED"
+  | "LOGIN_FAILED";
 export class StartupError extends Error {
   readonly code: StartupCode;
   constructor(code: StartupCode) {
