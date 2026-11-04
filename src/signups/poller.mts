@@ -7,7 +7,7 @@ export type SignUp = {
   className: string;
   specName: string;
   roleName: string;
-  status: "primary" | "queued";
+  status: "primary" | "secondary" | "queued";
 };
 export type RaidSignUps = { id: string; startTime: number; signUps: SignUp[] };
 export type RaidHelper = { events(): Promise<RaidSignUps[]> };
@@ -46,7 +46,11 @@ function event(value: unknown, expectedId: string): RaidSignUps {
     startTime: number(raw.startTime),
     signUps: raw.signUps.map((value: unknown) => {
       const signup = object(value);
-      if (signup.status !== "primary" && signup.status !== "queued")
+      if (
+        signup.status !== "primary" &&
+        signup.status !== "secondary" &&
+        signup.status !== "queued"
+      )
         throw new Error("RAID_HELPER_INVALID_RESPONSE");
       return {
         userId: text(signup.userId),
@@ -75,7 +79,7 @@ export function createRaidHelper(config: {
         const response = await http(`https://raid-helper.xyz/api/${path}`, {
           headers: {
             Authorization: key,
-            ...(page ? { Page: String(page) } : {}),
+            ...(page ? { Page: String(page), IncludeSignUps: "true" } : {}),
           },
           signal: AbortSignal.timeout(15_000),
           redirect: "error",
@@ -91,7 +95,7 @@ export function createRaidHelper(config: {
       for (let page = 1; page <= pages; page++) {
         const result = object(
           await get(
-            `v3/servers/${encodeURIComponent(config.guildId)}/events`,
+            `v4/servers/${encodeURIComponent(config.guildId)}/events`,
             page,
           ),
         );
@@ -111,9 +115,7 @@ export function createRaidHelper(config: {
           throw new Error("RAID_HELPER_INVALID_RESPONSE");
         for (const summary of result.postedEvents) {
           const id = text(object(summary).id);
-          events.push(
-            event(await get(`v4/events/${encodeURIComponent(id)}`), id),
-          );
+          events.push(event(summary, id));
         }
       }
       return events;
