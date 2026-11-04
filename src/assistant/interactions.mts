@@ -36,7 +36,13 @@ export function createAskRoutes(
         )?.value;
         if (typeof question !== "string")
           return message("You forgot the question.");
-        return message(await answer(interaction, question, signal));
+        return {
+          type: 4,
+          data: {
+            content: await answer(interaction, question, signal),
+            flags: 64 | 4,
+          },
+        };
       },
     },
   ];

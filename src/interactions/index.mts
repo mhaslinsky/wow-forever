@@ -82,7 +82,11 @@ export function discordClient(http: typeof fetch = fetch): Ports["discord"] {
             : JSON.stringify({
                 content: content?.slice(0, 2000),
                 allowed_mentions: { parse: [] },
-                ...(method === "POST" && ephemeral ? { flags: 64 } : {}),
+                ...(interaction.type === 2 && interaction.data?.name === "ask"
+                  ? { flags: (method === "POST" && ephemeral ? 64 : 0) | 4 }
+                  : method === "POST" && ephemeral
+                    ? { flags: 64 }
+                    : {}),
               }),
       },
     );

@@ -315,7 +315,14 @@ export function createConverse(
     if (!answerText) throw new Error("ASSISTANT_GENERATION_FAILED");
     const answer = [
       answerText,
-      ...evidence.map((entry) => entry.url),
+      ...(evidence.length
+        ? [
+            `Sources: ${evidence
+              .slice(0, 3)
+              .map((entry) => `<${new URL(entry.url).href}>`)
+              .join(" ")}`,
+          ]
+        : []),
       ...(input.evidence.status !== "found" && /\d/.test(answerText)
         ? [NOT_VERIFIED]
         : []),
