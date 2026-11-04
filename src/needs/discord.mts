@@ -3,7 +3,7 @@ import { createSystemPrincipal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { createNeeds } from "./core.mts";
 
-const BOARD_TITLE = "Raid recruiting needs";
+const BOARD_TITLE = "What we're recruiting";
 const lastPosted = new Map<string, string>();
 export async function refreshNeedsBoard(
   guild: Guild,
@@ -18,7 +18,7 @@ export async function refreshNeedsBoard(
     BOARD_TITLE,
     ...boards.map(
       (board) =>
-        `${board.name}: ${board.gaps.map((gap) => `${gap.count} ${gap.name}`).join(", ") || "No recruiting gaps"}`,
+        `${board.name}: ${board.gaps.map((gap) => `${gap.count} ${gap.name}`).join(", ") || "We're full up right now"}`,
     ),
   ].join("\n");
   if (content.length > 2000) throw new Error("NEEDS_BOARD_TOO_LONG");

@@ -74,7 +74,7 @@ export function createNeedsRoutes(
       async handler(interaction, signal) {
         const context = await resolve(interaction, signal);
         if (!authority(context.actor).roles.includes("Officer"))
-          return message("Officers only");
+          return message("Officers only, sorry.");
         const options = interaction.data?.options;
         const command = Array.isArray(options) ? options[0] : undefined;
         if (command?.name === "message")
@@ -102,7 +102,7 @@ export function createNeedsRoutes(
             return message("Need a member and active status");
           await context.core.assign(context.actor, member, team, active);
         } else return message("Choose a needs command");
-        return message("Needs updated");
+        return message("Got it, needs updated.");
       },
     },
   ];

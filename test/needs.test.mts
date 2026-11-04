@@ -128,6 +128,6 @@ test("/needs message lists only current gaps", async () => {
   );
   assert.deepEqual(reply, {
     type: 4,
-    data: { content: "Team 1: recruiting 2 Damage, 1 Mage.", flags: 64 },
+    data: { content: "Team 1: looking for 2 Damage, 1 Mage.", flags: 64 },
   });
 });

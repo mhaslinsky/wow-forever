@@ -108,9 +108,9 @@ export function createNeeds(
           .filter((board) => board.gaps.length)
           .map(
             (board) =>
-              `${board.name}: recruiting ${board.gaps.map((gap) => `${gap.count} ${gap.name}`).join(", ")}.`,
+              `${board.name}: looking for ${board.gaps.map((gap) => `${gap.count} ${gap.name}`).join(", ")}.`,
           )
-          .join("\n") || "No recruiting gaps"
+          .join("\n") || "We're full up right now"
       );
     },
   };
