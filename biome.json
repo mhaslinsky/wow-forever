@@ -46,7 +46,9 @@
         "src/data/index.mts",
         "src/data/class-news.mts",
         "test/data-local.test.mts",
-        "src/interactions/index.mts"
+        "src/interactions/index.mts",
+        "src/data/gow-applications.mts",
+        "test/gow-intake.test.mts"
       ],
       "linter": {
         "rules": {
