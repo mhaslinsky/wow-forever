@@ -113,3 +113,25 @@ test("release failures are logged without hiding the post error", async (context
     "NEWS_CLAIM_RELEASE_FAILED",
   );
 });
+
+test("a separate Discord error class releases a 403 claim; a timeout stays pending", async () => {
+  class SeparateDiscordAPIError extends Error {
+    status = 403;
+    method = "POST";
+    url = "https://discord.com/api/v10/channels/example/messages";
+  }
+  const rejected = fixture(
+    "Forever",
+    new SeparateDiscordAPIError("Missing Access"),
+  );
+  await assert.rejects(rejected.run());
+  await assert.rejects(rejected.run());
+  assert.equal(rejected.messages.length, 2);
+  const timeout = fixture(
+    "Forever",
+    new DOMException("Timed out", "TimeoutError"),
+  );
+  await assert.rejects(timeout.run());
+  assert.equal((await timeout.run()).posted, 0);
+  assert.equal(timeout.messages.length, 1);
+});
