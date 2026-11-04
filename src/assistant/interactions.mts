@@ -8,7 +8,6 @@ export function createAskRoutes(
   answer: (
     interaction: Interaction,
     question: string,
-    web: boolean,
     signal: AbortSignal,
   ) => Promise<string>,
 ): Route[] {
@@ -28,13 +27,6 @@ export function createAskRoutes(
           min_length: 1,
           max_length: 2000,
         },
-        {
-          type: 5,
-          name: "web",
-          description:
-            "Also search the web (sends your question to a search service)",
-          required: false,
-        },
       ],
       async handler(interaction, signal) {
         const options = interaction.data?.options;
@@ -42,15 +34,9 @@ export function createAskRoutes(
         const question = options.find(
           (option) => option?.name === "question",
         )?.value;
-        const web = options.find((option) => option?.name === "web")?.value;
-        if (
-          typeof question !== "string" ||
-          (web !== undefined && typeof web !== "boolean")
-        )
+        if (typeof question !== "string")
           return message("You forgot the question.");
-        return message(
-          await answer(interaction, question, web === true, signal),
-        );
+        return message(await answer(interaction, question, signal));
       },
     },
   ];
