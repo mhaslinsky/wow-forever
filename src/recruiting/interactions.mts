@@ -1,3 +1,4 @@
+import { ActionRowBuilder, StringSelectMenuBuilder } from "discord.js";
 import { authority } from "../auth/index.mts";
 import type { CharacterDeclaration } from "../data/recruiting.mts";
 import {
@@ -8,12 +9,83 @@ import {
 } from "../interactions/core.mts";
 import type { ResolveRecruitingContext } from "./runtime.mts";
 
-const fields = [
-  ["name", "Character name", 100],
-  ["class", "Class", 30],
-  ["spec", "Spec", 50],
-  ["raidRole", "Raid role (Tank, Healer, Damage)", 6],
-] as const;
+type RaidRole = CharacterDeclaration["raidRole"];
+const damage: RaidRole[] = ["Damage"];
+const healer: RaidRole[] = ["Healer"];
+const tank: RaidRole[] = ["Tank"];
+const classes: Record<string, Record<string, RaidRole[]>> = {
+  Druid: { Balance: damage, Feral: ["Tank", "Damage"], Restoration: healer },
+  Hunter: { "Beast Mastery": damage, Marksmanship: damage, Survival: damage },
+  Mage: { Arcane: damage, Fire: damage, Frost: damage },
+  Paladin: { Holy: healer, Protection: tank, Retribution: damage },
+  Priest: { Discipline: healer, Holy: healer, Shadow: damage },
+  Rogue: { Assassination: damage, Combat: damage, Subtlety: damage },
+  Shaman: { Elemental: damage, Enhancement: damage, Restoration: healer },
+  Warlock: { Affliction: damage, Demonology: damage, Destruction: damage },
+  Warrior: { Arms: damage, Fury: damage, Protection: tank },
+};
+
+function specsFor(characterClass: string) {
+  return Object.hasOwn(classes, characterClass)
+    ? classes[characterClass]
+    : undefined;
+}
+function rolesFor(characterClass: string, spec: string) {
+  const specs = specsFor(characterClass);
+  return specs && Object.hasOwn(specs, spec) ? specs[spec] : undefined;
+}
+function select(customId: string, prompt: string, options: string[]): Reply {
+  return {
+    type: 4,
+    data: {
+      content: prompt,
+      flags: 64,
+      components: [
+        new ActionRowBuilder<StringSelectMenuBuilder>()
+          .addComponents(
+            new StringSelectMenuBuilder()
+              .setCustomId(customId)
+              .setPlaceholder(prompt)
+              .addOptions(
+                options.map((value) => ({
+                  label: value === "Damage" ? "DPS" : value,
+                  value,
+                })),
+              ),
+          )
+          .toJSON(),
+      ],
+    },
+  };
+}
+function applicationModal(
+  characterClass: string,
+  spec: string,
+  raidRole: RaidRole,
+): Reply {
+  return {
+    type: 9,
+    data: {
+      custom_id: ["apply", characterClass, spec, raidRole].join(":"),
+      title: "Guild application",
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: "name",
+              label: "Character name",
+              style: 1,
+              required: true,
+              max_length: 100,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
 
 function formValues(interaction: Interaction): Record<string, string> {
   const rows = interaction.data?.components;
@@ -59,26 +131,58 @@ export function createRecruitingRoutes(
       async handler(interaction): Promise<Reply> {
         if (!inGuild(interaction))
           return message("This command only works in the server");
-        return {
-          type: 9,
-          data: {
-            custom_id: "apply",
-            title: "Guild application",
-            components: fields.map(([custom_id, label, max_length]) => ({
-              type: 1,
-              components: [
-                {
-                  type: 4,
-                  custom_id,
-                  label,
-                  style: 1,
-                  required: true,
-                  max_length,
-                },
-              ],
-            })),
-          },
-        };
+        return select(
+          "apply:class",
+          "What class are you?",
+          Object.keys(classes),
+        );
+      },
+    },
+    {
+      type: 3,
+      name: "apply",
+      mode: "fast",
+      visibility: "ephemeral",
+      async handler(interaction) {
+        if (!inGuild(interaction))
+          return message("This command only works in the server");
+        const parts = interaction.data?.custom_id?.split(":") ?? [];
+        const values = interaction.data?.values;
+        if (
+          !Array.isArray(values) ||
+          values.length !== 1 ||
+          typeof values[0] !== "string"
+        )
+          return message("That timed out, run /apply again");
+        const selected = values[0];
+        const [, step, characterClass, spec] = parts;
+        if (step === "class" && parts.length === 2) {
+          const specs = specsFor(selected);
+          if (specs)
+            return select(
+              `apply:spec:${selected}`,
+              "What spec?",
+              Object.keys(specs),
+            );
+        }
+        if (step === "spec" && parts.length === 3) {
+          const roles = rolesFor(characterClass, selected);
+          if (roles?.length === 1)
+            return applicationModal(characterClass, selected, roles[0]);
+          if (roles)
+            return select(
+              `apply:role:${characterClass}:${selected}`,
+              "Tank or DPS?",
+              roles,
+            );
+        }
+        if (step === "role" && parts.length === 4) {
+          const role = rolesFor(characterClass, spec)?.find(
+            (role) => role === selected,
+          );
+          if (role) return applicationModal(characterClass, spec, role);
+        }
+        return message("That timed out, run /apply again");
       },
     },
     {
@@ -93,25 +197,21 @@ export function createRecruitingRoutes(
         try {
           values = formValues(interaction);
         } catch {
-          return message("Fill in every field");
+          return message("Need your character name");
         }
-        if (
-          fields.some(
-            ([name, , max]) => !values[name] || values[name].length > max,
-          )
-        )
-          return message("Fill in every field");
-        const raidRole = values.raidRole;
-        if (
-          raidRole !== "Tank" &&
-          raidRole !== "Healer" &&
-          raidRole !== "Damage"
-        )
-          return message("Raid role has to be Tank, Healer or Damage");
+        const parts = interaction.data?.custom_id?.split(":") ?? [];
+        const [, characterClass, spec, selectedRole] = parts;
+        const raidRole = rolesFor(characterClass, spec)?.find(
+          (role) => role === selectedRole,
+        );
+        if (parts.length !== 4 || !raidRole)
+          return message("That timed out, run /apply again");
+        if (!values.name || values.name.length > 100)
+          return message("Need your character name");
         const character: CharacterDeclaration = {
           name: values.name,
-          class: values.class,
-          spec: values.spec,
+          class: characterClass,
+          spec,
           raidRole,
           main: true,
         };

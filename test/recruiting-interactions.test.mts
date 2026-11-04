@@ -92,11 +92,13 @@ test("/apply submission creates an Applied candidate", async () => {
     ...setup.interaction,
     type: 5,
     data: {
-      custom_id: "apply",
-      components: Object.entries(details).map(([custom_id, value]) => ({
-        type: 1,
-        components: [{ type: 4, custom_id, value }],
-      })),
+      custom_id: "apply:Mage:Frost:Damage",
+      components: Object.entries({ name: details.name }).map(
+        ([custom_id, value]) => ({
+          type: 1,
+          components: [{ type: 4, custom_id, value }],
+        }),
+      ),
     },
   });
   assert.deepEqual(result, message("Got it! An officer will reach out soon."));
@@ -127,5 +129,55 @@ test("/lead from a non-officer is refused", async () => {
     await setup.run({ ...setup.interaction, data: lead }),
     message("Officers only"),
   );
+  assert.equal(setup.items.length, 0);
+});
+
+test("picking a class offers only that class's specs", async () => {
+  const setup = fixture();
+  const reply = await setup.run({
+    ...setup.interaction,
+    type: 3,
+    data: { custom_id: "apply:class", values: ["Hunter"] },
+  });
+  assert.equal(reply.type, 4);
+  if (reply.type !== 4) throw new Error("Expected select");
+  assert.deepEqual(JSON.parse(JSON.stringify(reply.data.components)), [
+    {
+      type: 1,
+      components: [
+        {
+          type: 3,
+          custom_id: "apply:spec:Hunter",
+          placeholder: "What spec?",
+          options: ["Beast Mastery", "Marksmanship", "Survival"].map(
+            (label) => ({ label, value: label }),
+          ),
+        },
+      ],
+    },
+  ]);
+});
+test("a single-role spec skips the role step", async () => {
+  const setup = fixture();
+  const reply = await setup.run({
+    ...setup.interaction,
+    type: 3,
+    data: { custom_id: "apply:spec:Mage", values: ["Frost"] },
+  });
+  assert.equal(reply.type, 9);
+  if (reply.type !== 9) throw new Error("Expected modal");
+  assert.equal(reply.data.custom_id, "apply:Mage:Frost:Damage");
+});
+test("a submitted combination outside the table is refused", async () => {
+  const setup = fixture();
+  const reply = await setup.run({
+    ...setup.interaction,
+    type: 5,
+    data: {
+      custom_id: "apply:Mage:Frost:Tank",
+      components: [{ components: [{ custom_id: "name", value: "Synthetic" }] }],
+    },
+  });
+  assert.deepEqual(reply, message("That timed out, run /apply again"));
   assert.equal(setup.items.length, 0);
 });
