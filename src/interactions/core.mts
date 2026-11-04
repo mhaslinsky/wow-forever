@@ -72,10 +72,11 @@ export interface Interaction {
   id: string;
   application_id: string;
   guild_id?: string;
+  channel_id?: string;
   token: string;
   type: 1 | 2 | 3 | 4 | 5;
   data?: { name?: string; custom_id?: string; [key: string]: unknown };
-  member?: { user?: { id: string }; roles?: string[] };
+  member?: { user?: { id: string }; roles?: string[]; permissions?: string };
   user?: { id: string };
 }
 export type Reply =

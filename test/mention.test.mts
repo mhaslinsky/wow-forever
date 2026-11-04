@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
 import { PermissionFlagsBits as flags } from "discord.js";
+import { createChannelContext } from "../src/assistant/context.mts";
 import {
   createAssistant,
   createConverse,
@@ -17,6 +18,7 @@ import { assistantPrincipal } from "../src/assistant/runtime.mts";
 import { authority, capToMember } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { recordKey } from "../src/data/records.mts";
+import { clock } from "../src/interactions/core.mts";
 import { assistantClaim, deliveryClaim } from "../src/interactions/index.mts";
 
 const signal = new AbortController().signal;
@@ -48,7 +50,10 @@ function setup(role = "officer") {
     requests: ConverseCommandInput[] = [];
   let searches = 0,
     checks = 0;
-  const humans = [{ user: { id: "asker" }, roles: [role] }];
+  const humans: { user: { id: string; bot?: boolean }; roles: string[] }[] = [
+    { user: { id: "asker" }, roles: [role] },
+    { user: { id: "bot", bot: true }, roles: ["member"] },
+  ];
   const parent = {
     id: "channel",
     guild_id: "guild",
@@ -67,7 +72,16 @@ function setup(role = "officer") {
     parent_id: "channel",
   };
   let secondFails = false;
+  let loseHistory = false;
   const get = async (path: string): Promise<unknown> => {
+    if (path.endsWith("/messages?limit=20"))
+      return [
+        {
+          author: { username: "Synthetic author" },
+          content: "CHANNEL_ONLY_SENTINEL",
+          timestamp: new Date().toISOString(),
+        },
+      ];
     if (path === "/users/@me") return { id: "bot" };
     if (path.includes("/messages/"))
       return {
@@ -171,6 +185,10 @@ function setup(role = "officer") {
     },
     converse: createConverse(async (command) => {
       requests.push(command.input);
+      if (loseHistory)
+        parent.permission_overwrites.push(
+          overwrite("other", 0n, flags.ReadMessageHistory, 1),
+        );
       return {
         $metadata: {},
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
@@ -188,9 +206,11 @@ function setup(role = "officer") {
     get,
     claim,
     now: () => now,
-    answer: async (actor, question, abort) => {
+    context: (channelId, abort) =>
+      createChannelContext({ clock, get, report: () => {} }, channelId)(abort),
+    answer: async (actor, question, abort, context) => {
       capturedActor = actor;
-      return ask(actor, question, abort);
+      return ask(actor, question, abort, context);
     },
     reply: async (_event, content) => {
       replies.push(content);
@@ -216,6 +236,9 @@ function setup(role = "officer") {
     },
     failSecond: () => {
       secondFails = true;
+    },
+    loseHistory: () => {
+      loseHistory = true;
     },
     actor: () => {
       assert.ok(capturedActor);
@@ -351,4 +374,36 @@ test("failed second verification suppresses the generated answer", async () => {
   assert.equal(state.requests.length, 1);
   assert.deepEqual(state.replies, [POINTER]);
   assert.ok(state.reasons.includes("VERIFICATION_FAILED"));
+});
+
+test("a human or bot viewer without history withholds context while still answering", async () => {
+  for (const bot of [false, true]) {
+    const state = setup();
+    state.humans.push({ user: { id: "other", bot }, roles: ["member"] });
+    state.parent.permission_overwrites.push(
+      overwrite("member", flags.ReadMessageHistory),
+      overwrite("other", 0n, flags.ReadMessageHistory, 1),
+    );
+    await state.mention(event, signal);
+    assert.equal(state.requests.length, 1);
+    assert.doesNotMatch(
+      JSON.stringify(state.requests),
+      /CHANNEL_ONLY_SENTINEL/,
+    );
+    assert.deepEqual(state.replies, ["Answer"]);
+  }
+});
+
+test("history lost before posting suppresses a context answer and posts the pointer", async () => {
+  const state = setup();
+  state.humans.push({ user: { id: "other", bot: true }, roles: ["member"] });
+  state.parent.permission_overwrites.push(
+    overwrite("member", flags.ReadMessageHistory),
+  );
+  state.loseHistory();
+  await state.mention(event, signal);
+  assert.equal(state.requests.length, 1);
+  assert.match(JSON.stringify(state.requests), /CHANNEL_ONLY_SENTINEL/);
+  assert.deepEqual(state.replies, [POINTER]);
+  assert.ok(state.reasons.includes("HISTORY_ACCESS_LOST"));
 });

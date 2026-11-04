@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
+import { PermissionFlagsBits as flags } from "discord.js";
+import {
+  createChannelContext,
+  interactionHistoryChannel,
+} from "../src/assistant/context.mts";
 import {
   COOLDOWN,
   createAssistant,
@@ -21,7 +26,7 @@ import {
 } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
-import { clock } from "../src/interactions/core.mts";
+import { clock, type Interaction } from "../src/interactions/core.mts";
 import { assistantClaim } from "../src/interactions/index.mts";
 
 const signal = new AbortController().signal;
@@ -549,4 +554,153 @@ test("cooldown admits one concurrent question and permits the exact expiry bound
     },
   );
   await assert.rejects(broken("guild", "asker", signal), /Claims unavailable/);
+});
+
+const contextWord = "CHANNEL_ONLY_SENTINEL";
+const history = [
+  {
+    author: { username: "Synthetic author" },
+    content: contextWord,
+    timestamp: new Date().toISOString(),
+  },
+];
+const askPayload = {
+  channel_id: "channel",
+  member: {
+    permissions: String(flags.ViewChannel | flags.ReadMessageHistory),
+  },
+};
+test("channel context reaches Converse, never the router or actual Parallel body, and logs counts only", async (context) => {
+  const logs: unknown[][] = [];
+  context.mock.method(console, "log", (...values: unknown[]) =>
+    logs.push(values),
+  );
+  const state = setup(
+    '{"needsGuild":true,"needsWeb":true,"searchQuery":"WoW Mage specs"}',
+  );
+  const channelContext = createChannelContext(
+    {
+      clock,
+      get: async (path) => {
+        assert.equal(path, "/channels/channel/messages?limit=20");
+        return history;
+      },
+    },
+    interactionHistoryChannel(askPayload),
+  );
+  await state.ask(actor("member"), "What is FAD?", signal, channelContext);
+  assert.match(JSON.stringify(state.requests), /CHANNEL_ONLY_SENTINEL/);
+  assert.equal(state.routingRequests.length, 1);
+  assert.doesNotMatch(
+    JSON.stringify(state.routingRequests),
+    /CHANNEL_ONLY_SENTINEL/,
+  );
+  assert.deepEqual(state.searches, [
+    {
+      search_queries: ["WoW Mage specs"],
+      mode: "fast",
+      max_chars_total: 12000,
+    },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(logs),
+    /CHANNEL_ONLY_SENTINEL|Synthetic author/,
+  );
+  assert.equal(JSON.parse(String(logs[0][0])).ChannelContextMessages, 1);
+});
+
+test("askers without history permission get no context; missing and malformed permissions fail closed", async () => {
+  for (const permissions of [
+    String(flags.ViewChannel),
+    undefined,
+    "invalid",
+    1024,
+  ]) {
+    const state = setup();
+    let historyReads = 0;
+    const payload = {
+      ...askPayload,
+      member: { permissions },
+    } as Interaction;
+    const channelContext = createChannelContext(
+      {
+        clock,
+        get: async () => {
+          historyReads++;
+          return history;
+        },
+        report: () => {},
+      },
+      interactionHistoryChannel(payload),
+    );
+    await state.ask(actor("member"), "Question", signal, channelContext);
+    assert.equal(historyReads, 0);
+    assert.equal(state.requests.length, 1);
+    assert.doesNotMatch(JSON.stringify(state.requests), /Recent messages/);
+  }
+  assert.equal(
+    interactionHistoryChannel({ ...askPayload, channel_id: undefined }),
+    undefined,
+  );
+  assert.equal(
+    interactionHistoryChannel({
+      ...askPayload,
+      member: { permissions: String(flags.Administrator) },
+    }),
+    "channel",
+  );
+});
+
+test("stalled history times out on a stepped clock and answers without context", async () => {
+  const state = setup();
+  let expire: () => void = () => assert.fail("Deadline not scheduled");
+  let child: AbortSignal | undefined;
+  let start: () => void = () => assert.fail("Request not started");
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const channelContext = createChannelContext(
+    {
+      clock: {
+        now: () => 0,
+        schedule: (milliseconds, callback) => {
+          assert.equal(milliseconds, 3000);
+          expire = callback;
+          return () => {};
+        },
+      },
+      get: async (_path, abortSignal) => {
+        child = abortSignal;
+        start();
+        return new Promise(() => {});
+      },
+      report: (reason) => assert.equal(reason, "timeout"),
+    },
+    "channel",
+  );
+  const pending = state.ask(actor("member"), "FAD?", signal, channelContext);
+  await started;
+  expire();
+  await pending;
+  assert.equal(child?.aborted, true);
+  assert.equal(state.requests.length, 1);
+  assert.doesNotMatch(JSON.stringify(state.requests), /Recent messages/);
+});
+
+test("history fetch failure gives an answer without context", async () => {
+  const state = setup();
+  const channelContext = createChannelContext(
+    {
+      clock,
+      get: async () => {
+        throw new Error(contextWord);
+      },
+      report: (reason, count) =>
+        assert.deepEqual([reason, count], ["fetch", 0]),
+    },
+    "channel",
+  );
+  await state.ask(actor("member"), "Question", signal, channelContext);
+  assert.equal(state.requests.length, 1);
+  assert.doesNotMatch(JSON.stringify(state.requests), /Recent messages/);
 });
