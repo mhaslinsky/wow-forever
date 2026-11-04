@@ -84,7 +84,7 @@ test("edits after the lock do not change the current raid's list", async () => {
   setup.setTime((setup.startTime - 3600) * 1000);
   assert.deepEqual(await setup.save("Example Ring"), {
     type: 4,
-    data: { content: "Wishlist saved for the next raid", flags: 64 },
+    data: { content: "Got it, saved for the next raid", flags: 64 },
   });
   assert.deepEqual(
     await setup.core.forRaid(setup.actor, "user", setup.startTime),

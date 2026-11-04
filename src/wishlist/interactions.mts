@@ -37,20 +37,20 @@ export function createWishlistRoutes(
           ? options.find((entry) => entry?.name === "items")?.value
           : undefined;
         if (typeof value !== "string")
-          return message("Enter items in rank order, separated by semicolons");
+          return message(
+            "Need your items, best first, separated by semicolons",
+          );
         const context = await resolveContext(interaction, signal);
         try {
           const result = await context.core.save(context.actor, value);
           return message(
             result.locked
-              ? "Wishlist saved for the next raid"
-              : "Wishlist saved",
+              ? "Got it, saved for the next raid"
+              : "Got it, wishlist saved",
           );
         } catch (error) {
           if (error instanceof Error && error.message === "INVALID_WISHLIST")
-            return message(
-              "Enter up to 25 different items, separated by semicolons",
-            );
+            return message("Up to 25 different items, separated by semicolons");
           throw error;
         }
       },
