@@ -73,7 +73,7 @@ test("production claims policy allows PutItem only, never GetItem or UpdateItem"
   const actions = statements.flatMap((statement) => statement.actions);
   assert.equal(
     actions.sort().join(","),
-    "dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
+    "dynamodb:ConditionCheckItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
   );
   const claims = statements.filter((statement) =>
     statement.resources.includes(`\${aws_dynamodb_table.claims.arn}`),
