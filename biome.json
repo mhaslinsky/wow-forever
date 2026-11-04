@@ -1,11 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.3.3/schema.json",
   "files": {
-    "includes": [
-      "**",
-      "!package-lock.json",
-      "!build"
-    ]
+    "includes": ["**", "!package-lock.json", "!build"]
   },
   "formatter": {
     "indentStyle": "space"
@@ -36,9 +32,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "test/interactions-smoke-fixture.mts"
-      ],
+      "includes": ["test/interactions-smoke-fixture.mts"],
       "linter": {
         "rules": {
           "style": {

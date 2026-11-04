@@ -2,14 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
   QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { createSystemPrincipal } from "../src/auth/index.mts";
+import { createDynamoDataAccess } from "../src/data/index.mts";
 import { recordKey } from "../src/data/records.mts";
 import type { Stage } from "../src/data/recruiting.mts";
+import { SOURCES, STAGES } from "../src/data/recruiting.mts";
 import { createRetentionStorage } from "../src/data/retention.mts";
 import type { Candidate } from "../src/recruiting/core.mts";
+import { createRecruiting } from "../src/recruiting/core.mts";
 import { createRetentionPurge } from "../src/recruiting/retention.mts";
 
 function candidate(stage: Stage): Candidate {
@@ -112,4 +118,62 @@ test("Accepted candidates untouched", async () => {
     purge: untouched,
   });
   assert.deepEqual(await purge(), { purged: 0 });
+});
+
+test("in-flight acceptance cannot overwrite a retention redaction", async (context) => {
+  let stored = {
+    ...candidate("Declined"),
+    discordUserId: "synthetic-user",
+  } as Candidate;
+  const redacted: Candidate = {
+    pk: stored.pk,
+    sk: stored.sk,
+    kind: "candidate",
+    ownerId: "guild",
+    name: "Synthetic",
+    retention: { outcome: "Declined", threadId: "Declined", archived: false },
+  };
+  context.mock.method(
+    DynamoDBDocumentClient.prototype,
+    "send",
+    async (command: unknown) => {
+      if (command instanceof GetCommand) return { Item: stored };
+      if (command instanceof PutCommand) {
+        const expected =
+          command.input.ExpressionAttributeValues?.[":changedAt"];
+        if (
+          command.input.ConditionExpression?.includes("recruiting.changedAt") &&
+          stored.recruiting?.changedAt !== expected
+        ) {
+          throw Object.assign(new Error("stale candidate"), {
+            name: "ConditionalCheckFailedException",
+          });
+        }
+        stored = command.input.Item as Candidate;
+        return {};
+      }
+      assert.fail("Unexpected storage command");
+    },
+  );
+  const core = createRecruiting(
+    createDynamoDataAccess({ tableName: "synthetic", region: "us-east-1" }),
+    createSystemPrincipal(["candidate", "officerNote"]),
+    "guild",
+    {
+      tags: async () =>
+        [...STAGES, ...SOURCES].map((name) => ({ name, id: name })),
+      create: async () => "Declined",
+      tagsFor: async () => [],
+      setTags: async () => {},
+    },
+    () => {},
+    async () => {
+      stored = redacted;
+    },
+  );
+  await assert.rejects(
+    core.setStage("Declined", "Accepted", "officer", "event"),
+    /CANDIDATE_WRITE_CONFLICT:Declined/,
+  );
+  assert.deepEqual(stored, redacted);
 });

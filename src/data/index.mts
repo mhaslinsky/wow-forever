@@ -24,6 +24,7 @@ declare const cursorBrand: unique symbol;
 export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
+export type WriteCondition = { recruitingChangedAt: string | undefined };
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
   query(
@@ -32,7 +33,7 @@ export type StoragePort = {
     cursor?: QueryCursor,
   ): Promise<{ items: unknown[]; cursor?: QueryCursor }>;
   batch(keys: readonly Key[]): Promise<unknown[]>;
-  put(item: GuildRecord): Promise<void>;
+  put(item: GuildRecord, condition?: WriteCondition): Promise<void>;
 };
 type Result<Mode extends "user" | "system"> = Mode extends "user"
   ? UserResult<GuildRecord>
@@ -113,7 +114,10 @@ export function createDataAccess(
       query: (partition: string) => query(partition, false),
       lookup: (partition: string) => query(partition, true),
       batch: (keys: readonly Key[]) => read(() => storage.batch(keys)),
-      async write(input: RecordInput): Promise<void> {
+      async write(
+        input: RecordInput,
+        condition?: WriteCondition,
+      ): Promise<void> {
         const actor = authority(principal);
         let raw: RecordInput = input;
         if (input.kind === "fact") {
@@ -136,8 +140,15 @@ export function createDataAccess(
               ? actor.roles.includes("Member") && actor.userId === item.ownerId
               : actor.roles.includes("Officer");
         if (!allowed) throw new Error("WRITE_DENIED");
+        if (
+          condition &&
+          (item.kind !== "candidate" ||
+            (condition.recruitingChangedAt !== undefined &&
+              !Number.isFinite(Date.parse(condition.recruitingChangedAt))))
+        )
+          throw new Error("INVALID_WRITE_CONDITION");
         try {
-          await storage.put(item);
+          await storage.put(item, condition);
         } catch (error) {
           if (
             error instanceof Error &&
@@ -227,7 +238,7 @@ export function createDynamoDataAccess(config: {
       }
       return items;
     },
-    async put(item) {
+    async put(item, condition) {
       await client.send(
         new PutCommand({
           TableName: config.tableName,
@@ -237,10 +248,19 @@ export function createDynamoDataAccess(config: {
             gsi1sk: `${item.pk}#${item.sk}`,
           },
           ConditionExpression:
-            "attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner)",
+            "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
+            (condition
+              ? " AND attribute_not_exists(retention) AND " +
+                (condition.recruitingChangedAt === undefined
+                  ? "attribute_not_exists(recruiting.changedAt)"
+                  : "recruiting.changedAt = :changedAt")
+              : ""),
           ExpressionAttributeValues: {
             ":kind": item.kind,
             ":owner": item.ownerId,
+            ...(condition?.recruitingChangedAt !== undefined
+              ? { ":changedAt": condition.recruitingChangedAt }
+              : {}),
           },
         }),
       );

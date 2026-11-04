@@ -36,6 +36,7 @@
     "@aws-sdk/lib-dynamodb": "^3.1161.0",
     "@discordjs/rest": "2.6.3",
     "discord.js": "^14.28.0",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "fast-xml-parser": "^5.12.0"
   }
 }

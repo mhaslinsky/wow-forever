@@ -78,6 +78,8 @@ export function createRecruiting(
       return await work();
     } catch (cause) {
       report({ code: "CANDIDATE_SAVE_FAILED", threadId });
+      if (cause instanceof Error && cause.message === "WRITE_CONFLICT")
+        throw new Error(`CANDIDATE_WRITE_CONFLICT:${threadId}`, { cause });
       throw new Error(`CANDIDATE_SAVE_FAILED:${threadId}`, { cause });
     }
   }
@@ -136,7 +138,10 @@ export function createRecruiting(
         throw cause;
       }
     }
-    await records.write(updated);
+    // A delayed stage change must not restore data removed by retention.
+    await records.write(updated, {
+      recruitingChangedAt: record.recruiting.changedAt,
+    });
     await records.write({
       ...recordKey(
         "officerNote",
@@ -210,7 +215,9 @@ export function createRecruiting(
           nextActionAt,
         },
       };
-      await saving(threadId, () => records.write(record));
+      await saving(threadId, () =>
+        records.write(record, { recruitingChangedAt: undefined }),
+      );
       return record;
     },
     async setFollowUp(
