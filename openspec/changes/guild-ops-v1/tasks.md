@@ -10,7 +10,8 @@
   Done in PR #4 (PER-298), table applied.
 - [x] 1.5 Always-connected client on a t4g.nano: discord.js gateway with reconnect and resume, heartbeat metric and a ten-minute silence alarm, deploy over SSM (depends on: 1.2, 1.4) (complexity: standard) (gate: none)
   Code and infrastructure merged in PR #7 (PER-301); boot fixes in PR #20. Applied and deployed Nov 3; heartbeat metric reporting.
-- [ ] 1.6 Guild-scoped slash command registration script driven by the command router's definitions (depends on: 1.3) (complexity: mechanical) (gate: none)
+- [x] 1.6 Guild-scoped slash command registration script driven by the command router's definitions (depends on: 1.3) (complexity: mechanical) (gate: none)
+  Done in PR #29 (PER-305). Refuses an empty command list before any request.
 
 ## 2. Discord server
 
@@ -23,7 +24,8 @@
 
 ## 3. Recruiting
 
-- [ ] 3.1 Recruiting core: candidate records, one thread per candidate in the officer forum channel, stage tags synced both ways through the gateway client (depends on: 1.4, 1.5, 2.3) (complexity: standard) (gate: none)
+- [x] 3.1 Recruiting core: candidate records, one thread per candidate in the officer forum channel, stage tags synced both ways through the gateway client (depends on: 1.4, 1.5, 2.3) (complexity: standard) (gate: none)
+  Done in PR #31 (PER-311), deployed Nov 3. Live end-to-end check runs with the first candidate source (3.2 or 3.3).
 - [ ] 3.2 `/apply` modal for people in the server and officer `/lead` command (depends on: 1.3, 3.1) (complexity: standard) (gate: none)
 - [ ] 3.3 Guilds of WoW intake: capture a real application alert, parse alerts in the private intake channel into candidates, alarm and keep the raw message when parsing fails (depends on: 3.1) (complexity: standard) (gate: none)
 - [ ] 3.4 Candidate deduplication by Discord account or character name, merging into the existing thread (depends on: 3.1) (complexity: standard) (gate: none)
@@ -45,8 +47,10 @@
 
 ## 6. Raid attendance
 
-- [ ] 6.1 Raid-Helper sign-up poller storing sign-ups per raid (depends on: 1.4) (complexity: standard) (gate: none)
-- [ ] 6.2 Raid voice presence recording in the gateway client (depends on: 1.5) (complexity: standard) (gate: none)
+- [x] 6.1 Raid-Helper sign-up poller storing sign-ups per raid (depends on: 1.4) (complexity: standard) (gate: none)
+  Done in PR #30 (PER-308). Schedule and live smoke wait on the Raid-Helper API key.
+- [x] 6.2 Raid voice presence recording in the gateway client (depends on: 1.5) (complexity: standard) (gate: none)
+  Done in PR #28 (PER-309), deployed Nov 3. Restart closes open intervals with endUnknown.
 - [ ] 6.3 Attendance resolution (snapshot first, voice fallback, source recorded) and the post-raid said-yes-versus-came report (depends on: 5.3, 6.1, 6.2) (complexity: standard) (gate: none)
 
 ## 7. Loot council
@@ -63,7 +67,8 @@
 
 ## 9. Retirement
 
-- [ ] 9.1 Retire the Valheim AWS estate in the palworld-server repository: lift the deletion guards, review the destroy plan with the operator, apply, keep only the final archives (depends on: 1.2) (complexity: judgment) (gate: none)
+- [x] 9.1 Retire the Valheim AWS estate in the palworld-server repository: lift the deletion guards, review the destroy plan with the operator, apply, keep only the final archives (depends on: 1.2) (complexity: judgment) (gate: none)
+  Done Nov 3 (PER-304): Valheim AWS estate destroyed after plan review; final archives kept on jetragon.
 
 ## 10. Live checks
 
