@@ -34,6 +34,7 @@ function fixture(role = "visitor") {
     "guild",
     {
       tags: async () => tags,
+      post: async () => {},
       tagsFor: async () => applied,
       create: async (input) => {
         applied = input.tags;

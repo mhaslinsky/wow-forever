@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { authority, type Principal } from "../auth/index.mts";
 import { type Application, applicationAnswers } from "../data/application.mts";
 import type { createDataAccess } from "../data/index.mts";
@@ -33,6 +34,7 @@ export type ForumPort = {
     content: string;
     tags: string[];
   }): Promise<string>;
+  post(threadId: string, content: string): Promise<void>;
   tagsFor(threadId: string): Promise<readonly string[]>;
   setTags(
     threadId: string,
@@ -185,6 +187,78 @@ export function createRecruiting(
         !Number.isFinite(Date.parse(nextActionAt))
       )
         throw new Error("INVALID_FOLLOW_UP");
+      const submission = JSON.stringify({
+        source: input.source,
+        name: input.name,
+        discordUserId: input.discordUserId,
+        characters: input.characters,
+        application: input.application,
+        content: input.content || input.name,
+      });
+      const submissionId = createHash("sha256")
+        .update(submission)
+        .digest("hex");
+      const candidates = await records.query(
+        recordKey("candidate", guildId, "unused").pk,
+      );
+      const mainName = (value: {
+        name: string;
+        characters?: CharacterDeclaration[];
+      }) =>
+        (
+          value.characters?.find((character) => character.main)?.name ??
+          value.name
+        )
+          .trim()
+          .normalize("NFC")
+          .toLowerCase();
+      const existing = candidates.find(
+        (record): record is Candidate =>
+          record.kind === "candidate" &&
+          ((!!input.discordUserId &&
+            record.discordUserId === input.discordUserId) ||
+            mainName(record) === mainName(input)),
+      );
+      const note = (threadId: string) => ({
+        ...recordKey(
+          "officerNote",
+          guildId,
+          `${threadId}#submission#${submissionId}`,
+        ),
+        kind: "officerNote" as const,
+        ownerId: guildId,
+        text: submission,
+      });
+      if (existing) {
+        if (!existing.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
+        const threadId = existing.recruiting.threadId;
+        return saving(threadId, async () => {
+          const [previous] = await records.get(note(threadId));
+          if (previous) return existing;
+          // Keep the original workflow while attaching the new intake's details.
+          await forum.post(
+            threadId,
+            `${input.source}\n${input.content || input.name}`,
+          );
+          const enriched: Candidate = {
+            ...existing,
+            ...(!existing.discordUserId && input.discordUserId
+              ? { discordUserId: input.discordUserId }
+              : {}),
+            ...(!existing.characters && input.characters
+              ? {
+                  characters: input.characters,
+                  ...(input.application
+                    ? { application: input.application }
+                    : {}),
+                }
+              : {}),
+          };
+          await records.write(enriched);
+          await records.write(note(threadId));
+          return enriched;
+        });
+      }
       const tags = await forum.tags();
       const applied = [tagId(tags, "New"), tagId(tags, input.source)];
       const threadId = await forum.create({
@@ -210,7 +284,10 @@ export function createRecruiting(
           nextActionAt,
         },
       };
-      await saving(threadId, () => records.write(record));
+      await saving(threadId, async () => {
+        await records.write(record);
+        await records.write(note(threadId));
+      });
       return record;
     },
     async setFollowUp(

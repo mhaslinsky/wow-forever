@@ -58,12 +58,16 @@ function fixture(
   }));
   let applied: string[] = [];
   let created = 0;
+  const posts: string[] = [];
   const port: ForumPort = {
     tags: async () => tags,
     create: async (input) => {
       created++;
       applied = input.tags;
-      return threadId;
+      return created === 1 ? threadId : `${threadId}-${created}`;
+    },
+    post: async (_threadId, content) => {
+      posts.push(content);
     },
     tagsFor: async () => applied,
     setTags: async (_threadId, next) => {
@@ -102,6 +106,7 @@ function fixture(
     port,
     applied: () => applied,
     created: () => created,
+    posts,
   };
 }
 
@@ -339,3 +344,33 @@ test("failed officer acceptance restores tags without overwriting a newer edit",
     );
   }
 });
+
+for (const [behaviour, name, discordUserId, count] of [
+  ["same Discord account merges", "Othermain", "applicant", 1],
+  ["same character name from two sources merges", " synthetic ", "other", 1],
+  ["different people stay separate", "Different", "other", 2],
+] as const) {
+  test(behaviour, async () => {
+    const setup = fixture();
+    await setup.core.create({
+      name: "Synthetic",
+      discordUserId: "applicant",
+      source: "Apply form",
+      actorId: "applicant",
+    });
+    const input = {
+      name,
+      discordUserId,
+      source: "Officer lead" as const,
+      actorId: "officer",
+      content: "New details",
+    };
+    await setup.core.create(input);
+    if (count === 1) await setup.core.create(input);
+    assert.equal(setup.created(), count);
+    assert.deepEqual(
+      setup.posts,
+      count === 1 ? ["Officer lead\nNew details"] : [],
+    );
+  });
+}
