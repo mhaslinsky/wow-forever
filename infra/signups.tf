@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "signups" {
   }
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.secrets["raid_helper_api_key"].arn]
+    resources = [aws_ssm_parameter.external_api_keys["raid_helper_api_key"].arn]
   }
   statement {
     actions   = ["kms:Decrypt"]
