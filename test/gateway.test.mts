@@ -116,9 +116,20 @@ test("gateway IAM scope limits token reads, decryption and metric writes", () =>
   const expectedRole = JSON.parse(
     `[{"role":"\${aws_iam_role.gateway.id}","policy":"\${data.aws_iam_policy_document.gateway.json}"}]`,
   );
+  expectedRole.push({
+    name: "wow-forever-needs-roster-index",
+    role: `\${aws_iam_role.gateway.id}`,
+    policy: `\${data.aws_iam_policy_document.needs_roster_index.json}`,
+  });
   equal(policies(policy), expectedRole);
+  equal(parsed.data.aws_iam_policy_document.needs_roster_index[0].statement, [
+    {
+      actions: ["dynamodb:Query"],
+      resources: [`\${aws_dynamodb_table.guild.arn}/index/gsi1`],
+    },
+  ]);
   const expected = JSON.parse(
-    `[{"actions":["dynamodb:Query"],"resources":["\${aws_dynamodb_table.guild.arn}/index/gsi1"]},{"actions":["dynamodb:GetItem","dynamodb:Query","dynamodb:PutItem","dynamodb:UpdateItem"],"resources":["\${aws_dynamodb_table.guild.arn}"]},{"actions":["ssm:UpdateInstanceInformation","ssm:ListAssociations","ssm:ListInstanceAssociations","ssm:DescribeAssociation","ssm:GetDocument","ssm:DescribeDocument","ssm:UpdateAssociationStatus","ssm:UpdateInstanceAssociationStatus","ssm:PutInventory","ssm:GetDeployablePatchSnapshotForInstance","ec2messages:*","ssmmessages:*"],"resources":["*"]},{"actions":["ssm:GetParameter"],"resources":["\${aws_ssm_parameter.secrets[\\"discord_bot_token\\"].arn}"]},{"actions":["kms:Decrypt"],"resources":["\${data.aws_kms_key.ssm.arn}"],"condition":[{"test":"StringEquals","variable":"kms:ViaService","values":["ssm.us-east-1.amazonaws.com"]}]},{"actions":["cloudwatch:PutMetricData"],"resources":["*"],"condition":[{"test":"StringEquals","variable":"cloudwatch:namespace","values":["wow-forever/gateway"]}]},{"actions":["s3:ListBucket"],"resources":["\${aws_s3_bucket.gateway.arn}"]},{"actions":["s3:GetObject"],"resources":["\${aws_s3_bucket.gateway.arn}/artifacts/gateway/*"]},{"actions":["logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams","logs:DescribeLogGroups"],"resources":["\${aws_cloudwatch_log_group.gateway.arn}","\${aws_cloudwatch_log_group.gateway.arn}:*"]}]`,
+    `[{"actions":["dynamodb:GetItem","dynamodb:Query","dynamodb:PutItem","dynamodb:UpdateItem"],"resources":["\${aws_dynamodb_table.guild.arn}"]},{"actions":["ssm:UpdateInstanceInformation","ssm:ListAssociations","ssm:ListInstanceAssociations","ssm:DescribeAssociation","ssm:GetDocument","ssm:DescribeDocument","ssm:UpdateAssociationStatus","ssm:UpdateInstanceAssociationStatus","ssm:PutInventory","ssm:GetDeployablePatchSnapshotForInstance","ec2messages:*","ssmmessages:*"],"resources":["*"]},{"actions":["ssm:GetParameter"],"resources":["\${aws_ssm_parameter.secrets[\\"discord_bot_token\\"].arn}"]},{"actions":["kms:Decrypt"],"resources":["\${data.aws_kms_key.ssm.arn}"],"condition":[{"test":"StringEquals","variable":"kms:ViaService","values":["ssm.us-east-1.amazonaws.com"]}]},{"actions":["cloudwatch:PutMetricData"],"resources":["*"],"condition":[{"test":"StringEquals","variable":"cloudwatch:namespace","values":["wow-forever/gateway"]}]},{"actions":["s3:ListBucket"],"resources":["\${aws_s3_bucket.gateway.arn}"]},{"actions":["s3:GetObject"],"resources":["\${aws_s3_bucket.gateway.arn}/artifacts/gateway/*"]},{"actions":["logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams","logs:DescribeLogGroups"],"resources":["\${aws_cloudwatch_log_group.gateway.arn}","\${aws_cloudwatch_log_group.gateway.arn}:*"]}]`,
   );
   equal(parsed.data.aws_iam_policy_document.gateway[0].statement, expected);
 });

@@ -53,10 +53,6 @@ resource "aws_iam_instance_profile" "gateway" {
 }
 data "aws_iam_policy_document" "gateway" {
   statement {
-    actions   = ["dynamodb:Query"]
-    resources = ["${aws_dynamodb_table.guild.arn}/index/gsi1"]
-  }
-  statement {
     actions   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.guild.arn]
   }
@@ -145,7 +141,6 @@ resource "aws_instance" "gateway" {
           [Service]
           User=gateway
           EnvironmentFile=/opt/wow-forever-gateway/environment
-          Environment=NEEDS_CHANNEL_NAME=apply-here
           LogsDirectory=wow-forever-gateway
           ExecStart=/usr/bin/node-22 /opt/wow-forever-gateway/index.mjs
           Restart=always

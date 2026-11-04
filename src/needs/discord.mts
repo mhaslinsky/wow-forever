@@ -4,18 +4,13 @@ import type { createDataAccess } from "../data/index.mts";
 import { createNeeds } from "./core.mts";
 
 const BOARD_TITLE = "Raid recruiting needs";
+const lastPosted = new Map<string, string>();
 export async function refreshNeedsBoard(
   guild: Guild,
   data: ReturnType<typeof createDataAccess>,
 ) {
-  const name = process.env.NEEDS_CHANNEL_NAME;
-  if (!name) throw new Error("NEEDS_CHANNEL_NAME_REQUIRED");
-  const matches = (await guild.channels.fetch()).filter(
-    (channel) => channel?.name === name,
-  );
-  const channel = matches.first();
-  if (matches.size !== 1 || channel?.type !== ChannelType.GuildText)
-    throw new Error("NEEDS_CHANNEL_MISSING_OR_AMBIGUOUS");
+  const name = process.env.NEEDS_CHANNEL_NAME ?? "apply-here";
+  const cacheKey = `${guild.id}:${name}`;
   const boards = await createNeeds(data, guild.id).boards(
     createSystemPrincipal([]),
   );
@@ -27,6 +22,13 @@ export async function refreshNeedsBoard(
     ),
   ].join("\n");
   if (content.length > 2000) throw new Error("NEEDS_BOARD_TOO_LONG");
+  if (lastPosted.get(cacheKey) === content) return;
+  const matches = (await guild.channels.fetch()).filter(
+    (channel) => channel?.name === name,
+  );
+  const channel = matches.first();
+  if (matches.size !== 1 || channel?.type !== ChannelType.GuildText)
+    throw new Error("NEEDS_CHANNEL_MISSING_OR_AMBIGUOUS");
   const isBoard = (message: import("discord.js").Message) =>
     message.author.id === guild.client.user.id &&
     message.content.startsWith(`${BOARD_TITLE}\n`);
@@ -58,4 +60,5 @@ export async function refreshNeedsBoard(
     });
     await created.pin();
   }
+  lastPosted.set(cacheKey, content);
 }
