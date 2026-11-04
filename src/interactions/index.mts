@@ -50,6 +50,42 @@ export function assistantClaim(
     }
   };
 }
+export function deliveryClaim(
+  table: string,
+  now: () => number,
+  send: (
+    command: PutItemCommand,
+    options: { abortSignal: AbortSignal },
+  ) => Promise<unknown> = (command, options) => dynamo.send(command, options),
+) {
+  return async (key: string, expiresAt: number, signal: AbortSignal) => {
+    try {
+      if (!table) throw new Error("Missing CLAIMS_TABLE");
+      await send(
+        new PutItemCommand({
+          TableName: table,
+          Item: { pk: { S: key }, expiresAt: { N: String(expiresAt) } },
+          ConditionExpression: "attribute_not_exists(pk) OR expiresAt < :now",
+          ExpressionAttributeValues: {
+            ":now": { N: String(Math.floor(now() / 1000)) },
+          },
+        }),
+        { abortSignal: signal },
+      );
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "ConditionalCheckFailedException"
+      )
+        return false;
+      throw new Error("Claims unavailable");
+    }
+  };
+}
+export const claimDelivery = deliveryClaim(claimsTable ?? "", () =>
+  clock.now(),
+);
 export const claimAssistant = assistantClaim(claimsTable ?? "", () =>
   clock.now(),
 );
@@ -113,30 +149,7 @@ const ports: Ports = {
     );
     if (result.StatusCode !== 202) throw new Error("Worker not accepted");
   },
-  async claim(key, expiresAt, signal) {
-    try {
-      if (!claimsTable) throw new Error("Missing CLAIMS_TABLE");
-      await dynamo.send(
-        new PutItemCommand({
-          TableName: claimsTable,
-          Item: { pk: { S: key }, expiresAt: { N: String(expiresAt) } },
-          ConditionExpression: "attribute_not_exists(pk) OR expiresAt < :now",
-          ExpressionAttributeValues: {
-            ":now": { N: String(Math.floor(clock.now() / 1000)) },
-          },
-        }),
-        { abortSignal: signal },
-      );
-      return true;
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.name === "ConditionalCheckFailedException"
-      )
-        return false;
-      throw new Error("Claims unavailable");
-    }
-  },
+  claim: claimDelivery,
   discord: discordClient(),
   report() {
     console.error("Interaction failed");

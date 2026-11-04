@@ -9,12 +9,7 @@ import {
   REFUSAL,
 } from "./core.mts";
 
-export async function assistantPrincipal(
-  guildId: string,
-  userId: string,
-  get: (path: string) => Promise<unknown>,
-) {
-  const roles = await get(`/guilds/${encodeURIComponent(guildId)}/roles`);
+export function assistantRoleIds(roles: unknown) {
   if (!Array.isArray(roles)) throw new Error("INVALID_ROLES");
   const roleId = (name: string) => {
     const matches = roles.filter((role) => role?.name === name);
@@ -26,6 +21,17 @@ export async function assistantPrincipal(
       throw new Error("ROLE_MISSING_OR_AMBIGUOUS");
     return matches[0].id;
   };
+  return roleId;
+}
+
+export async function assistantPrincipal(
+  guildId: string,
+  userId: string,
+  get: (path: string) => Promise<unknown>,
+) {
+  const roleId = assistantRoleIds(
+    await get(`/guilds/${encodeURIComponent(guildId)}/roles`),
+  );
   const factory = createPrincipalFactory({
     guildId,
     memberRoleId: roleId("Member"),
@@ -62,9 +68,7 @@ export async function assistantAnswer(
   const guildId = process.env.GUILD_ID;
   const userId = interaction.member?.user?.id;
   if (!guildId || interaction.guild_id !== guildId || !userId) return REFUSAL;
-  const { readSecret, claimAssistant } = await import(
-    "../interactions/index.mts"
-  );
+  const { readSecret } = await import("../interactions/index.mts");
   const token = await readSecret("/wow-forever/discord_bot_token", signal);
   const get = async (path: string): Promise<unknown> => {
     const response = await fetch(`https://discord.com/api/v10${path}`, {
@@ -78,6 +82,16 @@ export async function assistantAnswer(
     return response.json();
   };
   const actor = await assistantPrincipal(guildId, userId, get);
+  return (await runtimeAssistant(guildId, get))(actor, question, signal);
+}
+
+export async function runtimeAssistant(
+  guildId: string,
+  get: (path: string) => Promise<unknown>,
+) {
+  const { readSecret, claimAssistant } = await import(
+    "../interactions/index.mts"
+  );
   return createAssistant({
     guildId,
     data: createDynamoDataAccess({
@@ -111,5 +125,5 @@ export async function assistantAnswer(
           .filter(Boolean),
       ];
     },
-  })(actor, question, signal);
+  });
 }
