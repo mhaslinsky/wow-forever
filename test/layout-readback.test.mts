@@ -10,6 +10,35 @@ import { model } from "./layout-model.mts";
 const flags = discord.PermissionFlagsBits;
 const view = flags.ViewChannel;
 const partial = view | flags.SendMessages | flags.Connect;
+test("ignored public channel has no guild-grant findings", () => {
+  const { layout, snapshot, ids } = applied();
+  snapshot.roles[0].permissions = view.toString();
+  layout.ignore.channels.push("public");
+  snapshot.channels.push({
+    ...snapshot.channels[0],
+    id: "external",
+    name: "public",
+    overwrites: [],
+  });
+  assert.deepEqual(readback(layout, snapshot, ids).findings, []);
+});
+test("ignored channel exposed by a layout role still has a finding", () => {
+  const { layout, snapshot, ids } = applied();
+  layout.ignore.channels.push("private");
+  snapshot.channels.push({
+    ...snapshot.channels[0],
+    id: "external",
+    name: "private",
+    overwrites: [],
+  });
+  assert.deepEqual(readback(layout, snapshot, ids).findings, [
+    {
+      channelId: "external",
+      roleKey: "member",
+      reason: "ignored channel visible through a guild grant",
+    },
+  ]);
+});
 function applied() {
   const layout = parseLayout(
     readFileSync(new URL("./fixtures/layout.yaml", import.meta.url), "utf8"),
