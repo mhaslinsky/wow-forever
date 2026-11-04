@@ -289,6 +289,25 @@ test("Officer Converse request contains only selected own-roster fields (C1)", a
   );
   assert.equal(state.requests.length, 1);
 });
+test("answers replace every em dash with a comma", async () => {
+  const state = setup();
+  state.output("One\u2014two\u2014three");
+  assert.equal(
+    await state.ask(actor("member"), "Question", signal),
+    "One,two,three",
+  );
+});
+test("answer prompt requires plain uncertainty and no em dashes", async () => {
+  const state = setup();
+  await state.ask(actor("member"), "What does FAD mean?", signal);
+  const prompt = String(state.requests[0].system?.[0].text);
+  assert.ok(
+    prompt.includes(
+      "When the context, guild records and web results do not settle the answer, say you are not sure in one short sentence and stop; never invent a meaning and then walk it back.",
+    ),
+  );
+  assert.ok(prompt.includes("Never use em dashes."));
+});
 test("answers cap evidence at three links without previews", async () => {
   const state = setup();
   state.output("Answer");
