@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { HTTPError } from "@discordjs/rest";
 import { postClassNews } from "../src/class-news/core.mts";
 import { classChannels } from "../src/class-news/discord.mts";
 import { parseFeed } from "../src/class-news/feed.mts";
 
-function fixture(category = "Forever") {
+function fixture(
+  category = "Forever",
+  postError?: Error,
+  releaseError?: Error,
+) {
   const items = parseFeed(
     `<rss><channel><item><title>Druid news</title><link>https://www.wowhead.com/news=123</link><guid>news-123</guid><category>${category}</category></item></channel></rss>`,
   );
@@ -20,6 +25,7 @@ function fixture(category = "Forever") {
       ],
       post: async (route, options) => {
         messages.push({ channelId: String(route), body: options?.body });
+        if (postError) throw postError;
         return { id: "message" };
       },
     },
@@ -39,6 +45,7 @@ function fixture(category = "Forever") {
         },
         posted: async () => {},
         release: async (guid, className) => {
+          if (releaseError) throw releaseError;
           claims.delete(`${guid}/${className}`);
         },
       },
@@ -71,4 +78,38 @@ test("a non-Forever item is ignored", async () => {
   const setup = fixture("Retail");
   assert.equal((await setup.run()).posted, 0);
   assert.equal(setup.messages.length, 0);
+});
+
+test("ambiguous post failures retain the claim while HTTP failures release it", async () => {
+  const ambiguous = fixture("Forever", new Error("connection lost"));
+  await assert.rejects(ambiguous.run());
+  assert.equal((await ambiguous.run()).posted, 0);
+  assert.equal(ambiguous.messages.length, 1);
+  const rejected = fixture(
+    "Forever",
+    new HTTPError(503, "Unavailable", "POST", "https://discord.com", {}),
+  );
+  await assert.rejects(rejected.run());
+  await assert.rejects(rejected.run());
+  assert.equal(rejected.messages.length, 2);
+});
+
+test("release failures are logged without hiding the post error", async (context) => {
+  const original = new HTTPError(
+    503,
+    "Unavailable",
+    "POST",
+    "https://discord.com",
+    {},
+  );
+  const log = context.mock.method(console, "error", () => {});
+  const setup = fixture("Forever", original, new Error("storage failed"));
+  await assert.rejects(
+    setup.run(),
+    (error) => error instanceof AggregateError && error.errors[0] === original,
+  );
+  assert.equal(
+    JSON.parse(log.mock.calls[0].arguments[0]).event,
+    "NEWS_CLAIM_RELEASE_FAILED",
+  );
 });

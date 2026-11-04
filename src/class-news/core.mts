@@ -1,3 +1,4 @@
+import { DiscordAPIError, HTTPError } from "@discordjs/rest";
 import type { NewsStore } from "../data/class-news.mts";
 import { classNews, type NewsItem } from "./feed.mts";
 
@@ -31,7 +32,22 @@ export async function postClassNews(input: {
             `${title}\n<${item.link}>`,
           );
         } catch (error) {
-          await input.store.release(item.guid, className);
+          // A lost response may still mean Discord created the message.
+          if (error instanceof DiscordAPIError || error instanceof HTTPError) {
+            try {
+              await input.store.release(item.guid, className);
+            } catch (releaseError) {
+              console.error(
+                JSON.stringify({
+                  event: "NEWS_CLAIM_RELEASE_FAILED",
+                  error:
+                    releaseError instanceof Error
+                      ? releaseError.message
+                      : String(releaseError),
+                }),
+              );
+            }
+          }
           throw error;
         }
         await input.store.posted(item.guid, className, messageId);
