@@ -91,12 +91,19 @@ test("gateway bundle fails closed outside the repository without credentials", (
   assert.equal(result.status, 1);
   assert.match(result.stdout, /gateway_start_failed/);
 });
-test("silence alarm requires ten missing minute periods", () => {
+test("gateway silence and mention errors notify through the configured alarms", () => {
   const alarm = parsed.resource.aws_cloudwatch_metric_alarm.gateway_silence[0];
   const expected = JSON.parse(
     `{"namespace":"wow-forever/gateway","metric_name":"Heartbeat","dimensions":{"InstanceId":"\${aws_instance.gateway.id}"},"period":60,"statistic":"Sum","threshold":1,"comparison_operator":"LessThanThreshold","treat_missing_data":"breaching","evaluation_periods":10,"datapoints_to_alarm":10}`,
   );
   for (const key of Object.keys(expected)) equal(alarm[key], expected[key]);
+  equal(parsed.resource.aws_cloudwatch_metric_alarm.mention_errors?.[0], {
+    ...parsed.resource.aws_cloudwatch_metric_alarm.interactions_errors[0],
+    alarm_name: "wow-forever-assistant-mention-errors",
+    dimensions: {
+      FunctionName: `\${aws_lambda_function.mention.function_name}`,
+    },
+  });
 });
 test("gateway IAM scope limits token reads, decryption and metric writes", () => {
   const role = parsed.resource.aws_iam_role.gateway[0];
@@ -131,6 +138,10 @@ test("gateway IAM scope limits token reads, decryption and metric writes", () =>
   const expected = JSON.parse(
     `[{"actions":["dynamodb:GetItem","dynamodb:Query","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:ConditionCheckItem"],"resources":["\${aws_dynamodb_table.guild.arn}"]},{"actions":["ssm:UpdateInstanceInformation","ssm:ListAssociations","ssm:ListInstanceAssociations","ssm:DescribeAssociation","ssm:GetDocument","ssm:DescribeDocument","ssm:UpdateAssociationStatus","ssm:UpdateInstanceAssociationStatus","ssm:PutInventory","ssm:GetDeployablePatchSnapshotForInstance","ec2messages:*","ssmmessages:*"],"resources":["*"]},{"actions":["ssm:GetParameter"],"resources":["\${aws_ssm_parameter.secrets[\\"discord_bot_token\\"].arn}"]},{"actions":["kms:Decrypt"],"resources":["\${data.aws_kms_key.ssm.arn}"],"condition":[{"test":"StringEquals","variable":"kms:ViaService","values":["ssm.us-east-1.amazonaws.com"]}]},{"actions":["cloudwatch:PutMetricData"],"resources":["*"],"condition":[{"test":"StringEquals","variable":"cloudwatch:namespace","values":["wow-forever/gateway"]}]},{"actions":["s3:ListBucket"],"resources":["\${aws_s3_bucket.gateway.arn}"]},{"actions":["s3:GetObject"],"resources":["\${aws_s3_bucket.gateway.arn}/artifacts/gateway/*"]},{"actions":["logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams","logs:DescribeLogGroups"],"resources":["\${aws_cloudwatch_log_group.gateway.arn}","\${aws_cloudwatch_log_group.gateway.arn}:*"]}]`,
   );
+  expected.unshift({
+    actions: ["lambda:InvokeFunction"],
+    resources: [`\${aws_lambda_function.mention.arn}`],
+  });
   equal(parsed.data.aws_iam_policy_document.gateway[0].statement, expected);
 });
 for (const script of ["gateway-bootstrap", "deploy-gateway"]) {

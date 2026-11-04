@@ -19,6 +19,7 @@ import {
   startupFailure,
   tokenValue,
 } from "./client.mts";
+import { mentionForwarder } from "./mention.mts";
 import { createVoicePresenceHandler } from "./voice-presence.mts";
 
 const region = "us-east-1";
@@ -99,6 +100,7 @@ async function main() {
         createSystemPrincipal(["candidate", "officerNote"]),
         guildId,
       ),
+      messageCreate: mentionForwarder(client, guildId),
       voiceStateUpdate: voicePresence,
       clientReady: async (readyClient) => {
         const guild = readyClient.guilds.cache.get(guildId);
