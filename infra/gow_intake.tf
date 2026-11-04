@@ -17,17 +17,35 @@ data "aws_iam_policy_document" "gow_intake" {
     resources = ["${aws_cloudwatch_log_group.gow_intake.arn}:*"]
   }
   statement {
-    actions   = ["dynamodb:PutItem"]
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query"]
     resources = [aws_dynamodb_table.guild.arn]
     condition {
       test     = "ForAllValues:StringEquals"
       variable = "dynamodb:LeadingKeys"
-      values   = ["GOW_APPLICATION#${var.guild_id}"]
+      values   = ["GOW_APPLICATION#${var.guild_id}", "CANDIDATE#${var.guild_id}", "OFFICER_NOTE#${var.guild_id}"]
+    }
+  }
+  statement {
+    actions   = ["dynamodb:ConditionCheckItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["CANDIDATE#${var.guild_id}"]
+    }
+  }
+  statement {
+    actions   = ["dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["OFFICER_NOTE#${var.guild_id}"]
     }
   }
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.external_api_keys["guildsofwow_api_key"].arn]
+    resources = [aws_ssm_parameter.external_api_keys["guildsofwow_api_key"].arn, aws_ssm_parameter.secrets["discord_bot_token"].arn]
   }
   statement {
     actions   = ["kms:Decrypt"]

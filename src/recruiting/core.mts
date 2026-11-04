@@ -16,6 +16,7 @@ import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
 export type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
 export type CreateCandidateInput = {
   name: string;
+  submissionId?: string;
   source: Source;
   actorId: string;
   actor?: Principal<"user">;
@@ -206,7 +207,11 @@ export function createRecruiting(
         content: input.content || input.name,
       });
       const submissionId = createHash("sha256")
-        .update(submission)
+        .update(
+          input.submissionId
+            ? JSON.stringify([input.source, input.submissionId])
+            : submission,
+        )
         .digest("hex");
       const candidates = await records.query(
         recordKey("candidate", guildId, "unused").pk,
