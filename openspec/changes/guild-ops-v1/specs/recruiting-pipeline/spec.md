@@ -4,15 +4,15 @@
 Every candidate SHALL appear as exactly one thread in a single officer-only forum channel, whatever the source, and no other place SHALL be needed to see all candidates.
 
 #### Scenario: Candidate from any source
-- **WHEN** a candidate arrives from a Guilds of WoW alert, `/apply`, `/lead` or an in-game recruit
+- **WHEN** a candidate arrives from a Guilds of WoW application, `/apply`, `/lead` or an in-game recruit
 - **THEN** one thread exists for that candidate in the recruiting channel, labeled with its source
 
 ### Requirement: Intake sources
-The system SHALL create candidates from Guilds of WoW application alerts posted in a private intake channel, from an `/apply` form in Discord, from an officer `/lead` command, and from recruits recorded by the in-game addon.
+The system SHALL create candidates from Guilds of WoW applications polled from its Management API, from an `/apply` form in Discord, from an officer `/lead` command, and from recruits recorded by the in-game addon.
 
-#### Scenario: Unreadable application alert
-- **WHEN** an intake alert cannot be parsed
-- **THEN** a thread is still created with the raw message and an alarm posts to the officers' alert channel
+#### Scenario: Unreadable application
+- **WHEN** a Guilds of WoW application cannot be read
+- **THEN** its raw JSON is kept, no thread is created, and an alarm posts to the officers' alert channel
 
 #### Scenario: Officer adds a lead
 - **WHEN** an officer runs `/lead` with a character name, class and where they were found

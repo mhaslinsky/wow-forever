@@ -29,18 +29,18 @@
   Done in PR #31 (PER-311), deployed Nov 3. Live end-to-end check passed Nov 3: /apply created the thread and an officer tag change moved the stored stage.
 - [x] 3.2 `/apply` modal for people in the server and officer `/lead` command (depends on: 1.3, 3.1) (complexity: standard) (gate: none)
   Done in PR #35 (PER-313), with the class and spec picker from PR #36 (PER-347). Live /apply on Nov 3 created a thread tagged Applied and Apply form.
-- [ ] 3.3 Guilds of WoW intake: capture a real application alert, parse alerts in the private intake channel into candidates, alarm and keep the raw message when parsing fails (depends on: 3.1) (complexity: standard) (gate: none)
-- [ ] 3.4 Candidate deduplication by Discord account or character name, merging into the existing thread (depends on: 3.1) (complexity: standard) (gate: none)
+- [x] 3.3 Guilds of WoW intake: poll the Management API for applications, keep each raw application, map them into candidates (design decision 4) (depends on: 3.1) (complexity: standard) (gate: none)
+- [x] 3.4 Candidate deduplication by Discord account or character name, merging into the existing thread (depends on: 3.1) (complexity: standard) (gate: none)
 - [x] 3.5 Owner and next-action date per candidate, daily overdue digest on a schedule (depends on: 3.1) (complexity: standard) (gate: none)
   Done in PR #34 (PER-316). Daily digest at 10 AM ET deployed Nov 3.
-- [ ] 3.6 Retention purge of notes for Declined and Withdrawn candidates (depends on: 3.1) (complexity: standard) (gate: none)
+- [x] 3.6 Retention purge of notes for Declined and Withdrawn candidates (depends on: 3.1) (complexity: standard) (gate: none)
 
 ## 4. Roster
 
 - [x] 4.1 Roster model, `/register` for mains and alts, Accepted stage grants Member and creates the roster entry (depends on: 1.3, 1.4, 3.1) (complexity: standard) (gate: none)
   Done in PR #33 (PER-318). Accepted grants Member; candidates without a Discord account alarm for a manual grant.
 - [ ] 4.2 Departure flags from member-leave events and two-snapshot absence, with Confirm and Keep buttons for officers (depends on: 4.1, 5.3) (complexity: standard) (gate: none)
-- [ ] 4.3 Raid targets per team, pinned needs board, `/needs message` recruiting text (depends on: 4.1) (complexity: standard) (gate: none)
+- [x] 4.3 Raid targets per team, pinned needs board, `/needs message` recruiting text (depends on: 4.1) (complexity: standard) (gate: none)
 
 ## 5. Guild data reader
 
@@ -59,7 +59,7 @@
 
 ## 7. Loot council
 
-- [ ] 7.1 `/wishlist` ranked lists with a pre-raid lock (depends on: 4.1) (complexity: standard) (gate: none)
+- [x] 7.1 `/wishlist` ranked lists with a pre-raid lock (depends on: 4.1) (complexity: standard) (gate: none)
 - [ ] 7.2 `/lc item` vote post with contender evidence and officer vote buttons (depends on: 5.3, 6.3, 7.1) (complexity: standard) (gate: none)
 - [ ] 7.3 Vote close with required reason, officer-only decision log, award confirmation and mismatch alert from snapshots (depends on: 7.2) (complexity: standard) (gate: none)
 
