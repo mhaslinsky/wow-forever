@@ -1,5 +1,13 @@
 import { ActionRowBuilder, StringSelectMenuBuilder } from "discord.js";
 import { authority } from "../auth/index.mts";
+import {
+  type Application,
+  applicationAnswers,
+  classes,
+  NIGHTS,
+  rolesFor,
+  specsFor,
+} from "../data/application.mts";
 import type { CharacterDeclaration } from "../data/recruiting.mts";
 import {
   type Interaction,
@@ -10,31 +18,12 @@ import {
 import type { ResolveRecruitingContext } from "./runtime.mts";
 
 type RaidRole = CharacterDeclaration["raidRole"];
-const damage: RaidRole[] = ["Damage"];
-const healer: RaidRole[] = ["Healer"];
-const tank: RaidRole[] = ["Tank"];
-const classes: Record<string, Record<string, RaidRole[]>> = {
-  Druid: { Balance: damage, Feral: ["Tank", "Damage"], Restoration: healer },
-  Hunter: { "Beast Mastery": damage, Marksmanship: damage, Survival: damage },
-  Mage: { Arcane: damage, Fire: damage, Frost: damage },
-  Paladin: { Holy: healer, Protection: tank, Retribution: damage },
-  Priest: { Discipline: healer, Holy: healer, Shadow: damage },
-  Rogue: { Assassination: damage, Combat: damage, Subtlety: damage },
-  Shaman: { Elemental: damage, Enhancement: damage, Restoration: healer },
-  Warlock: { Affliction: damage, Demonology: damage, Destruction: damage },
-  Warrior: { Arms: damage, Fury: damage, Protection: tank },
-};
-
-function specsFor(characterClass: string) {
-  return Object.hasOwn(classes, characterClass)
-    ? classes[characterClass]
-    : undefined;
-}
-function rolesFor(characterClass: string, spec: string) {
-  const specs = specsFor(characterClass);
-  return specs && Object.hasOwn(specs, spec) ? specs[spec] : undefined;
-}
-function select(customId: string, prompt: string, options: string[]): Reply {
+function select(
+  customId: string,
+  prompt: string,
+  options: string[],
+  multiple = false,
+): Reply {
   return {
     type: 4,
     data: {
@@ -46,6 +35,8 @@ function select(customId: string, prompt: string, options: string[]): Reply {
             new StringSelectMenuBuilder()
               .setCustomId(customId)
               .setPlaceholder(prompt)
+              .setMinValues(1)
+              .setMaxValues(multiple ? options.length : 1)
               .addOptions(
                 options.map((value) => ({
                   label: value === "Damage" ? "DPS" : value,
@@ -62,29 +53,88 @@ function applicationModal(
   characterClass: string,
   spec: string,
   raidRole: RaidRole,
+  offspecs: string,
+  nights: string,
 ): Reply {
   return {
     type: 9,
     data: {
-      custom_id: ["apply", characterClass, spec, raidRole].join(":"),
+      custom_id: [
+        "apply",
+        characterClass,
+        spec,
+        raidRole,
+        offspecs,
+        nights,
+      ].join(":"),
       title: "Guild application",
       components: [
-        {
-          type: 1,
-          components: [
-            {
-              type: 4,
-              custom_id: "name",
-              label: "Character name",
-              style: 1,
-              required: true,
-              max_length: 100,
-            },
-          ],
-        },
-      ],
+        ["name", "Character name", 1, true, 100, "Your character's name"],
+        [
+          "raidHistory",
+          "Raid history",
+          2,
+          true,
+          700,
+          "Previous guilds, what you cleared and why you left",
+        ],
+        ["logsUrl", "Logs or armory link", 1, false, 300, "https://..."],
+        [
+          "about",
+          "Why us / anything else?",
+          2,
+          false,
+          500,
+          "What brings you here?",
+        ],
+      ].map(([custom_id, label, style, required, max_length, placeholder]) => ({
+        type: 1,
+        components: [
+          {
+            type: 4,
+            custom_id,
+            label,
+            style,
+            required,
+            max_length,
+            placeholder,
+          },
+        ],
+      })),
     },
   };
+}
+
+function offspecStep(
+  characterClass: string,
+  spec: string,
+  role: RaidRole,
+): Reply {
+  return select(
+    `apply:offspec:${characterClass}:${spec}:${role}`,
+    "Any offspecs?",
+    [
+      ...Object.keys(specsFor(characterClass) ?? {}).filter(
+        (other) => other !== spec,
+      ),
+      "Skip",
+    ],
+    true,
+  );
+}
+function decodeChoices(
+  encoded: string | undefined,
+  choices: string[],
+): string[] | undefined {
+  if (encoded === "-") return [];
+  if (!encoded || !/^[0-9]+$/.test(encoded)) return;
+  const indices = [...encoded].map(Number);
+  if (
+    new Set(indices).size !== indices.length ||
+    indices.some((index) => index >= choices.length)
+  )
+    return;
+  return indices.map((index) => choices[index]);
 }
 
 function formValues(interaction: Interaction): Record<string, string> {
@@ -150,13 +200,13 @@ export function createRecruitingRoutes(
         const values = interaction.data?.values;
         if (
           !Array.isArray(values) ||
-          values.length !== 1 ||
-          typeof values[0] !== "string"
+          values.length < 1 ||
+          !values.every((value) => typeof value === "string")
         )
           return message("That timed out, run /apply again");
         const selected = values[0];
         const [, step, characterClass, spec] = parts;
-        if (step === "class" && parts.length === 2) {
+        if (step === "class" && parts.length === 2 && values.length === 1) {
           const specs = specsFor(selected);
           if (specs)
             return select(
@@ -165,10 +215,10 @@ export function createRecruitingRoutes(
               Object.keys(specs),
             );
         }
-        if (step === "spec" && parts.length === 3) {
+        if (step === "spec" && parts.length === 3 && values.length === 1) {
           const roles = rolesFor(characterClass, selected);
           if (roles?.length === 1)
-            return applicationModal(characterClass, selected, roles[0]);
+            return offspecStep(characterClass, selected, roles[0]);
           if (roles)
             return select(
               `apply:role:${characterClass}:${selected}`,
@@ -176,11 +226,61 @@ export function createRecruitingRoutes(
               roles,
             );
         }
-        if (step === "role" && parts.length === 4) {
+        if (step === "role" && parts.length === 4 && values.length === 1) {
           const role = rolesFor(characterClass, spec)?.find(
             (role) => role === selected,
           );
-          if (role) return applicationModal(characterClass, spec, role);
+          if (role) return offspecStep(characterClass, spec, role);
+        }
+        const role = rolesFor(characterClass, spec)?.find(
+          (role) => role === parts[4],
+        );
+        const otherSpecs = Object.keys(specsFor(characterClass) ?? {}).filter(
+          (other) => other !== spec,
+        );
+        if (
+          step === "offspec" &&
+          parts.length === 5 &&
+          role &&
+          new Set(values).size === values.length
+        ) {
+          if (
+            values.every((value) => otherSpecs.includes(value)) ||
+            (values.length === 1 && selected === "Skip")
+          ) {
+            const encoded =
+              selected === "Skip"
+                ? "-"
+                : values
+                    .map((value) => otherSpecs.indexOf(value))
+                    .sort()
+                    .join("");
+            return select(
+              `apply:nights:${characterClass}:${spec}:${role}:${encoded}`,
+              "Which nights can you raid?",
+              NIGHTS,
+              true,
+            );
+          }
+        }
+        if (
+          step === "nights" &&
+          parts.length === 6 &&
+          role &&
+          decodeChoices(parts[5], otherSpecs) &&
+          values.every((value) => NIGHTS.includes(value)) &&
+          new Set(values).size === values.length
+        ) {
+          return applicationModal(
+            characterClass,
+            spec,
+            role,
+            parts[5],
+            values
+              .map((value) => NIGHTS.indexOf(value))
+              .sort()
+              .join(""),
+          );
         }
         return message("That timed out, run /apply again");
       },
@@ -204,7 +304,7 @@ export function createRecruitingRoutes(
         const raidRole = rolesFor(characterClass, spec)?.find(
           (role) => role === selectedRole,
         );
-        if (parts.length !== 4 || !raidRole)
+        if (parts.length !== 6 || !raidRole)
           return message("That timed out, run /apply again");
         if (!values.name || values.name.length > 100)
           return message("Need your character name");
@@ -215,6 +315,23 @@ export function createRecruitingRoutes(
           raidRole,
           main: true,
         };
+        const otherSpecs = Object.keys(specsFor(characterClass) ?? {}).filter(
+          (other) => other !== spec,
+        );
+        const offspecs = decodeChoices(parts[4], otherSpecs);
+        const nights = decodeChoices(parts[5], NIGHTS);
+        if (!offspecs) return message("That timed out, run /apply again");
+        if (!nights?.length) return message("Pick at least one raid night");
+        const application: Application = {
+          offspecs,
+          nights,
+          raidHistory: values.raidHistory ?? "",
+          logsUrl: values.logsUrl ?? "",
+          about: values.about ?? "",
+        };
+        if (!application.raidHistory) return message("Need your raid history");
+        if (!applicationAnswers(application, character))
+          return message("Check your answers and run /apply again");
         const { core, actor } = await resolveContext(interaction, signal);
         const actorId = authority(actor).userId;
         const candidate = await core.create({
@@ -223,7 +340,8 @@ export function createRecruitingRoutes(
           actorId,
           discordUserId: actorId,
           characters: [character],
-          content: `${character.name}\nClass: ${character.class}\nSpec: ${character.spec}\nRole: ${character.raidRole}`,
+          application,
+          content: `${character.name}\nClass: ${character.class}\nSpec: ${character.spec}\nRole: ${character.raidRole}\nOffspecs: ${application.offspecs.join(", ") || "None"}\nRaid nights: ${application.nights.join(", ")}\nRaid history: ${application.raidHistory}\nLogs or armory: ${application.logsUrl || "Not provided"}\nWhy us / anything else: ${application.about || "Not provided"}`,
         });
         if (!candidate.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
         await core.setStage(

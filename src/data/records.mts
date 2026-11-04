@@ -1,3 +1,4 @@
+import { type Application, applicationAnswers } from "./application.mts";
 import {
   type CharacterDeclaration,
   characterDeclarations,
@@ -58,6 +59,7 @@ export type GuildRecord = {
       : Current extends "candidate"
         ? {
             recruiting?: RecruitingState;
+            application?: Application;
             discordUserId?: string;
             characters?: CharacterDeclaration[];
           }
@@ -127,6 +129,22 @@ export function decode(raw: unknown): GuildRecord | undefined {
         ...character,
       }));
     }
+  }
+  if (kind === "candidate" && item.application !== undefined) {
+    if (
+      !applicationAnswers(
+        item.application,
+        characterDeclarations(item.characters)
+          ? item.characters.find((character) => character.main)
+          : undefined,
+      )
+    )
+      return;
+    output.application = {
+      ...item.application,
+      offspecs: [...item.application.offspecs],
+      nights: [...item.application.nights],
+    };
   }
   if (kind === "member" && item.roster !== undefined) {
     if (
