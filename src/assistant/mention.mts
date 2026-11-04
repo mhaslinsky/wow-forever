@@ -151,15 +151,13 @@ export function createMention(ports: {
       new Set(allowed).size !== 3
     )
       throw new Error("INVALID_ROLES");
-    let guildRecords = !canView(
-      { user: { id: "" }, roles: [] },
-      target,
-      roles,
-      guild,
-    );
+    const publicViewer = { user: { id: "" }, roles: [] };
+    let guildRecords = !canView(publicViewer, target, roles, guild);
     let after = "";
     let count = 0;
-    let history = true;
+    let history =
+      guildRecords ||
+      canView(publicViewer, target, roles, guild, flags.ReadMessageHistory);
     for (;;) {
       const page = await ports.get(
         `${guildPath}/members?limit=1000${after ? `&after=${encodeURIComponent(after)}` : ""}`,

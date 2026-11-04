@@ -261,10 +261,16 @@ test("Guest-readable and public channels answer without guild records", async ()
     const state = setup();
     if (mode === "guest") {
       state.parent.permission_overwrites.push(
-        overwrite("guest", flags.ViewChannel),
+        overwrite("guest", flags.ViewChannel | flags.ReadMessageHistory),
       );
       state.humans.push({ user: { id: "visitor" }, roles: ["guest"] });
-    } else state.parent.permission_overwrites = [];
+    } else
+      state.parent.permission_overwrites = [
+        overwrite("guild", flags.ReadMessageHistory),
+      ];
+    state.parent.permission_overwrites.push(
+      overwrite("member", flags.ReadMessageHistory),
+    );
     await state.mention(event, signal);
     assert.deepEqual(state.replies, ["Answer"]);
     assert.equal(state.requests.length, 1);
@@ -273,6 +279,7 @@ test("Guest-readable and public channels answer without guild records", async ()
       /Untrusted guild records:\\n\[\]/,
     );
     assert.doesNotMatch(JSON.stringify(state.requests[0]), /Roster sentinel/);
+    assert.match(JSON.stringify(state.requests[0]), /CHANNEL_ONLY_SENTINEL/);
   }
 });
 
@@ -379,9 +386,14 @@ test("every thread verifies its parent including unjoined ManageThreads humans",
 
 test("failed second verification regenerates without guild records or context", async () => {
   const state = setup();
+  state.parent.permission_overwrites.push(
+    overwrite("member", flags.ReadMessageHistory),
+  );
   state.failSecond();
   await state.mention(event, signal);
   assert.equal(state.requests.length, 2);
+  assert.match(JSON.stringify(state.requests[0]), /Roster sentinel/);
+  assert.match(JSON.stringify(state.requests[0]), /CHANNEL_ONLY_SENTINEL/);
   assert.doesNotMatch(
     JSON.stringify(state.requests[1]),
     /Roster sentinel|CHANNEL_ONLY_SENTINEL/,
@@ -390,11 +402,16 @@ test("failed second verification regenerates without guild records or context", 
   assert.ok(state.reasons.includes("VERIFICATION_FAILED"));
 });
 
-test("a human or bot viewer without history withholds context while still answering", async () => {
-  for (const bot of [false, true]) {
+test("a public, human or bot viewer without history withholds context while still answering", async () => {
+  for (const bot of [undefined, false, true]) {
     const state = setup();
     state.parent.permission_overwrites = [];
-    state.humans.push({ user: { id: "other", bot }, roles: ["member"] });
+    if (bot !== undefined) {
+      state.parent.permission_overwrites.push(
+        overwrite("guild", flags.ReadMessageHistory),
+      );
+      state.humans.push({ user: { id: "other", bot }, roles: ["member"] });
+    }
     state.parent.permission_overwrites.push(
       overwrite("member", flags.ReadMessageHistory),
       overwrite("other", 0n, flags.ReadMessageHistory, 1),
