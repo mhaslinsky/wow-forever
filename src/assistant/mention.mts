@@ -1,6 +1,7 @@
 import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
-import { capToMember, type Principal } from "../auth/index.mts";
+import { capToMember } from "../auth/index.mts";
 import type { ChannelContext } from "./context.mts";
+import { type createAssistant, REFUSAL } from "./core.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
 
 export type Mention = {
@@ -20,7 +21,6 @@ type Channel = {
   permission_overwrites: Overwrite[];
 };
 type Guild = { id: string; owner_id: string };
-export const POINTER = "Use /ask for that one.";
 
 export function canView(
   member: Member,
@@ -119,12 +119,7 @@ export function createMention(ports: {
   claim(key: string, expiresAt: number, signal: AbortSignal): Promise<boolean>;
   now(): number;
   context?(channelId: string, signal: AbortSignal): ReturnType<ChannelContext>;
-  answer(
-    actor: Principal<"user">,
-    question: string,
-    signal: AbortSignal,
-    context?: ChannelContext,
-  ): Promise<string>;
+  answer: ReturnType<typeof createAssistant>;
   reply(event: Mention, content: string, signal: AbortSignal): Promise<void>;
   report(reason: string): void;
 }) {
@@ -156,11 +151,13 @@ export function createMention(ports: {
       new Set(allowed).size !== 3
     )
       throw new Error("INVALID_ROLES");
-    if (canView({ user: { id: "" }, roles: [] }, target, roles, guild))
-      throw new Error("PUBLIC_CHANNEL");
+    const publicViewer = { user: { id: "" }, roles: [] };
+    let guildRecords = !canView(publicViewer, target, roles, guild);
     let after = "";
     let count = 0;
-    let history = true;
+    let history =
+      guildRecords ||
+      canView(publicViewer, target, roles, guild, flags.ReadMessageHistory);
     for (;;) {
       const page = await ports.get(
         `${guildPath}/members?limit=1000${after ? `&after=${encodeURIComponent(after)}` : ""}`,
@@ -194,7 +191,7 @@ export function createMention(ports: {
           canView(member, target, roles, guild) &&
           !member.roles.some((role) => allowed.includes(role))
         )
-          throw new Error("NON_MEMBER_VIEWER");
+          guildRecords = false;
       }
       count += page.length;
       if (page.length < 1000) break;
@@ -203,7 +200,17 @@ export function createMention(ports: {
       after = next;
     }
     if (!count) throw new Error("EMPTY_MEMBERS");
-    return history;
+    return { guildRecords, history };
+  }
+  async function audience(channelId: string) {
+    try {
+      return await verify(channelId);
+    } catch (error) {
+      ports.report(
+        error instanceof Error ? error.message : "VERIFICATION_FAILED",
+      );
+      return { guildRecords: false, history: false };
+    }
   }
   return async (event: Mention, signal: AbortSignal) => {
     if (
@@ -215,23 +222,8 @@ export function createMention(ports: {
       ports.report("INVALID_EVENT");
       return;
     }
-    let claimed = false;
-    let posted = false;
-    const pointer = async (reason: string) => {
-      ports.report(reason);
-      if (
-        await ports.claim(
-          `mention-pointer#${event.guildId}#${event.authorId}`,
-          Math.ceil(ports.now() / 1000) + 600,
-          signal,
-        )
-      ) {
-        posted = true;
-        await ports.reply(event, POINTER, signal);
-      }
-    };
     try {
-      claimed = await ports.claim(
+      const claimed = await ports.claim(
         `mention-message#${event.guildId}#${event.channelId}#${event.messageId}`,
         Math.ceil(ports.now() / 1000) + 86400,
         signal,
@@ -270,34 +262,21 @@ export function createMention(ports: {
       const actor = capToMember(
         await assistantPrincipal(event.guildId, event.authorId, ports.get),
       );
-      const history = await verify(event.channelId);
-      let usedContext = false;
+      const context = ports.context;
       const answer = await ports.answer(
         actor,
         question,
         signal,
-        history && ports.context
-          ? async (abortSignal) => {
-              const messages =
-                (await ports.context?.(event.channelId, abortSignal)) ?? [];
-              usedContext = messages.length > 0;
-              return messages;
-            }
+        context
+          ? (abortSignal) => context(event.channelId, abortSignal)
           : undefined,
+        () => audience(event.channelId),
       );
-      const stillHistory = await verify(event.channelId);
-      if (usedContext && !stillHistory) throw new Error("HISTORY_ACCESS_LOST");
-      posted = true;
+      if (answer === REFUSAL) return;
       await ports.reply(event, answer, signal);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "MENTION_FAILED";
-      if (claimed && !posted) {
-        try {
-          await pointer(reason);
-        } catch {
-          ports.report("POINTER_FAILED");
-        }
-      } else ports.report(reason);
+      ports.report(reason);
     }
   };
 }

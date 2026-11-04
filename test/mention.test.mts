@@ -12,7 +12,6 @@ import {
   canView,
   createMention,
   type Mention,
-  POINTER,
 } from "../src/assistant/mention.mts";
 import { assistantPrincipal } from "../src/assistant/runtime.mts";
 import { authority, capToMember } from "../src/auth/index.mts";
@@ -119,8 +118,8 @@ function setup(role = "officer") {
           name: "ConditionalCheckFailedException",
         });
       const expiry = Number(command.input.Item?.expiresAt.N);
-      if (key.startsWith("mention-message"))
-        assert.ok(expiry * 1000 - now >= 86400000);
+      assert.ok(key.startsWith("mention-message#"));
+      assert.ok(expiry * 1000 - now >= 86400000);
       claims.set(key, expiry);
     },
   );
@@ -195,7 +194,12 @@ function setup(role = "officer") {
         metrics: { latencyMs: 0 },
         stopReason: "end_turn",
         output: {
-          message: { role: "assistant", content: [{ text: "Answer" }] },
+          message: {
+            role: "assistant",
+            content: [
+              { text: requests.length === 1 ? "Answer" : "Regenerated" },
+            ],
+          },
         },
       };
     }),
@@ -208,9 +212,9 @@ function setup(role = "officer") {
     now: () => now,
     context: (channelId, abort) =>
       createChannelContext({ clock, get, report: () => {} }, channelId)(abort),
-    answer: async (actor, question, abort, context) => {
+    answer: async (actor, question, abort, context, audience) => {
       capturedActor = actor;
-      return ask(actor, question, abort, context);
+      return ask(actor, question, abort, context, audience);
     },
     reply: async (_event, content) => {
       replies.push(content);
@@ -252,21 +256,30 @@ function setup(role = "officer") {
   };
 }
 
-test("Guest-readable and publicly visible channels take only the rate-limited pointer", async () => {
-  for (const mode of ["guest", "public"]) {
+test("Guest-readable and public channels answer without guild records", async () => {
+  for (const mode of ["public", "guest"]) {
     const state = setup();
     if (mode === "guest") {
       state.parent.permission_overwrites.push(
-        overwrite("guest", flags.ViewChannel),
+        overwrite("guest", flags.ViewChannel | flags.ReadMessageHistory),
       );
       state.humans.push({ user: { id: "visitor" }, roles: ["guest"] });
-    } else state.parent.permission_overwrites = [];
+    } else
+      state.parent.permission_overwrites = [
+        overwrite("guild", flags.ReadMessageHistory),
+      ];
+    state.parent.permission_overwrites.push(
+      overwrite("member", flags.ReadMessageHistory),
+    );
     await state.mention(event, signal);
-    await state.mention({ ...event, messageId: "second" }, signal);
-    state.advance(601000);
-    await state.mention({ ...event, messageId: "third" }, signal);
-    assert.deepEqual(state.replies, [POINTER, POINTER]);
-    state.noModels();
+    assert.deepEqual(state.replies, ["Answer"]);
+    assert.equal(state.requests.length, 1);
+    assert.match(
+      JSON.stringify(state.requests[0]),
+      /Untrusted guild records:\\n\[\]/,
+    );
+    assert.doesNotMatch(JSON.stringify(state.requests[0]), /Roster sentinel/);
+    assert.match(JSON.stringify(state.requests[0]), /CHANNEL_ONLY_SENTINEL/);
   }
 });
 
@@ -294,6 +307,9 @@ test("Officer-only and GM-only mentions use Member authority and exclude officer
   const outsider = setup("guest");
   const principal = await assistantPrincipal("guild", "asker", outsider.get);
   assert.deepEqual(authority(capToMember(principal)).roles, []);
+  await outsider.mention(event, signal);
+  assert.deepEqual(outsider.replies, []);
+  outsider.noModels();
 });
 
 test("a repeated message stays claimed after the shared user cooldown expires", async () => {
@@ -362,24 +378,40 @@ test("every thread verifies its parent including unjoined ManageThreads humans",
     );
     state.humans.push({ user: { id: "moderator" }, roles: ["guest"] });
     await state.mention({ ...event, channelId: "thread" }, signal);
-    assert.deepEqual(state.replies, [POINTER]);
-    state.noModels();
+    assert.deepEqual(state.replies, ["Answer"]);
+    assert.equal(state.requests.length, 1);
+    assert.doesNotMatch(JSON.stringify(state.requests), /Roster sentinel/);
   }
 });
 
-test("failed second verification suppresses the generated answer", async () => {
+test("failed second verification regenerates without guild records or context", async () => {
   const state = setup();
+  state.parent.permission_overwrites.push(
+    overwrite("member", flags.ReadMessageHistory),
+  );
   state.failSecond();
   await state.mention(event, signal);
-  assert.equal(state.requests.length, 1);
-  assert.deepEqual(state.replies, [POINTER]);
+  assert.equal(state.requests.length, 2);
+  assert.match(JSON.stringify(state.requests[0]), /Roster sentinel/);
+  assert.match(JSON.stringify(state.requests[0]), /CHANNEL_ONLY_SENTINEL/);
+  assert.doesNotMatch(
+    JSON.stringify(state.requests[1]),
+    /Roster sentinel|CHANNEL_ONLY_SENTINEL/,
+  );
+  assert.deepEqual(state.replies, ["Regenerated"]);
   assert.ok(state.reasons.includes("VERIFICATION_FAILED"));
 });
 
-test("a human or bot viewer without history withholds context while still answering", async () => {
-  for (const bot of [false, true]) {
+test("a public, human or bot viewer without history withholds context while still answering", async () => {
+  for (const bot of [undefined, false, true]) {
     const state = setup();
-    state.humans.push({ user: { id: "other", bot }, roles: ["member"] });
+    state.parent.permission_overwrites = [];
+    if (bot !== undefined) {
+      state.parent.permission_overwrites.push(
+        overwrite("guild", flags.ReadMessageHistory),
+      );
+      state.humans.push({ user: { id: "other", bot }, roles: ["member"] });
+    }
     state.parent.permission_overwrites.push(
       overwrite("member", flags.ReadMessageHistory),
       overwrite("other", 0n, flags.ReadMessageHistory, 1),
@@ -388,13 +420,13 @@ test("a human or bot viewer without history withholds context while still answer
     assert.equal(state.requests.length, 1);
     assert.doesNotMatch(
       JSON.stringify(state.requests),
-      /CHANNEL_ONLY_SENTINEL/,
+      /CHANNEL_ONLY_SENTINEL|Roster sentinel/,
     );
     assert.deepEqual(state.replies, ["Answer"]);
   }
 });
 
-test("history lost before posting suppresses a context answer and posts the pointer", async () => {
+test("history lost before posting regenerates the answer without context", async () => {
   const state = setup();
   state.humans.push({ user: { id: "other", bot: true }, roles: ["member"] });
   state.parent.permission_overwrites.push(
@@ -402,8 +434,11 @@ test("history lost before posting suppresses a context answer and posts the poin
   );
   state.loseHistory();
   await state.mention(event, signal);
-  assert.equal(state.requests.length, 1);
-  assert.match(JSON.stringify(state.requests), /CHANNEL_ONLY_SENTINEL/);
-  assert.deepEqual(state.replies, [POINTER]);
-  assert.ok(state.reasons.includes("HISTORY_ACCESS_LOST"));
+  assert.equal(state.requests.length, 2);
+  assert.match(JSON.stringify(state.requests[0]), /CHANNEL_ONLY_SENTINEL/);
+  assert.doesNotMatch(
+    JSON.stringify(state.requests[1]),
+    /CHANNEL_ONLY_SENTINEL/,
+  );
+  assert.deepEqual(state.replies, ["Regenerated"]);
 });
