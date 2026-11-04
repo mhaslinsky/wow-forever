@@ -110,7 +110,7 @@ test("digest lists only overdue candidates", async () => {
 test("empty digest posts one line saying nothing is overdue", async () => {
   const setup = fixture();
   assert.deepEqual(await setup.digest(), { overdue: 0 });
-  assert.deepEqual(setup.messages, ["Nothing is overdue."]);
+  assert.deepEqual(setup.messages, ["Nothing's overdue today."]);
 });
 
 test("digest uses a stepped clock", async () => {
@@ -119,7 +119,7 @@ test("digest uses a stepped clock", async () => {
   assert.deepEqual(await setup.digest(), { overdue: 0 });
   setup.step();
   assert.deepEqual(await setup.digest(), { overdue: 1 });
-  assert.match(setup.messages[1], /thread-1.*unassigned/);
+  assert.match(setup.messages[1], /thread-1.*no owner/);
 });
 
 test("digest excludes closed candidates", async () => {

@@ -110,15 +110,16 @@ test("/register creates and updates mains and alts", async () => {
       name: "register",
       options: [
         { name: "main", value: "Synthetic, Priest, Holy, Healer" },
-        { name: "alts", value: "Example, Warrior, Arms, Damage" },
+        { name: "alts", value: "Example, Warrior, Arms, DPS" },
       ],
     },
   };
   assert.deepEqual(
     await route.handler(interaction, new AbortController().signal),
-    { type: 4, data: { content: "Roster updated", flags: 64 } },
+    { type: 4, data: { content: "Got it, roster updated", flags: 64 } },
   );
   assert.equal(setup.member()?.roster?.length, 2);
+  assert.equal(setup.member()?.roster?.[1].raidRole, "Damage");
   interaction.data.options = [
     { name: "main", value: "Example, Warrior, Protection, Tank" },
   ];
