@@ -163,6 +163,7 @@ test("in-flight acceptance cannot overwrite a retention redaction", async (conte
       tags: async () =>
         [...STAGES, ...SOURCES].map((name) => ({ name, id: name })),
       create: async () => "Declined",
+      post: async () => {},
       tagsFor: async () => [],
       setTags: async () => {},
     },
