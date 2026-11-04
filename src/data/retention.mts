@@ -44,7 +44,7 @@ export function createRetentionStorage(config: {
         archived: false,
       };
       if (!candidate.retention) {
-        // Fence writers before deleting notes so a delayed submission cannot return.
+        // Fence writers before deleting notes so a delayed submission cannot recreate them.
         await client.send(
           new UpdateCommand({
             TableName: config.tableName,
