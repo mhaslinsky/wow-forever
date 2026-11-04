@@ -19,6 +19,10 @@ export function createRetentionPurge(ports: RetentionPorts) {
     let purged = 0;
     for (const candidate of await ports.candidates()) {
       if (candidate.retention) {
+        if (candidate.recruiting) {
+          await ports.purge(candidate);
+          purged++;
+        }
         if (!candidate.retention.archived) {
           await ports.archive(candidate.retention.threadId);
           await ports.archived(candidate);

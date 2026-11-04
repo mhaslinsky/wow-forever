@@ -5,6 +5,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   authority,
@@ -24,7 +25,10 @@ declare const cursorBrand: unique symbol;
 export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
-export type WriteCondition = { recruitingChangedAt: string | undefined };
+export type WriteCondition = {
+  recruitingChangedAt: string | undefined;
+  candidateThreadId?: string;
+};
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
   query(
@@ -142,17 +146,31 @@ export function createDataAccess(
         if (!allowed) throw new Error("WRITE_DENIED");
         if (
           condition &&
-          (item.kind !== "candidate" ||
+          (!["candidate", "officerNote"].includes(item.kind) ||
             (condition.recruitingChangedAt !== undefined &&
               !Number.isFinite(Date.parse(condition.recruitingChangedAt))))
         )
           throw new Error("INVALID_WRITE_CONDITION");
+        if (
+          item.kind === "officerNote" &&
+          (!condition?.candidateThreadId ||
+            !condition.recruitingChangedAt ||
+            !item.sk.startsWith(`OFFICER_NOTE#${condition.candidateThreadId}#`))
+        )
+          throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
         try {
           await storage.put(item, condition);
         } catch (error) {
           if (
             error instanceof Error &&
-            error.name === "ConditionalCheckFailedException"
+            (error.name === "ConditionalCheckFailedException" ||
+              (error.name === "TransactionCanceledException" &&
+                "CancellationReasons" in error &&
+                Array.isArray(error.CancellationReasons) &&
+                error.CancellationReasons.some(
+                  (reason: { Code?: string }) =>
+                    reason.Code === "ConditionalCheckFailed",
+                )))
           )
             throw new Error("WRITE_CONFLICT");
           throw new Error("DATA_UNAVAILABLE");
@@ -239,6 +257,41 @@ export function createDynamoDataAccess(config: {
       return items;
     },
     async put(item, condition) {
+      if (item.kind === "officerNote") {
+        if (!condition?.candidateThreadId || !condition.recruitingChangedAt)
+          throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
+        await client.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                ConditionCheck: {
+                  TableName: config.tableName,
+                  Key: {
+                    pk: `CANDIDATE#${item.ownerId}`,
+                    sk: `CANDIDATE#${condition.candidateThreadId}`,
+                  },
+                  ConditionExpression:
+                    "attribute_not_exists(retention) AND recruiting.changedAt = :changedAt",
+                  ExpressionAttributeValues: {
+                    ":changedAt": condition.recruitingChangedAt,
+                  },
+                },
+              },
+              {
+                Put: {
+                  TableName: config.tableName,
+                  Item: {
+                    ...item,
+                    gsi1pk: "OFFICER_NOTE#ALL",
+                    gsi1sk: `${item.pk}#${item.sk}`,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        return;
+      }
       await client.send(
         new PutCommand({
           TableName: config.tableName,
@@ -249,8 +302,11 @@ export function createDynamoDataAccess(config: {
           },
           ConditionExpression:
             "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
+            (item.kind === "candidate"
+              ? " AND attribute_not_exists(retention)"
+              : "") +
             (condition
-              ? " AND attribute_not_exists(retention) AND " +
+              ? " AND " +
                 (condition.recruitingChangedAt === undefined
                   ? "attribute_not_exists(recruiting.changedAt)"
                   : "recruiting.changedAt = :changedAt")

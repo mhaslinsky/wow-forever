@@ -69,7 +69,7 @@ data "aws_iam_policy_document" "interactions" {
     resources = [aws_dynamodb_table.claims.arn]
   }
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.guild.arn]
   }
 }

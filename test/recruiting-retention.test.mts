@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -177,4 +177,89 @@ test("in-flight acceptance cannot overwrite a retention redaction", async (conte
     /CANDIDATE_WRITE_CONFLICT:Declined/,
   );
   assert.deepEqual(stored, redacted);
+});
+
+function intakeFixture(context: TestContext, reapply = false) {
+  const original = candidate("Declined");
+  const redacted: Candidate = {
+    pk: original.pk,
+    sk: original.sk,
+    kind: "candidate",
+    ownerId: "guild",
+    name: original.name,
+    retention: { outcome: "Declined", threadId: "Declined", archived: true },
+  };
+  let stored = reapply ? redacted : original;
+  const notes: unknown[] = [];
+  let created = 0;
+  context.mock.method(
+    DynamoDBDocumentClient.prototype,
+    "send",
+    async (command: unknown) => {
+      if (command instanceof QueryCommand) return { Items: [stored] };
+      if (command instanceof GetCommand) return {};
+      if (command instanceof PutCommand) {
+        if (command.input.Item?.kind === "officerNote")
+          notes.push(command.input.Item);
+        else if (command.input.Item?.sk === "CANDIDATE#fresh")
+          stored = command.input.Item as Candidate;
+        else stored = redacted;
+        return {};
+      }
+      if (command instanceof TransactWriteCommand) {
+        const check = command.input.TransactItems?.[0]?.ConditionCheck;
+        if (check && stored.retention)
+          throw Object.assign(new Error("fenced"), {
+            name: "TransactionCanceledException",
+            CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+          });
+        notes.push(command.input.TransactItems?.[1]?.Put?.Item);
+        return {};
+      }
+      assert.fail("Unexpected storage command");
+    },
+  );
+  const core = createRecruiting(
+    createDynamoDataAccess({ tableName: "synthetic", region: "us-east-1" }),
+    createSystemPrincipal(["candidate", "officerNote"]),
+    "guild",
+    {
+      tags: async () =>
+        [...STAGES, ...SOURCES].map((name) => ({ name, id: name })),
+      create: async () => {
+        created++;
+        return "fresh";
+      },
+      post: async () => {},
+      tagsFor: async () => [],
+      setTags: async () => {},
+    },
+    () => {},
+  );
+  return { core, notes, created: () => created, redacted };
+}
+
+test("repeat-intake note racing a purge is rejected and leaves no note", async (context) => {
+  const setup = intakeFixture(context);
+  await assert.rejects(
+    setup.core.create({
+      name: "Synthetic",
+      source: "Officer lead",
+      actorId: "officer",
+    }),
+    /CANDIDATE_WRITE_CONFLICT:Declined/,
+  );
+  assert.deepEqual(setup.notes, []);
+});
+
+test("reapplying after a purge creates a fresh candidate and thread", async (context) => {
+  const setup = intakeFixture(context, true);
+  const record = await setup.core.create({
+    name: "Synthetic",
+    source: "Officer lead",
+    actorId: "officer",
+  });
+  assert.equal(record.recruiting?.threadId, "fresh");
+  assert.equal(setup.created(), 1);
+  assert.equal(setup.redacted.retention?.outcome, "Declined");
 });

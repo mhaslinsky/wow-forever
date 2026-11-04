@@ -25,20 +25,6 @@ export function createRetentionStorage(config: {
     pk: candidate.pk,
     sk: candidate.sk,
   });
-  const observed = (candidate: Candidate) => {
-    if (!candidate.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
-    return {
-      TableName: config.tableName,
-      Key: candidateKey(candidate),
-      ConditionExpression:
-        "recruiting.#stage = :stage AND recruiting.changedAt = :changedAt",
-      ExpressionAttributeNames: { "#stage": "stage" },
-      ExpressionAttributeValues: {
-        ":stage": candidate.recruiting.stage,
-        ":changedAt": candidate.recruiting.changedAt,
-      },
-    };
-  };
   return {
     async candidates(): Promise<Candidate[]> {
       const records = await data.query(
@@ -50,8 +36,36 @@ export function createRetentionStorage(config: {
     },
     async purge(candidate: Candidate) {
       const state = candidate.recruiting;
-      if (!state || !["Declined", "Withdrawn"].includes(state.stage))
+      if (!state || (state.stage !== "Declined" && state.stage !== "Withdrawn"))
         throw new Error("INVALID_RETENTION_CANDIDATE");
+      const retention = candidate.retention ?? {
+        outcome: state.stage,
+        threadId: state.threadId,
+        archived: false,
+      };
+      if (!candidate.retention) {
+        // Fence writers before deleting notes so a delayed submission cannot return.
+        await client.send(
+          new UpdateCommand({
+            TableName: config.tableName,
+            Key: candidateKey(candidate),
+            UpdateExpression: "SET retention = :retention",
+            ConditionExpression:
+              "attribute_not_exists(retention) AND recruiting.#stage = :stage AND recruiting.changedAt = :changedAt",
+            ExpressionAttributeNames: { "#stage": "stage" },
+            ExpressionAttributeValues: {
+              ":retention": retention,
+              ":stage": state.stage,
+              ":changedAt": state.changedAt,
+            },
+          }),
+        );
+      }
+      const fenced = {
+        TableName: config.tableName,
+        ConditionExpression: "retention = :retention",
+        ExpressionAttributeValues: { ":retention": retention },
+      };
       let cursor: Key | undefined;
       do {
         const page = await client.send(
@@ -61,18 +75,17 @@ export function createRetentionStorage(config: {
             KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
             ExpressionAttributeValues: {
               ":pk": recordKey("officerNote", config.guildId, "unused").pk,
-              ":prefix": `OFFICER_NOTE#${state.threadId}#`,
+              ":prefix": `OFFICER_NOTE#${retention.threadId}#`,
             },
             ExclusiveStartKey: cursor,
           }),
         );
         const notes = page.Items ?? [];
-        // Recheck the stage in each transaction before deleting its notes.
         for (let offset = 0; offset < notes.length; offset += 99) {
           await client.send(
             new TransactWriteCommand({
               TransactItems: [
-                { ConditionCheck: observed(candidate) },
+                { ConditionCheck: { ...fenced, Key: candidateKey(candidate) } },
                 ...notes.slice(offset, offset + 99).map((note) => ({
                   Delete: {
                     TableName: config.tableName,
@@ -85,23 +98,18 @@ export function createRetentionStorage(config: {
         }
         cursor = page.LastEvaluatedKey as Key | undefined;
       } while (cursor);
-      const { Key: _key, ...condition } = observed(candidate);
       await client.send(
         new TransactWriteCommand({
           TransactItems: [
             {
               Put: {
-                ...condition,
+                ...fenced,
                 Item: {
                   ...candidateKey(candidate),
                   kind: "candidate",
                   ownerId: config.guildId,
                   name: candidate.name,
-                  retention: {
-                    outcome: state.stage,
-                    threadId: state.threadId,
-                    archived: false,
-                  },
+                  retention,
                 },
               },
             },
@@ -118,7 +126,8 @@ export function createRetentionStorage(config: {
           TableName: config.tableName,
           Key: candidateKey(candidate),
           UpdateExpression: "SET retention.archived = :archived",
-          ConditionExpression: "retention.threadId = :threadId",
+          ConditionExpression:
+            "retention.threadId = :threadId AND attribute_not_exists(recruiting)",
           ExpressionAttributeValues: {
             ":archived": true,
             ":threadId": threadId,

@@ -144,21 +144,27 @@ export function createRecruiting(
     await records.write(updated, {
       recruitingChangedAt: record.recruiting.changedAt,
     });
-    await records.write({
-      ...recordKey(
-        "officerNote",
-        guildId,
-        `${record.recruiting.threadId}#${eventId}`,
-      ),
-      kind: "officerNote",
-      ownerId: guildId,
-      text: JSON.stringify({
-        from: record.recruiting.stage,
-        to: stage,
-        actorId,
-        at,
-      }),
-    });
+    await records.write(
+      {
+        ...recordKey(
+          "officerNote",
+          guildId,
+          `${record.recruiting.threadId}#${eventId}`,
+        ),
+        kind: "officerNote",
+        ownerId: guildId,
+        text: JSON.stringify({
+          from: record.recruiting.stage,
+          to: stage,
+          actorId,
+          at,
+        }),
+      },
+      {
+        candidateThreadId: record.recruiting.threadId,
+        recruitingChangedAt: at,
+      },
+    );
     return updated;
   }
   return {
@@ -218,7 +224,9 @@ export function createRecruiting(
           .normalize("NFC")
           .toLowerCase();
       const candidateRecords = candidates.filter(
-        (record): record is Candidate => record.kind === "candidate",
+        (record): record is Candidate =>
+          record.kind === "candidate" &&
+          !(record.retention && !record.recruiting),
       );
       const accountMatch = input.discordUserId
         ? candidateRecords.find(
@@ -270,7 +278,10 @@ export function createRecruiting(
           await records.write(enriched, {
             recruitingChangedAt: existing.recruiting?.changedAt,
           });
-          await records.write(note(threadId));
+          await records.write(note(threadId), {
+            candidateThreadId: threadId,
+            recruitingChangedAt: existing.recruiting?.changedAt,
+          });
           return enriched;
         });
       }
@@ -301,7 +312,10 @@ export function createRecruiting(
       };
       await saving(threadId, async () => {
         await records.write(record, { recruitingChangedAt: undefined });
-        await records.write(note(threadId));
+        await records.write(note(threadId), {
+          candidateThreadId: threadId,
+          recruitingChangedAt: record.recruiting?.changedAt,
+        });
       });
       return record;
     },
