@@ -8,23 +8,24 @@ import {
   GuildAuditLogsEntry,
 } from "discord.js";
 import fc from "fast-check";
-import {
-  createPrincipalFactory,
-  createSystemPrincipal,
-} from "../src/auth/index.mts";
+import { createSystemPrincipal } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import type { GuildRecord } from "../src/data/records.mts";
 import { SOURCES, STAGES } from "../src/data/recruiting.mts";
+import type { RecruitingFailure } from "../src/recruiting/alarm.mts";
 import { createRecruiting, type ForumPort } from "../src/recruiting/core.mts";
 import { recruitingHandlers } from "../src/recruiting/discord.mts";
 
 function fixture() {
   const items = new Map<string, GuildRecord>();
+  const failures: RecruitingFailure[] = [];
+  let failWrites = false;
   const data = createDataAccess({
     get: async (key) => items.get(`${key.pk}/${key.sk}`),
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
     put: async (item) => {
+      if (failWrites) throw new Error("storage unavailable");
       items.set(`${item.pk}/${item.sk}`, item);
     },
   });
@@ -47,9 +48,15 @@ function fixture() {
     },
   };
   const principal = createSystemPrincipal(["candidate", "officerNote"]);
-  const core = createRecruiting(data, principal, "guild", port);
+  const core = createRecruiting(data, principal, "guild", port, (failure) =>
+    failures.push(failure),
+  );
   return {
     core,
+    failures,
+    failWrites: () => {
+      failWrites = true;
+    },
     data,
     principal,
     items,
@@ -70,23 +77,21 @@ test("new candidate creates one thread with the New tag", async () => {
   assert.equal(setup.created(), 1);
   assert.deepEqual(setup.applied(), ["TAG_NEW_ID", "TAG_OFFICER LEAD_ID"]);
   assert.deepEqual(await setup.core.candidate("THREAD_ID"), candidate);
-  const factory = createPrincipalFactory({
-    guildId: "guild",
-    memberRoleId: "member",
-    officerRoleId: "officer",
-    jobs: {},
-  });
-  const member = factory.fromVerifiedInteraction({
-    guild_id: "guild",
-    member: { user: { id: "member" }, roles: ["member"] },
-  });
-  assert.deepEqual(
-    await setup.data.forUser(member).query("CANDIDATE#guild"),
-    [],
+  setup.failWrites();
+  await assert.rejects(
+    setup.core.create({
+      name: "Synthetic",
+      source: "Apply form",
+      actorId: "applicant",
+    }),
+    /CANDIDATE_SAVE_FAILED:THREAD_ID/,
   );
+  assert.deepEqual(setup.failures, [
+    { code: "CANDIDATE_SAVE_FAILED", threadId: "THREAD_ID" },
+  ]);
 });
 
-test("officer tag change updates the stored stage with actor", async () => {
+test("officer tag change updates the stored stage with actor", async (context) => {
   const setup = fixture();
   await setup.core.create({
     name: "Synthetic",
@@ -157,6 +162,18 @@ test("officer tag change updates the stored stage with actor", async () => {
         JSON.parse(record.text).actorId === "ACTOR_USER_ID",
     ),
   );
+  setup.items.clear();
+  const errorLog = context.mock.method(
+    console,
+    "error",
+    (..._messages: unknown[]) => {},
+  );
+  await assert.rejects(handler(entry, guild), /CANDIDATE_NOT_FOUND:THREAD_ID/);
+  const alarm = JSON.parse(errorLog.mock.calls[0].arguments[0]);
+  assert.equal(alarm.threadId, "THREAD_ID");
+  assert.equal(alarm.RecruitingError, 1);
+  assert.deepEqual(alarm._aws.CloudWatchMetrics[0].Dimensions, [[]]);
+  errorLog.mock.restore();
 });
 
 test("bot stage change updates the tag", async () => {

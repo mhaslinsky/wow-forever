@@ -7,6 +7,7 @@ import {
   STAGES,
   type Stage,
 } from "../data/recruiting.mts";
+import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
 
 export type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
 export type ForumTag = { id: string; name: string };
@@ -33,6 +34,7 @@ export function createRecruiting(
   principal: Principal<"system">,
   guildId: string,
   forum: ForumPort,
+  report: (failure: RecruitingFailure) => void = reportRecruitingFailure,
 ) {
   const records = data.forSystem(principal);
   async function candidate(threadId: string): Promise<Candidate | undefined> {
@@ -129,6 +131,7 @@ export function createRecruiting(
       try {
         await records.write(record);
       } catch (cause) {
+        report({ code: "CANDIDATE_SAVE_FAILED", threadId });
         throw new Error(`CANDIDATE_SAVE_FAILED:${threadId}`, { cause });
       }
       return record;
@@ -143,7 +146,10 @@ export function createRecruiting(
       const actor = authority(input.actor);
       if (!actor.roles.includes("Officer")) throw new Error("WRITE_DENIED");
       const record = await candidate(input.threadId);
-      if (!record?.recruiting) return;
+      if (!record?.recruiting) {
+        report({ code: "CANDIDATE_NOT_FOUND", threadId: input.threadId });
+        throw new Error(`CANDIDATE_NOT_FOUND:${input.threadId}`);
+      }
       const tags = await forum.tags();
       const stages = STAGES.filter((stage) =>
         input.tags.includes(tagId(tags, stage)),
