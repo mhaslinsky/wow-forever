@@ -51,12 +51,14 @@ export function createWishlist(
       const raids = await reader.query(`SIGNUP#${config.guildId}`);
       const starts = raids
         .filter((record) => record.kind === "signup")
-        .map((record) => {
-          const start = Number(record.startTime);
-          cutoff(start);
-          return start;
-        })
-        .filter((start) => start * 1000 > savedAt)
+        .map((record) => Number(record.startTime))
+        // Invalid poller dates must not prevent members from saving wishlists.
+        .filter(
+          (start) =>
+            Number.isFinite(start * 1000) &&
+            start > 0 &&
+            start * 1000 > savedAt,
+        )
         .sort((left, right) => left - right);
       const nextStart = starts[0];
       await reader.write({

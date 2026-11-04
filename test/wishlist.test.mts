@@ -57,6 +57,7 @@ function fixture() {
       new AbortController().signal,
     );
   return {
+    records,
     core,
     actor,
     startTime,
@@ -92,6 +93,16 @@ test("edits after the lock do not change the current raid's list", async () => {
   );
   assert.deepEqual(
     await setup.core.forRaid(setup.actor, "user", setup.startTime + 86400),
+    ["Example Ring"],
+  );
+});
+
+test("an unusable signup start does not block wishlist edits", async () => {
+  const setup = fixture();
+  Object.assign(setup.records[0], { startTime: "not-a-time" });
+  await setup.save("Example Ring");
+  assert.deepEqual(
+    await setup.core.forRaid(setup.actor, "user", setup.startTime),
     ["Example Ring"],
   );
 });
