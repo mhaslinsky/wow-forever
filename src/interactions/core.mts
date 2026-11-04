@@ -1,6 +1,8 @@
 import { createPublicKey, verify } from "node:crypto";
+import { createFollowUpRoutes } from "../recruiting/followup.mts";
 import { createRecruitingRoutes } from "../recruiting/interactions.mts";
 import { recruitingContextForInteraction } from "../recruiting/runtime.mts";
+import { createRegisterRoutes } from "../roster/interactions.mts";
 
 export interface Clock {
   now(): number;
@@ -92,6 +94,8 @@ export type Route = RouteDefinition &
   );
 export const registry: readonly Route[] = [
   ...createRecruitingRoutes(recruitingContextForInteraction),
+  ...createRegisterRoutes(recruitingContextForInteraction),
+  ...createFollowUpRoutes(recruitingContextForInteraction),
 ];
 export function commandDefinitions(routes: readonly Route[] = registry) {
   return routes

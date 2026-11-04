@@ -43,12 +43,15 @@ function fixture(role = "visitor") {
       },
     },
   );
-  const factory = createPrincipalFactory({
+  const actor = createPrincipalFactory({
     guildId: "guild",
     memberRoleId: "member",
     officerRoleId: "officer",
     officerRoleIds: ["gm"],
     jobs: {},
+  }).fromVerifiedInteraction({
+    guild_id: "guild",
+    member: { user: { id: "person" }, roles: [role] },
   });
   const interaction: Interaction = {
     id: "interaction",
@@ -59,13 +62,7 @@ function fixture(role = "visitor") {
     member: { user: { id: "person" }, roles: [role] },
   };
   const routes = createRecruitingRoutes(
-    async () => ({
-      core,
-      actor: factory.fromVerifiedInteraction({
-        guild_id: "guild",
-        member: { user: { id: "person" }, roles: [role] },
-      }),
-    }),
+    async () => ({ core, actor }),
     () => "guild",
   );
   const run = (input: Interaction) => {
