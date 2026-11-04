@@ -47,6 +47,9 @@ function fixture(
     get: async (key) => items.get(`${key.pk}/${key.sk}`),
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
+    removeNote: async (item) => {
+      items.delete(`${item.pk}/${item.sk}`);
+    },
     put: async (item) => {
       if (failWrites === item.kind) throw new Error("storage unavailable");
       items.set(`${item.pk}/${item.sk}`, item);
@@ -315,9 +318,11 @@ test("concurrent correction keeps the newer edit through the Discord adapter", a
   assert.equal(writes, 0);
 });
 
-test("failed officer acceptance restores tags without overwriting a newer edit", async () => {
+test("failed acceptance preserves stage, restores tags and grants on retry", async () => {
   for (const newerEdit of [false, true]) {
+    let attempts = 0;
     const setup = fixture(async () => {
+      if (++attempts > 1) return;
       if (newerEdit) await setup.port.setTags(threadId, ["TAG_TRIAL_ID"], []);
       throw new Error("MEMBER_ROLE_GRANT_FAILED");
     });
@@ -342,6 +347,8 @@ test("failed officer acceptance restores tags without overwriting a newer edit",
       setup.applied(),
       newerEdit ? ["TAG_TRIAL_ID"] : ["TAG_APPLY FORM_ID", "TAG_NEW_ID"],
     );
+    await setup.core.setStage(threadId, "Accepted", "officer", "retry");
+    assert.equal(attempts, 2);
   }
 });
 
@@ -400,4 +407,16 @@ test("Discord identity separates namesakes and wins over a name match", async ()
   });
   assert.equal(repeated.sk, second.sk);
   assert.equal(setup.created(), 3);
+});
+
+test("failed repeat post is reposted on retry", async () => {
+  const setup = fixture();
+  await seed(setup);
+  let posts = 0;
+  setup.port.post = async () => {
+    if (++posts === 1) throw new Error("post failed");
+  };
+  await assert.rejects(seed(setup, "Officer lead"));
+  await seed(setup, "Officer lead");
+  assert.equal(posts, 2);
 });

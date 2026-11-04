@@ -41,6 +41,16 @@ resource "aws_iam_role" "interactions" {
 
 data "aws_iam_policy_document" "interactions" {
   statement {
+    actions   = ["dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["OFFICER_NOTE#${var.guild_id}"]
+    }
+  }
+
+  statement {
     actions   = ["dynamodb:Query"]
     resources = ["${aws_dynamodb_table.guild.arn}/index/gsi1"]
   }
@@ -83,7 +93,7 @@ data "aws_iam_policy_document" "interactions" {
     resources = [aws_dynamodb_table.claims.arn]
   }
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.guild.arn]
   }
 }

@@ -80,6 +80,8 @@ export function createRecruiting(
       return await work();
     } catch (cause) {
       report({ code: "CANDIDATE_SAVE_FAILED", threadId });
+      if (cause instanceof Error && cause.message === "WRITE_CONFLICT")
+        throw new Error(`CANDIDATE_WRITE_CONFLICT:${threadId}`, { cause });
       throw new Error(`CANDIDATE_SAVE_FAILED:${threadId}`, { cause });
     }
   }
@@ -129,31 +131,39 @@ export function createRecruiting(
         changedAt: at,
       },
     };
+    // Grant membership only after the candidate write clears the retention fence.
+    await records.write(updated);
     if (stage === "Accepted") {
       try {
         if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
         await accepted(updated);
       } catch (cause) {
+        // Restore the previous stage so another acceptance can retry the grant.
+        await records.write(record);
         await acceptanceFailed?.();
         throw cause;
       }
     }
-    await records.write(updated);
-    await records.write({
-      ...recordKey(
-        "officerNote",
-        guildId,
-        `${record.recruiting.threadId}#${eventId}`,
-      ),
-      kind: "officerNote",
-      ownerId: guildId,
-      text: JSON.stringify({
-        from: record.recruiting.stage,
-        to: stage,
-        actorId,
-        at,
-      }),
-    });
+    await records.write(
+      {
+        ...recordKey(
+          "officerNote",
+          guildId,
+          `${record.recruiting.threadId}#${eventId}`,
+        ),
+        kind: "officerNote",
+        ownerId: guildId,
+        text: JSON.stringify({
+          from: record.recruiting.stage,
+          to: stage,
+          actorId,
+          at,
+        }),
+      },
+      {
+        candidateThreadId: record.recruiting.threadId,
+      },
+    );
     return updated;
   }
   return {
@@ -213,7 +223,8 @@ export function createRecruiting(
           .normalize("NFC")
           .toLowerCase();
       const candidateRecords = candidates.filter(
-        (record): record is Candidate => record.kind === "candidate",
+        (record): record is Candidate =>
+          record.kind === "candidate" && !record.retention,
       );
       const accountMatch = input.discordUserId
         ? candidateRecords.find(
@@ -243,11 +254,6 @@ export function createRecruiting(
         return saving(threadId, async () => {
           const [previous] = await records.get(note(threadId));
           if (previous) return existing;
-          // Keep the original workflow while attaching the new intake's details.
-          await forum.post(
-            threadId,
-            `Applied again through ${input.source}:\n${input.content || input.name}`,
-          );
           const enriched: Candidate = {
             ...existing,
             ...(!existing.discordUserId && input.discordUserId
@@ -263,7 +269,23 @@ export function createRecruiting(
               : {}),
           };
           await records.write(enriched);
-          await records.write(note(threadId));
+          await records.write(note(threadId), {
+            candidateThreadId: threadId,
+          });
+          try {
+            await forum.post(
+              threadId,
+              `Applied again through ${input.source}:\n${input.content || input.name}`,
+            );
+          } catch (cause) {
+            // A failed delivery must not make its retry look like a duplicate.
+            try {
+              await records.removeOfficerNote(note(threadId));
+            } catch {
+              report({ code: "SUBMISSION_NOTE_CLEANUP_FAILED", threadId });
+            }
+            throw cause;
+          }
           return enriched;
         });
       }
@@ -294,7 +316,9 @@ export function createRecruiting(
       };
       await saving(threadId, async () => {
         await records.write(record);
-        await records.write(note(threadId));
+        await records.write(note(threadId), {
+          candidateThreadId: threadId,
+        });
       });
       return record;
     },

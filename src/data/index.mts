@@ -1,10 +1,12 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   BatchGetCommand,
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
   QueryCommand,
+  TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   authority,
@@ -24,6 +26,8 @@ declare const cursorBrand: unique symbol;
 export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
+type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
+export type WriteCondition = { candidateThreadId: string };
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
   query(
@@ -32,7 +36,8 @@ export type StoragePort = {
     cursor?: QueryCursor,
   ): Promise<{ items: unknown[]; cursor?: QueryCursor }>;
   batch(keys: readonly Key[]): Promise<unknown[]>;
-  put(item: GuildRecord): Promise<void>;
+  put(item: GuildRecord, condition?: WriteCondition): Promise<void>;
+  removeNote?(item: OfficerNote): Promise<void>;
 };
 type Result<Mode extends "user" | "system"> = Mode extends "user"
   ? UserResult<GuildRecord>
@@ -113,7 +118,27 @@ export function createDataAccess(
       query: (partition: string) => query(partition, false),
       lookup: (partition: string) => query(partition, true),
       batch: (keys: readonly Key[]) => read(() => storage.batch(keys)),
-      async write(input: RecordInput): Promise<void> {
+      async removeOfficerNote(input: OfficerNote): Promise<void> {
+        const item = decode(input);
+        if (!item || item.kind !== "officerNote")
+          throw new Error("INVALID_RECORD");
+        const actor = authority(principal);
+        const allowed =
+          actor.mode === "system"
+            ? actor.writableKinds.includes("officerNote")
+            : actor.roles.includes("Officer");
+        if (!allowed) throw new Error("WRITE_DENIED");
+        if (!storage.removeNote) throw new Error("NOTE_REMOVAL_UNAVAILABLE");
+        try {
+          await storage.removeNote(item);
+        } catch {
+          throw new Error("NOTE_REMOVAL_FAILED");
+        }
+      },
+      async write(
+        input: RecordInput,
+        condition?: WriteCondition,
+      ): Promise<void> {
         const actor = authority(principal);
         let raw: RecordInput = input;
         if (input.kind === "fact") {
@@ -136,12 +161,25 @@ export function createDataAccess(
               ? actor.roles.includes("Member") && actor.userId === item.ownerId
               : actor.roles.includes("Officer");
         if (!allowed) throw new Error("WRITE_DENIED");
+        if (
+          item.kind === "officerNote" &&
+          (!condition?.candidateThreadId ||
+            !item.sk.startsWith(`OFFICER_NOTE#${condition.candidateThreadId}#`))
+        )
+          throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
         try {
-          await storage.put(item);
+          await storage.put(item, condition);
         } catch (error) {
           if (
             error instanceof Error &&
-            error.name === "ConditionalCheckFailedException"
+            (error.name === "ConditionalCheckFailedException" ||
+              (error.name === "TransactionCanceledException" &&
+                "CancellationReasons" in error &&
+                Array.isArray(error.CancellationReasons) &&
+                error.CancellationReasons.some(
+                  (reason: { Code?: string }) =>
+                    reason.Code === "ConditionalCheckFailed",
+                )))
           )
             throw new Error("WRITE_CONFLICT");
           throw new Error("DATA_UNAVAILABLE");
@@ -227,7 +265,52 @@ export function createDynamoDataAccess(config: {
       }
       return items;
     },
-    async put(item) {
+    async removeNote(item) {
+      await client.send(
+        new DeleteCommand({
+          TableName: config.tableName,
+          Key: { pk: item.pk, sk: item.sk },
+          ConditionExpression:
+            "attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner)",
+          ExpressionAttributeValues: {
+            ":kind": "officerNote",
+            ":owner": item.ownerId,
+          },
+        }),
+      );
+    },
+    async put(item, condition) {
+      if (item.kind === "officerNote") {
+        if (!condition?.candidateThreadId)
+          throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
+        await client.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                ConditionCheck: {
+                  TableName: config.tableName,
+                  Key: {
+                    pk: `CANDIDATE#${item.ownerId}`,
+                    sk: `CANDIDATE#${condition.candidateThreadId}`,
+                  },
+                  ConditionExpression: "attribute_not_exists(retention)",
+                },
+              },
+              {
+                Put: {
+                  TableName: config.tableName,
+                  Item: {
+                    ...item,
+                    gsi1pk: "OFFICER_NOTE#ALL",
+                    gsi1sk: `${item.pk}#${item.sk}`,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        return;
+      }
       await client.send(
         new PutCommand({
           TableName: config.tableName,
@@ -237,7 +320,10 @@ export function createDynamoDataAccess(config: {
             gsi1sk: `${item.pk}#${item.sk}`,
           },
           ConditionExpression:
-            "attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner)",
+            "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
+            (item.kind === "candidate"
+              ? " AND attribute_not_exists(retention)"
+              : ""),
           ExpressionAttributeValues: {
             ":kind": item.kind,
             ":owner": item.ownerId,
