@@ -43,7 +43,7 @@ Prior art reused from the operator's Palworld and Valheim server bot: Discord in
 
 - [Guild OS changes its saved-data shape or stops updating] → Pin the addon version the reader was built against, fail loudly on unknown shapes, fork when needed.
 - [Guild OS records less inside raid instances than claimed] → First raid week check; fallback is raid voice presence for attendance and officer entry for loot.
-- [Guilds of WoW changes its alert format] → Alarm on any unparseable alert, keep the raw message in the thread.
+- [Guilds of WoW changes its application shape] → The raw JSON is kept, that record is not mapped, and the run fails so it shows up.
 - [The reader only uploads when the GM logs out or reloads] → Attendance and loot land after the raid, which is when loot history matters; live votes use the last upload plus officer entry.
 - [Spend creep on the assistant] → Cooldown, monthly circuit breaker, billing alarm.
 - [A bad layout apply exposes private channels] → Plan output reviewed by the operator before every apply; permission readback after.
@@ -56,5 +56,4 @@ New stack first. After its alarms are live, retire the Valheim estate in the `pa
 
 - Does Guild OS record attendance and loot inside a Forever raid instance? (first raid week)
 - Gargul or Guild OS master loot in game? (first raid week)
-- Exact shape of a Guilds of WoW application alert. (capture one before building the parser)
 - Which Onboarding and AutoMod settings the Discord API and the MCP server can set, and which need a supervised click.
