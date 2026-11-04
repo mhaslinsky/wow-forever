@@ -319,7 +319,7 @@ export function createConverse(
         ? [
             `Sources: ${evidence
               .slice(0, 3)
-              .map((entry) => `<${entry.url}>`)
+              .map((entry) => `<${new URL(entry.url).href}>`)
               .join(" ")}`,
           ]
         : []),
