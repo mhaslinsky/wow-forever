@@ -1,4 +1,5 @@
 export type RecruitingFailure =
+  | { code: "RECRUITING_DIGEST_FAILED" }
   | {
       code:
         | "CANDIDATE_SAVE_FAILED"
