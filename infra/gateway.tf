@@ -53,6 +53,10 @@ resource "aws_iam_instance_profile" "gateway" {
 }
 data "aws_iam_policy_document" "gateway" {
   statement {
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.mention.arn]
+  }
+  statement {
     actions   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.guild.arn]
   }

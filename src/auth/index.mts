@@ -26,6 +26,23 @@ export function authority(principal: Principal): Readonly<Authority> {
   return value;
 }
 
+export function capToMember(principal: Principal<"user">): Principal<"user"> {
+  const current = authority(principal);
+  if (current.mode !== "user") throw new Error("INVALID_PRINCIPAL");
+  const capped = Object.freeze({}) as Principal<"user">;
+  authorities.set(
+    capped,
+    Object.freeze({
+      ...current,
+      roles: Object.freeze(
+        current.roles.includes("Member") ? ["Member" as const] : [],
+      ),
+      writableKinds: Object.freeze([]),
+    }),
+  );
+  return capped;
+}
+
 export function createPrincipalFactory(config: {
   guildId: string;
   memberRoleId: string;
