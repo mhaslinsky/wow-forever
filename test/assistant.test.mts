@@ -284,6 +284,34 @@ test("Officer Converse request contains only selected own-roster fields (C1)", a
   );
   assert.equal(state.requests.length, 1);
 });
+test("answers cap evidence at three links without previews", async () => {
+  const state = setup();
+  state.output("Answer");
+  const records = await state.data
+    .forUser(actor("member"))
+    .get(recordKey("member", "asker", "guild"));
+  const answer = await state.converse(
+    {
+      actor: actor("member"),
+      records,
+      question: "Question",
+      guildId: "guild",
+      evidence: {
+        status: "found",
+        results: Array.from({ length: 5 }, (_, index) => ({
+          url: `https://example.com/${index}`,
+          title: "Source",
+          excerpts: ["Evidence"],
+        })),
+      },
+    },
+    signal,
+  );
+  assert.equal(
+    answer,
+    "Answer\nSources: <https://example.com/0> <https://example.com/1> <https://example.com/2>",
+  );
+});
 test("replies omit the persona header and warn only for digits without search results", async () => {
   for (const output of ["Hello!", "The value is 42."]) {
     const state = setup();
@@ -360,7 +388,7 @@ test("game facts route to web with a public query; roster routes to guild withou
     signal,
   );
   assert.equal(answer.type, 4);
-  if (answer.type === 4) assert.equal(answer.data.flags, 64);
+  if (answer.type === 4) assert.equal(answer.data.flags, 64 | 4);
   assert.deepEqual(state.searches, [
     {
       search_queries: ["WoW Mage release date"],

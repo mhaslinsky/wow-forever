@@ -433,13 +433,19 @@ test("Discord client crosses real HTTP with cancellation and safe follow-ups", a
     const client = discordClient(async (url, options) => {
       assert.match(String(url), /\?wait=true$/);
       const body = JSON.parse(String(options?.body));
-      assert.equal(body.flags, 64);
+      assert.equal(body.flags, 64 | 4);
       assert.deepEqual(body.allowed_mentions.parse, []);
       return fetch(`http://127.0.0.1:${address.port}`, options);
     });
     const signal = new AbortController().signal;
     assert.equal(
-      await client(interaction(), "POST", "Completed", signal, true),
+      await client(
+        { ...interaction(), data: { name: "ask" } },
+        "POST",
+        "Completed",
+        signal,
+        true,
+      ),
       200,
     );
   } finally {
