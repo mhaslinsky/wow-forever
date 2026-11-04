@@ -8,6 +8,7 @@ import {
 
 export const KIND_POLICY = Object.freeze({
   candidate: "Officer",
+  classNews: "Member",
   officerNote: "Officer",
   lootDecision: "Officer",
   member: "Member",
@@ -23,6 +24,7 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  classNews: { prefix: "CLASS_NEWS", fields: ["guid", "className", "status"] },
   candidate: { prefix: "CANDIDATE", fields: ["name"] },
   officerNote: { prefix: "OFFICER_NOTE", fields: ["text"] },
   member: { prefix: "MEMBER", fields: ["name"] },

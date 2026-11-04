@@ -4,6 +4,9 @@ import { createRecruitingRoutes } from "../recruiting/interactions.mts";
 import { recruitingContextForInteraction } from "../recruiting/runtime.mts";
 import { createRegisterRoutes } from "../roster/interactions.mts";
 
+import { createWishlistRoutes } from "../wishlist/interactions.mts";
+import { wishlistContextForInteraction } from "../wishlist/runtime.mts";
+
 export interface Clock {
   now(): number;
   schedule(milliseconds: number, callback: () => void): () => void;
@@ -96,6 +99,7 @@ export type Route = RouteDefinition &
     | { mode: "slow"; cooldownSeconds?: number }
   );
 export const registry: readonly Route[] = [
+  ...createWishlistRoutes(wishlistContextForInteraction),
   ...createRecruitingRoutes(recruitingContextForInteraction),
   ...createRegisterRoutes(recruitingContextForInteraction),
   ...createFollowUpRoutes(recruitingContextForInteraction),
