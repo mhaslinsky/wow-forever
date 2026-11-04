@@ -4,6 +4,7 @@ import {
 } from "@aws-sdk/client-cloudwatch";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Client, GatewayIntentBits } from "discord.js";
+import { createDynamoDataAccess } from "../data/index.mts";
 import {
   attachGateway,
   handlers,
@@ -12,6 +13,7 @@ import {
   startupFailure,
   tokenValue,
 } from "./client.mts";
+import { createVoicePresenceHandler } from "./voice-presence.mts";
 
 const region = "us-east-1";
 const ssm = new SSMClient({ region });
@@ -19,6 +21,8 @@ const cloudwatch = new CloudWatchClient({ region });
 const log = (record: Readonly<Record<string, unknown>>) =>
   console.log(JSON.stringify(record));
 async function main() {
+  const guildId = process.env.GUILD_ID?.trim();
+  if (!guildId) throw new StartupError("GUILD_ID_REQUIRED");
   const result = await ssm
     .send(
       new GetParameterCommand({
@@ -41,9 +45,21 @@ async function main() {
       GatewayIntentBits.GuildVoiceStates,
     ],
   });
+  const voicePresence = createVoicePresenceHandler(
+    createDynamoDataAccess({ tableName: "wow-forever", region }),
+    guildId,
+  );
   const heartbeat = attachGateway(
     client,
-    handlers,
+    {
+      ...handlers,
+      voiceStateUpdate: voicePresence,
+      clientReady: async (readyClient) => {
+        const guild = readyClient.guilds.cache.get(guildId);
+        if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
+        await voicePresence.ready(guild.voiceStates.cache.values());
+      },
+    },
     async (name) => {
       await cloudwatch.send(
         new PutMetricDataCommand({

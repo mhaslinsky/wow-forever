@@ -13,6 +13,7 @@ export const principals = createPrincipalFactory({
   guildId: "guild",
   memberRoleId: "member-role",
   officerRoleId: "officer-role",
+  officerRoleIds: ["gm-role"],
   jobs: { digest: ["raid"], fact: ["fact"] },
 });
 export const principal = (roles: string[], userId = "asker") =>
@@ -81,6 +82,9 @@ test("member candidate reads equal missing; officer receives candidate; unknown 
     [],
   );
   assert.deepEqual(await data.forUser(officer).get(candidate), [candidate]);
+  assert.deepEqual(await data.forUser(principal(["gm-role"])).get(candidate), [
+    candidate,
+  ]);
   assert.deepEqual(
     await data.forUser(officer).batch([candidate, { pk: "bad", sk: "bad" }]),
     [candidate],

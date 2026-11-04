@@ -187,6 +187,7 @@ export function createDynamoDataAccess(config: {
         new QueryCommand({
           TableName: config.tableName,
           ...(index ? { IndexName: "gsi1" } : {}),
+          ConsistentRead: !index,
           KeyConditionExpression: "#partition = :partition",
           ExpressionAttributeNames: { "#partition": field },
           ExpressionAttributeValues: { ":partition": partition },
