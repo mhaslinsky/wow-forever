@@ -28,14 +28,14 @@ export function createOverdueDigest(ports: DigestPorts) {
         Date.parse(record.recruiting.nextActionAt) < now,
     );
     if (!overdue.length) {
-      await ports.post("Nothing is overdue.");
+      await ports.post("Nothing's overdue today.");
       return { overdue: 0 };
     }
     const lines = overdue.map((record) => {
       if (record.kind !== "candidate" || !record.recruiting)
         throw new Error("INVALID_CANDIDATE");
       const state = record.recruiting;
-      const owner = state.owner ? `<@${state.owner}>` : "unassigned";
+      const owner = state.owner ? `<@${state.owner}>` : "no owner";
       return `<#${state.threadId}>: ${owner}, due <t:${Math.floor(Date.parse(state.nextActionAt as string) / 1000)}:D>`;
     });
     let content = "Overdue candidates";
