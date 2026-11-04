@@ -77,13 +77,15 @@ export type GuildRecord = {
             discordUserId?: string;
             characters?: CharacterDeclaration[];
           }
-        : Current extends "member"
-          ? {
-              roster?: (CharacterDeclaration & { confirmed: boolean })[];
-              raidTeam?: string;
-              active?: boolean;
-            }
-          : Record<never, never>);
+        : Current extends "gowApplication"
+          ? { mappedThreadId?: string }
+          : Current extends "member"
+            ? {
+                roster?: (CharacterDeclaration & { confirmed: boolean })[];
+                raidTeam?: string;
+                active?: boolean;
+              }
+            : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -122,6 +124,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "gowApplication" && item.mappedThreadId !== undefined) {
+    if (typeof item.mappedThreadId !== "string" || !item.mappedThreadId) return;
+    output.mappedThreadId = item.mappedThreadId;
   }
   if (kind === "voicePresence" && item.leftAt !== undefined) {
     if (typeof item.leftAt !== "string" || !item.leftAt) return;
