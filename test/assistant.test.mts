@@ -5,6 +5,7 @@ import {
   COOLDOWN,
   createAssistant,
   createConverse,
+  createRouting,
   createSearch,
   NOT_VERIFIED,
   REFUSAL,
@@ -20,7 +21,7 @@ import {
 } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
-import { clock, type Interaction } from "../src/interactions/core.mts";
+import { clock } from "../src/interactions/core.mts";
 import { assistantClaim } from "../src/interactions/index.mts";
 
 const signal = new AbortController().signal;
@@ -52,7 +53,14 @@ const member = {
     },
   ],
 } as const;
-function setup() {
+function setup(
+  routing = JSON.stringify({
+    needsGuild: true,
+    needsWeb: false,
+    searchQuery: "",
+  }),
+) {
+  const routingRequests: ConverseCommandInput[] = [];
   const requests: ConverseCommandInput[] = [];
   const searches: unknown[] = [];
   let stored: unknown = member;
@@ -65,7 +73,26 @@ function setup() {
         assert.deepEqual(key, recordKey("member", "asker", "guild"));
         return stored;
       },
-      query: async () => assert.fail("Unexpected query"),
+      query: async (partition) => {
+        assert.ok(["MEMBER#ALL", "CHARACTER#ALL"].includes(partition));
+        return {
+          items:
+            partition === "MEMBER#ALL"
+              ? [
+                  member,
+                  {
+                    ...member,
+                    ...recordKey("member", "other", "guild"),
+                    ownerId: "other",
+                    name: "Other member sentinel",
+                    roster: [
+                      { ...member.roster[0], name: "Other character sentinel" },
+                    ],
+                  },
+                ]
+              : [],
+        };
+      },
       batch: async () => assert.fail("Unexpected batch"),
       put: async () => assert.fail("Unexpected write"),
     },
@@ -86,6 +113,16 @@ function setup() {
         ],
       });
     },
+  });
+  const route = createRouting(async (command) => {
+    routingRequests.push(command.input);
+    return {
+      $metadata: {},
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      metrics: { latencyMs: 0 },
+      stopReason: "end_turn",
+      output: { message: { role: "assistant", content: [{ text: routing }] } },
+    };
   });
   const converse = createConverse(async (command) => {
     requests.push(command.input);
@@ -118,6 +155,7 @@ function setup() {
   );
   return {
     requests,
+    routingRequests,
     searches,
     data,
     converse,
@@ -135,6 +173,8 @@ function setup() {
       guildId: "guild",
       search,
       converse,
+      route,
+      privateTerms: async () => ["Server sentinel", "Extra private sentinel"],
       claim: (userId, abortSignal) => claim("guild", userId, abortSignal),
     }),
   };
@@ -153,20 +193,14 @@ test("non-member refuses without search or inference; Member, Officer and GM pas
     const current = await assistantPrincipal("guild", "asker", async (path) =>
       path.endsWith("/roles") ? roles : member,
     );
-    assert.equal(
-      await setupState.ask(current, "Question", true, signal),
-      REFUSAL,
-    );
+    assert.equal(await setupState.ask(current, "Question", signal), REFUSAL);
   }
   await assert.rejects(
     assistantPrincipal("guild", "asker", async () => []),
     /ROLE_MISSING_OR_AMBIGUOUS/,
   );
   for (const principal of [actor("visitor"), actor("member", "elsewhere")]) {
-    assert.equal(
-      await setupState.ask(principal, "Question", true, signal),
-      REFUSAL,
-    );
+    assert.equal(await setupState.ask(principal, "Question", signal), REFUSAL);
   }
   assert.equal(setupState.requests.length, 0);
   assert.equal(setupState.searches.length, 0);
@@ -178,7 +212,7 @@ test("non-member refuses without search or inference; Member, Officer and GM pas
         : { user: { id: "asker" }, roles: [role] },
     );
     assert.match(
-      await permitted.ask(current, "My roster?", false, signal),
+      await permitted.ask(current, "My roster?", signal),
       /Character sentinel/,
     );
     assert.equal(permitted.requests.length, 1);
@@ -195,7 +229,7 @@ test("Officer Converse request contains only selected own-roster fields (C1)", a
       system: "SYSTEM_SENTINEL",
     })),
   });
-  await state.ask(actor("officer"), "My roster?", false, signal);
+  await state.ask(actor("officer"), "My roster?", signal);
   const outgoing = JSON.stringify(state.requests[0]);
   assert.match(outgoing, /Character sentinel/);
   assert.doesNotMatch(
@@ -254,7 +288,7 @@ test("replies omit the persona header and warn only for digits without search re
   for (const output of ["Hello!", "The value is 42."]) {
     const state = setup();
     state.output(output);
-    const answer = await state.ask(actor("member"), "Question", false, signal);
+    const answer = await state.ask(actor("member"), "Question", signal);
     assert.equal(
       answer,
       output.includes("42") ? `${output}\n${NOT_VERIFIED}` : output,
@@ -271,9 +305,9 @@ test("unverifiable game numbers get a code-appended disclosure; missing or malfo
     state.stored(record);
     state.output("The value is 42.");
     assert.ok(
-      (
-        await state.ask(actor("member"), "What is the value?", false, signal)
-      ).endsWith(NOT_VERIFIED),
+      (await state.ask(actor("member"), "What is the value?", signal)).endsWith(
+        `${NOT_VERIFIED}`,
+      ),
     );
     assert.match(
       String(state.requests[0].system?.[0].text),
@@ -282,48 +316,128 @@ test("unverifiable game numbers get a code-appended disclosure; missing or malfo
   }
   const state = setup();
   state.output("oversize ".repeat(300));
-  const response = await state.ask(actor("member"), "Question", false, signal);
+  const response = await state.ask(actor("member"), "Question", signal);
   assert.ok(response.length < 1900);
   assert.ok(!response.includes(NOT_VERIFIED));
   state.advance(60000);
   state.output("");
   await assert.rejects(
-    state.ask(actor("member"), "Question", false, signal),
+    state.ask(actor("member"), "Question", signal),
     /ASSISTANT_GENERATION_FAILED/,
   );
-  assert.equal(
-    await state.ask(actor("member"), "Question", false, signal),
-    COOLDOWN,
-  );
+  assert.equal(await state.ask(actor("member"), "Question", signal), COOLDOWN);
 });
-test("web defaults false with zero Parallel requests; opt-in sends only question text", async () => {
-  const state = setup();
-  const route = createAskRoutes((_interaction, question, web, abortSignal) =>
-    state.ask(actor("member"), question, web, abortSignal),
+test("game facts route to web with a public query; roster routes to guild without search", async () => {
+  const state = setup(
+    JSON.stringify({
+      needsGuild: false,
+      needsWeb: true,
+      searchQuery: "WoW Mage release date",
+    }),
+  );
+  const route = createAskRoutes((_interaction, question, abortSignal) =>
+    state.ask(actor("member"), question, abortSignal),
   )[0];
-  const interaction: Interaction = {
-    id: "interaction",
-    type: 2,
-    application_id: "application",
-    token: "synthetic",
-    data: { options: [{ name: "question", value: "Current patch?" }] },
-  };
-  const answer = await route.handler(interaction, signal);
-  assert.equal(route.visibility, "ephemeral");
-  assert.equal(route.mode, "slow");
-  assert.equal(state.searches.length, 0);
+  assert.deepEqual(
+    route.options?.map((option) => (option as { name: string }).name),
+    ["question"],
+  );
+  const answer = await route.handler(
+    {
+      id: "interaction",
+      type: 2,
+      application_id: "application",
+      token: "synthetic",
+      data: {
+        options: [
+          {
+            name: "question",
+            value: "Character sentinel asks: Mage release date?",
+          },
+        ],
+      },
+    },
+    signal,
+  );
   assert.equal(answer.type, 4);
   if (answer.type === 4) assert.equal(answer.data.flags, 64);
-  state.advance(60000);
-  await state.ask(actor("member"), "<@123> Current patch?", true, signal);
   assert.deepEqual(state.searches, [
     {
-      search_queries: ["Current patch?"],
+      search_queries: ["WoW Mage release date"],
       mode: "fast",
       max_chars_total: 12000,
     },
   ]);
-  assert.doesNotMatch(JSON.stringify(state.searches), /sentinel/);
+  assert.doesNotMatch(JSON.stringify(state.searches), /sentinel/i);
+  assert.doesNotMatch(
+    JSON.stringify(state.requests[0].messages),
+    /Your roster record|Fire Mage/,
+  );
+  assert.equal(state.routingRequests.length, 1);
+  const guild = setup();
+  await guild.ask(actor("member"), "My roster?", signal);
+  assert.equal(guild.searches.length, 0);
+  assert.match(
+    JSON.stringify(guild.requests[0].messages),
+    /Character sentinel/,
+  );
+});
+test("private or invalid routed queries never reach Parallel", async () => {
+  for (const searchQuery of [
+    "Roster sentinel Mage",
+    "character SENTINEL Mage",
+    "<@123> Mage",
+    "123456789012345678 Mage",
+    "Mage ".repeat(41),
+    "Server sentinel Mage",
+    "Extra private sentinel Mage",
+    ...[
+      "officer",
+      "officers",
+      "guild bank",
+      "kicked",
+      "drama",
+      "loot council",
+      "recruit",
+      "applicant",
+      "trial",
+      "roster",
+      "attendance",
+    ].map((term) => `Mage ${term.toUpperCase()}`),
+  ]) {
+    const state = setup(
+      JSON.stringify({ needsGuild: true, needsWeb: true, searchQuery }),
+    );
+    await state.ask(actor("member"), "Mage changes for my roster?", signal);
+    assert.equal(state.searches.length, 0, searchQuery);
+    assert.equal(state.requests.length, 1);
+  }
+  for (const routing of [
+    "not JSON",
+    "null",
+    '{"needsGuild":true,"needsWeb":"yes","searchQuery":"Mage"}',
+    '{"needsGuild":true,"needsWeb":false,"searchQuery":"Mage"}',
+    '{"needsGuild":true,"needsWeb":true,"searchQuery":"Mage","extra":true}',
+  ]) {
+    const state = setup(routing);
+    await state.ask(actor("member"), "My roster?", signal);
+    assert.equal(state.searches.length, 0, routing);
+  }
+});
+test("another member's name is blocked before Parallel and roster names stay local", async () => {
+  const state = setup(
+    JSON.stringify({
+      needsGuild: false,
+      needsWeb: true,
+      searchQuery: "Other member sentinel Mage",
+    }),
+  );
+  await state.ask(actor("member"), "Mage changes?", signal);
+  assert.equal(state.searches.length, 0);
+  assert.doesNotMatch(
+    JSON.stringify([...state.requests, ...state.routingRequests]),
+    /Other member sentinel|Other character sentinel/,
+  );
 });
 test("search failures and empty results disclose unverified numbers; deadline covers body parsing", async () => {
   for (const http of [
@@ -352,6 +466,7 @@ test("search failures and empty results disclose unverified numbers; deadline co
       signal,
     );
     assert.match(answer, /Heads up, I couldn't verify any game numbers here\./);
+    assert.ok(!answer.includes("Turn on web for a checked answer."));
     if (evidence.status === "unavailable")
       assert.ok(answer.includes(SEARCH_UNAVAILABLE));
   }
@@ -388,18 +503,15 @@ test("search failures and empty results disclose unverified numbers; deadline co
 test("cooldown admits one concurrent question and permits the exact expiry boundary", async () => {
   const state = setup();
   const answers = await Promise.all([
-    state.ask(actor("member"), "Question", false, signal),
-    state.ask(actor("member"), "Question", false, signal),
+    state.ask(actor("member"), "Question", signal),
+    state.ask(actor("member"), "Question", signal),
   ]);
   assert.equal(answers.filter((answer) => answer === COOLDOWN).length, 1);
   assert.equal(state.requests.length, 1);
   state.advance(59999);
-  assert.equal(
-    await state.ask(actor("member"), "Question", false, signal),
-    COOLDOWN,
-  );
+  assert.equal(await state.ask(actor("member"), "Question", signal), COOLDOWN);
   state.advance(1);
-  await state.ask(actor("member"), "Question", false, signal);
+  await state.ask(actor("member"), "Question", signal);
   assert.equal(state.requests.length, 2);
   const broken = assistantClaim(
     "claims",

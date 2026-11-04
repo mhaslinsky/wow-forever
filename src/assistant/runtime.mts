@@ -4,6 +4,7 @@ import { clock, type Interaction } from "../interactions/core.mts";
 import {
   createAssistant,
   createConverse,
+  createRouting,
   createSearch,
   REFUSAL,
 } from "./core.mts";
@@ -56,7 +57,6 @@ export async function assistantPrincipal(
 export async function assistantAnswer(
   interaction: Interaction,
   question: string,
-  web: boolean,
   signal: AbortSignal,
 ) {
   const guildId = process.env.GUILD_ID;
@@ -92,5 +92,24 @@ export async function assistantAnswer(
       http: fetch,
     }),
     converse: createConverse(),
-  })(actor, question, web, signal);
+    route: createRouting(),
+    privateTerms: async () => {
+      const guild = await get(`/guilds/${encodeURIComponent(guildId)}`);
+      if (
+        !guild ||
+        typeof guild !== "object" ||
+        !("name" in guild) ||
+        typeof guild.name !== "string" ||
+        !guild.name.trim()
+      )
+        throw new Error("ASSISTANT_GUILD_NAME_UNAVAILABLE");
+      return [
+        guild.name,
+        ...(process.env.GUARD_EXTRA_TERMS ?? "")
+          .split(",")
+          .map((term) => term.trim())
+          .filter(Boolean),
+      ];
+    },
+  })(actor, question, signal);
 }
