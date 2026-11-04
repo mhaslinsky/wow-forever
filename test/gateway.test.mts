@@ -91,12 +91,19 @@ test("gateway bundle fails closed outside the repository without credentials", (
   assert.equal(result.status, 1);
   assert.match(result.stdout, /gateway_start_failed/);
 });
-test("silence alarm requires ten missing minute periods", () => {
+test("gateway silence and mention errors notify through the configured alarms", () => {
   const alarm = parsed.resource.aws_cloudwatch_metric_alarm.gateway_silence[0];
   const expected = JSON.parse(
     `{"namespace":"wow-forever/gateway","metric_name":"Heartbeat","dimensions":{"InstanceId":"\${aws_instance.gateway.id}"},"period":60,"statistic":"Sum","threshold":1,"comparison_operator":"LessThanThreshold","treat_missing_data":"breaching","evaluation_periods":10,"datapoints_to_alarm":10}`,
   );
   for (const key of Object.keys(expected)) equal(alarm[key], expected[key]);
+  equal(parsed.resource.aws_cloudwatch_metric_alarm.mention_errors?.[0], {
+    ...parsed.resource.aws_cloudwatch_metric_alarm.interactions_errors[0],
+    alarm_name: "wow-forever-assistant-mention-errors",
+    dimensions: {
+      FunctionName: `\${aws_lambda_function.mention.function_name}`,
+    },
+  });
 });
 test("gateway IAM scope limits token reads, decryption and metric writes", () => {
   const role = parsed.resource.aws_iam_role.gateway[0];

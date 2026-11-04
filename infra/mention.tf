@@ -91,3 +91,19 @@ resource "aws_lambda_function_event_invoke_config" "mention" {
   maximum_retry_attempts       = 0
   maximum_event_age_in_seconds = 600
 }
+
+resource "aws_cloudwatch_metric_alarm" "mention_errors" {
+  alarm_name          = "wow-forever-assistant-mention-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    FunctionName = aws_lambda_function.mention.function_name
+  }
+  alarm_actions = [aws_sns_topic.alerts.arn]
+}
