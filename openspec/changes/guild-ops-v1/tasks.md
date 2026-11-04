@@ -20,21 +20,25 @@
   Split into four PRs: core schema and compilation, PR #6 (PER-299, merged); planner and adoption, PR #9 (PER-332, merged); readback (PER-333, PR #12); executor, state, transport and CLI (PER-331, PRs #15, #17, #18), with live fixes #21, #22 and #24. Live test-guild gate passed Nov 3 on 0045e63.
 - [x] 2.3 Initial server layout file (categories, channels, roles, role order, overwrites) applied after the operator reviews the plan, readback clean (depends on: 2.1, 2.2) (complexity: standard) (gate: none)
   Applied Nov 3 to the live server: the existing server adopted as is, plus a Forever category and a Raider role. Readback clean after PER-346 (PR #26). The layout and state files stay on the operator's jetragon, not in this repo, because the ignore list names the server's existing channels.
-- [ ] 2.4 OPS (no PR): AutoMod rules, Onboarding questions and ping roles, Raid-Helper and anti-raid bot installs, Forever news webhooks, pinned charter and loot policy; Done when a test account onboards and sees only public channels (depends on: 2.3) (complexity: standard) (gate: none)
+- [x] 2.4 OPS (no PR): AutoMod rules, Onboarding questions and ping roles, Raid-Helper and anti-raid bot installs, Forever news webhooks, pinned charter and loot policy; Done when a test account onboards and sees only public channels (depends on: 2.3) (complexity: standard) (gate: none)
+  Done Nov 3: AutoMod (slurs, spam, mention raid protection), onboarding with an opt-in Forever pings role, Raid-Helper installed, Wowhead webhook into forever-news, placeholder charter pinned. A test alt onboarded and saw only public channels plus forever-news and apply-here.
 
 ## 3. Recruiting
 
 - [x] 3.1 Recruiting core: candidate records, one thread per candidate in the officer forum channel, stage tags synced both ways through the gateway client (depends on: 1.4, 1.5, 2.3) (complexity: standard) (gate: none)
-  Done in PR #31 (PER-311), deployed Nov 3. Live end-to-end check runs with the first candidate source (3.2 or 3.3).
-- [ ] 3.2 `/apply` modal for people in the server and officer `/lead` command (depends on: 1.3, 3.1) (complexity: standard) (gate: none)
+  Done in PR #31 (PER-311), deployed Nov 3. Live end-to-end check passed Nov 3: /apply created the thread and an officer tag change moved the stored stage.
+- [x] 3.2 `/apply` modal for people in the server and officer `/lead` command (depends on: 1.3, 3.1) (complexity: standard) (gate: none)
+  Done in PR #35 (PER-313), with the class and spec picker from PR #36 (PER-347). Live /apply on Nov 3 created a thread tagged Applied and Apply form.
 - [ ] 3.3 Guilds of WoW intake: capture a real application alert, parse alerts in the private intake channel into candidates, alarm and keep the raw message when parsing fails (depends on: 3.1) (complexity: standard) (gate: none)
 - [ ] 3.4 Candidate deduplication by Discord account or character name, merging into the existing thread (depends on: 3.1) (complexity: standard) (gate: none)
-- [ ] 3.5 Owner and next-action date per candidate, daily overdue digest on a schedule (depends on: 3.1) (complexity: standard) (gate: none)
+- [x] 3.5 Owner and next-action date per candidate, daily overdue digest on a schedule (depends on: 3.1) (complexity: standard) (gate: none)
+  Done in PR #34 (PER-316). Daily digest at 10 AM ET deployed Nov 3.
 - [ ] 3.6 Retention purge of notes for Declined and Withdrawn candidates (depends on: 3.1) (complexity: standard) (gate: none)
 
 ## 4. Roster
 
-- [ ] 4.1 Roster model, `/register` for mains and alts, Accepted stage grants Member and creates the roster entry (depends on: 1.3, 1.4, 3.1) (complexity: standard) (gate: none)
+- [x] 4.1 Roster model, `/register` for mains and alts, Accepted stage grants Member and creates the roster entry (depends on: 1.3, 1.4, 3.1) (complexity: standard) (gate: none)
+  Done in PR #33 (PER-318). Accepted grants Member; candidates without a Discord account alarm for a manual grant.
 - [ ] 4.2 Departure flags from member-leave events and two-snapshot absence, with Confirm and Keep buttons for officers (depends on: 4.1, 5.3) (complexity: standard) (gate: none)
 - [ ] 4.3 Raid targets per team, pinned needs board, `/needs message` recruiting text (depends on: 4.1) (complexity: standard) (gate: none)
 
