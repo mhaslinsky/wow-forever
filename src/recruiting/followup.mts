@@ -46,7 +46,7 @@ export function createFollowUpRoutes(
         if (!authority(actor).roles.includes("Officer"))
           return message("Officers only");
         const options = interaction.data?.options;
-        if (!Array.isArray(options)) return message("Choose a candidate");
+        if (!Array.isArray(options)) return message("Pick a candidate thread");
         const values = new Map(
           options.map((option: { name: string; value: unknown }) => [
             option.name,
@@ -66,9 +66,9 @@ export function createFollowUpRoutes(
               days < 0 ||
               days > 365))
         )
-          return message("Invalid follow-up");
+          return message("Something looked off, try again");
         if (owner === undefined && days === undefined)
-          return message("Choose an owner or days");
+          return message("Set an owner, days or both");
         await core.setFollowUp(threadId, actor, {
           ...(typeof owner === "string" ? { owner } : {}),
           ...(typeof days === "number"
