@@ -17,7 +17,8 @@
 - [x] 2.1 OPS (no PR): create the guild bot and operator-identity Discord applications, enable required intents, store the bot token in SSM and the operator token on the Mac, install the pinned Discord MCP restricted to the guild after reading its source; Done when both apps exist and the MCP lists the guild's channels (depends on: 1.2) (complexity: standard) (gate: none)
 - [x] 2.2 Layout tool: layout file schema plus plan, apply and permission readback commands, apply idempotent (depends on: 1.1) (complexity: judgment) (gate: none)
   Split into four PRs: core schema and compilation, PR #6 (PER-299, merged); planner and adoption, PR #9 (PER-332, merged); readback (PER-333, PR #12); executor, state, transport and CLI (PER-331, PRs #15, #17, #18), with live fixes #21, #22 and #24. Live test-guild gate passed Nov 3 on 0045e63.
-- [ ] 2.3 Initial server layout file (categories, channels, roles, role order, overwrites) applied after the operator reviews the plan, readback clean (depends on: 2.1, 2.2) (complexity: standard) (gate: none)
+- [x] 2.3 Initial server layout file (categories, channels, roles, role order, overwrites) applied after the operator reviews the plan, readback clean (depends on: 2.1, 2.2) (complexity: standard) (gate: none)
+  Applied Nov 3 to the live server: the existing server adopted as is, plus a Forever category and a Raider role. Readback clean after PER-346 (PR #26). The layout and state files stay on the operator's jetragon, not in this repo, because the ignore list names the server's existing channels.
 - [ ] 2.4 OPS (no PR): AutoMod rules, Onboarding questions and ping roles, Raid-Helper and anti-raid bot installs, Forever news webhooks, pinned charter and loot policy; Done when a test account onboards and sees only public channels (depends on: 2.3) (complexity: standard) (gate: none)
 
 ## 3. Recruiting
