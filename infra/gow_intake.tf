@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "gow_intake" {
   }
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = ["arn:aws:ssm:us-east-1:${var.aws_account_id}:parameter/wow-forever/guildsofwow_api_key"]
+    resources = [aws_ssm_parameter.external_api_keys["guildsofwow_api_key"].arn]
   }
   statement {
     actions   = ["kms:Decrypt"]
