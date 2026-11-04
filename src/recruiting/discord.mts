@@ -76,6 +76,13 @@ export function discordForum(forum: ForumChannel): ForumPort {
       });
       return thread.id;
     },
+    async post(threadId, content) {
+      const thread = await forum.threads.fetch(threadId, { force: true });
+      if (!thread || thread.parentId !== forum.id)
+        throw new Error("CANDIDATE_THREAD_MISSING");
+      if (thread.archived) await thread.setArchived(false);
+      await thread.send({ content, allowedMentions: { parse: [] } });
+    },
     async tagsFor(threadId) {
       const thread = await forum.threads.fetch(threadId, { force: true });
       if (!thread || thread.parentId !== forum.id)
