@@ -25,10 +25,7 @@ declare const cursorBrand: unique symbol;
 export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
-export type WriteCondition = {
-  recruitingChangedAt: string | undefined;
-  candidateThreadId?: string;
-};
+export type WriteCondition = { candidateThreadId: string };
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
   query(
@@ -145,16 +142,8 @@ export function createDataAccess(
               : actor.roles.includes("Officer");
         if (!allowed) throw new Error("WRITE_DENIED");
         if (
-          condition &&
-          (!["candidate", "officerNote"].includes(item.kind) ||
-            (condition.recruitingChangedAt !== undefined &&
-              !Number.isFinite(Date.parse(condition.recruitingChangedAt))))
-        )
-          throw new Error("INVALID_WRITE_CONDITION");
-        if (
           item.kind === "officerNote" &&
           (!condition?.candidateThreadId ||
-            !condition.recruitingChangedAt ||
             !item.sk.startsWith(`OFFICER_NOTE#${condition.candidateThreadId}#`))
         )
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
@@ -258,7 +247,7 @@ export function createDynamoDataAccess(config: {
     },
     async put(item, condition) {
       if (item.kind === "officerNote") {
-        if (!condition?.candidateThreadId || !condition.recruitingChangedAt)
+        if (!condition?.candidateThreadId)
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
         await client.send(
           new TransactWriteCommand({
@@ -270,11 +259,7 @@ export function createDynamoDataAccess(config: {
                     pk: `CANDIDATE#${item.ownerId}`,
                     sk: `CANDIDATE#${condition.candidateThreadId}`,
                   },
-                  ConditionExpression:
-                    "attribute_not_exists(retention) AND recruiting.changedAt = :changedAt",
-                  ExpressionAttributeValues: {
-                    ":changedAt": condition.recruitingChangedAt,
-                  },
+                  ConditionExpression: "attribute_not_exists(retention)",
                 },
               },
               {
@@ -304,19 +289,10 @@ export function createDynamoDataAccess(config: {
             "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
             (item.kind === "candidate"
               ? " AND attribute_not_exists(retention)"
-              : "") +
-            (condition
-              ? " AND " +
-                (condition.recruitingChangedAt === undefined
-                  ? "attribute_not_exists(recruiting.changedAt)"
-                  : "recruiting.changedAt = :changedAt")
               : ""),
           ExpressionAttributeValues: {
             ":kind": item.kind,
             ":owner": item.ownerId,
-            ...(condition?.recruitingChangedAt !== undefined
-              ? { ":changedAt": condition.recruitingChangedAt }
-              : {}),
           },
         }),
       );

@@ -137,13 +137,17 @@ test("in-flight acceptance cannot overwrite a retention redaction", async (conte
     DynamoDBDocumentClient.prototype,
     "send",
     async (command: unknown) => {
-      if (command instanceof GetCommand) return { Item: stored };
+      if (command instanceof GetCommand) {
+        const snapshot = stored;
+        stored = redacted;
+        return { Item: snapshot };
+      }
       if (command instanceof PutCommand) {
-        const expected =
-          command.input.ExpressionAttributeValues?.[":changedAt"];
         if (
-          command.input.ConditionExpression?.includes("recruiting.changedAt") &&
-          stored.recruiting?.changedAt !== expected
+          command.input.ConditionExpression?.includes(
+            "attribute_not_exists(retention)",
+          ) &&
+          stored.retention
         ) {
           throw Object.assign(new Error("stale candidate"), {
             name: "ConditionalCheckFailedException",
@@ -169,7 +173,7 @@ test("in-flight acceptance cannot overwrite a retention redaction", async (conte
     },
     () => {},
     async () => {
-      stored = redacted;
+      assert.fail("Fenced acceptance granted membership");
     },
   );
   await assert.rejects(
@@ -192,6 +196,7 @@ function intakeFixture(context: TestContext, reapply = false) {
   let stored = reapply ? redacted : original;
   const notes: unknown[] = [];
   let created = 0;
+  let posted = 0;
   context.mock.method(
     DynamoDBDocumentClient.prototype,
     "send",
@@ -230,13 +235,21 @@ function intakeFixture(context: TestContext, reapply = false) {
         created++;
         return "fresh";
       },
-      post: async () => {},
+      post: async () => {
+        posted++;
+      },
       tagsFor: async () => [],
       setTags: async () => {},
     },
     () => {},
   );
-  return { core, notes, created: () => created, redacted };
+  return {
+    core,
+    notes,
+    created: () => created,
+    posted: () => posted,
+    redacted,
+  };
 }
 
 test("repeat-intake note racing a purge is rejected and leaves no note", async (context) => {
@@ -250,6 +263,7 @@ test("repeat-intake note racing a purge is rejected and leaves no note", async (
     /CANDIDATE_WRITE_CONFLICT:Declined/,
   );
   assert.deepEqual(setup.notes, []);
+  assert.equal(setup.posted(), 0);
 });
 
 test("reapplying after a purge creates a fresh candidate and thread", async (context) => {
@@ -262,4 +276,65 @@ test("reapplying after a purge creates a fresh candidate and thread", async (con
   assert.equal(record.recruiting?.threadId, "fresh");
   assert.equal(setup.created(), 1);
   assert.equal(setup.redacted.retention?.outcome, "Declined");
+});
+
+test("Applied then Trial both succeed and both audit notes exist", async (context) => {
+  context.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2030-02-01T00:00:00Z"),
+  });
+  let stored = candidate("New");
+  const notes: string[] = [];
+  let core: ReturnType<typeof createRecruiting>;
+  context.mock.method(
+    DynamoDBDocumentClient.prototype,
+    "send",
+    async (command: unknown) => {
+      if (command instanceof GetCommand) return { Item: stored };
+      if (command instanceof PutCommand) {
+        stored = command.input.Item as Candidate;
+        return {};
+      }
+      if (command instanceof TransactWriteCommand) {
+        const operations = command.input.TransactItems;
+        const note = operations?.[1]?.Put?.Item;
+        const stage = JSON.parse(note?.text).to as string;
+        if (stage === "Applied") {
+          context.mock.timers.tick(1);
+          await core.setStage("New", "Trial", "officer", "trial");
+        }
+        const check = operations?.[0]?.ConditionCheck;
+        if (
+          stored.retention ||
+          (check?.ConditionExpression?.includes("recruiting.changedAt") &&
+            stored.recruiting?.changedAt !==
+              check.ExpressionAttributeValues?.[":changedAt"])
+        )
+          throw Object.assign(new Error("condition failed"), {
+            name: "TransactionCanceledException",
+            CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+          });
+        notes.push(stage);
+        return {};
+      }
+      assert.fail("Unexpected storage command");
+    },
+  );
+  core = createRecruiting(
+    createDynamoDataAccess({ tableName: "synthetic", region: "us-east-1" }),
+    createSystemPrincipal(["candidate", "officerNote"]),
+    "guild",
+    {
+      tags: async () =>
+        [...STAGES, ...SOURCES].map((name) => ({ name, id: name })),
+      create: async () => "New",
+      post: async () => {},
+      tagsFor: async () => [],
+      setTags: async () => {},
+    },
+    () => {},
+  );
+  await core.setStage("New", "Applied", "applicant", "applied");
+  assert.equal(stored.recruiting?.stage, "Trial");
+  assert.deepEqual(notes.sort(), ["Applied", "Trial"]);
 });

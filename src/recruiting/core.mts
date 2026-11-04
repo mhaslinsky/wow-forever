@@ -131,6 +131,8 @@ export function createRecruiting(
         changedAt: at,
       },
     };
+    // Grant membership only after the candidate write clears the retention fence.
+    await records.write(updated);
     if (stage === "Accepted") {
       try {
         if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
@@ -140,10 +142,6 @@ export function createRecruiting(
         throw cause;
       }
     }
-    // A delayed stage change must not restore data removed by retention.
-    await records.write(updated, {
-      recruitingChangedAt: record.recruiting.changedAt,
-    });
     await records.write(
       {
         ...recordKey(
@@ -162,7 +160,6 @@ export function createRecruiting(
       },
       {
         candidateThreadId: record.recruiting.threadId,
-        recruitingChangedAt: at,
       },
     );
     return updated;
@@ -225,8 +222,7 @@ export function createRecruiting(
           .toLowerCase();
       const candidateRecords = candidates.filter(
         (record): record is Candidate =>
-          record.kind === "candidate" &&
-          !(record.retention && !record.recruiting),
+          record.kind === "candidate" && !record.retention,
       );
       const accountMatch = input.discordUserId
         ? candidateRecords.find(
@@ -256,11 +252,6 @@ export function createRecruiting(
         return saving(threadId, async () => {
           const [previous] = await records.get(note(threadId));
           if (previous) return existing;
-          // Keep the original workflow while attaching the new intake's details.
-          await forum.post(
-            threadId,
-            `Applied again through ${input.source}:\n${input.content || input.name}`,
-          );
           const enriched: Candidate = {
             ...existing,
             ...(!existing.discordUserId && input.discordUserId
@@ -275,13 +266,14 @@ export function createRecruiting(
                 }
               : {}),
           };
-          await records.write(enriched, {
-            recruitingChangedAt: existing.recruiting?.changedAt,
-          });
+          await records.write(enriched);
           await records.write(note(threadId), {
             candidateThreadId: threadId,
-            recruitingChangedAt: existing.recruiting?.changedAt,
           });
+          await forum.post(
+            threadId,
+            `Applied again through ${input.source}:\n${input.content || input.name}`,
+          );
           return enriched;
         });
       }
@@ -311,10 +303,9 @@ export function createRecruiting(
         },
       };
       await saving(threadId, async () => {
-        await records.write(record, { recruitingChangedAt: undefined });
+        await records.write(record);
         await records.write(note(threadId), {
           candidateThreadId: threadId,
-          recruitingChangedAt: record.recruiting?.changedAt,
         });
       });
       return record;
@@ -338,11 +329,7 @@ export function createRecruiting(
         ...record,
         recruiting: { ...record.recruiting, ...update },
       };
-      await saving(threadId, () =>
-        records.write(updated, {
-          recruitingChangedAt: record.recruiting?.changedAt,
-        }),
-      );
+      await saving(threadId, () => records.write(updated));
       return updated;
     },
     async officerTags(input: {
