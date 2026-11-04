@@ -99,7 +99,7 @@ test("/apply submission creates an Applied candidate", async () => {
       })),
     },
   });
-  assert.deepEqual(result, message("Application sent"));
+  assert.deepEqual(result, message("Got it! An officer will reach out soon."));
   const candidate = setup.items.find((item) => item.kind === "candidate");
   assert.ok(candidate?.kind === "candidate");
   assert.equal(candidate.recruiting?.stage, "Applied");
@@ -112,7 +112,7 @@ test("/lead creates a New candidate owned by the officer", async () => {
     const setup = fixture(role);
     assert.deepEqual(
       await setup.run({ ...setup.interaction, data: lead }),
-      message("Lead added"),
+      message("Lead added, the thread's up in #recruiting"),
     );
     const candidate = setup.items.find((item) => item.kind === "candidate");
     assert.ok(candidate?.kind === "candidate");

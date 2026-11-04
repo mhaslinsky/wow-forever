@@ -11,7 +11,7 @@ import type { ResolveRecruitingContext } from "./runtime.mts";
 const fields = [
   ["name", "Character name", 100],
   ["class", "Class", 30],
-  ["spec", "Specialization", 50],
+  ["spec", "Spec", 50],
   ["raidRole", "Raid role (Tank, Healer, Damage)", 6],
 ] as const;
 
@@ -57,7 +57,8 @@ export function createRecruitingRoutes(
       mode: "fast",
       visibility: "ephemeral",
       async handler(interaction): Promise<Reply> {
-        if (!inGuild(interaction)) return message("Apply in the server");
+        if (!inGuild(interaction))
+          return message("This command only works in the server");
         return {
           type: 9,
           data: {
@@ -86,26 +87,27 @@ export function createRecruitingRoutes(
       mode: "slow",
       visibility: "ephemeral",
       async handler(interaction, signal) {
-        if (!inGuild(interaction)) return message("Apply in the server");
+        if (!inGuild(interaction))
+          return message("This command only works in the server");
         let values: Record<string, string>;
         try {
           values = formValues(interaction);
         } catch {
-          return message("Complete all application fields");
+          return message("Fill in every field");
         }
         if (
           fields.some(
             ([name, , max]) => !values[name] || values[name].length > max,
           )
         )
-          return message("Complete all application fields");
+          return message("Fill in every field");
         const raidRole = values.raidRole;
         if (
           raidRole !== "Tank" &&
           raidRole !== "Healer" &&
           raidRole !== "Damage"
         )
-          return message("Choose Tank, Healer, or Damage");
+          return message("Raid role has to be Tank, Healer or Damage");
         const character: CharacterDeclaration = {
           name: values.name,
           class: values.class,
@@ -130,7 +132,7 @@ export function createRecruitingRoutes(
           actorId,
           interaction.id,
         );
-        return message("Application sent");
+        return message("Got it! An officer will reach out soon.");
       },
     },
     {
@@ -164,13 +166,13 @@ export function createRecruitingRoutes(
       visibility: "ephemeral",
       async handler(interaction, signal) {
         if (!inGuild(interaction))
-          return message("Use this command in the server");
+          return message("This command only works in the server");
         const { core, actor } = await resolveContext(interaction, signal);
         const officer = authority(actor);
         if (!officer.roles.includes("Officer")) return message("Officers only");
         const options = interaction.data?.options;
         if (!Array.isArray(options))
-          return message("Enter name, class, and source");
+          return message("Need a name, class and where you found them");
         const values = new Map<string, string>();
         for (const option of options) {
           if (
@@ -179,7 +181,7 @@ export function createRecruitingRoutes(
             typeof option.name !== "string" ||
             typeof option.value !== "string"
           )
-            return message("Enter name, class, and source");
+            return message("Need a name, class and where you found them");
           values.set(option.name, option.value.trim());
         }
         const name = values.get("name"),
@@ -193,7 +195,7 @@ export function createRecruitingRoutes(
           !source ||
           source.length > 1000
         )
-          return message("Enter name, class, and source");
+          return message("Need a name, class and where you found them");
         await core.create({
           name,
           source: "Officer lead",
@@ -201,7 +203,7 @@ export function createRecruitingRoutes(
           owner: officer.userId,
           content: `${name}\nClass: ${characterClass}\nFound: ${source}`,
         });
-        return message("Lead added");
+        return message("Lead added, the thread's up in #recruiting");
       },
     },
   ];
