@@ -370,7 +370,7 @@ for (const [behaviour, name, discordUserId, count] of [
     assert.equal(setup.created(), count);
     assert.deepEqual(
       setup.posts,
-      count === 1 ? ["Officer lead\nNew details"] : [],
+      count === 1 ? ["Applied again through Officer lead:\nNew details"] : [],
     );
   });
 }

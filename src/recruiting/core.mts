@@ -238,7 +238,7 @@ export function createRecruiting(
           // Keep the original workflow while attaching the new intake's details.
           await forum.post(
             threadId,
-            `${input.source}\n${input.content || input.name}`,
+            `Applied again through ${input.source}:\n${input.content || input.name}`,
           );
           const enriched: Candidate = {
             ...existing,
