@@ -26,6 +26,10 @@ export type SearchResult =
   | { status: "found"; results: Evidence[] }
   | { status: "skipped" | "empty" }
   | { status: "unavailable"; reason: string };
+export type AssistantAudience = () => Promise<{
+  guildRecords: boolean;
+  history: boolean;
+}>;
 
 export function createSearch(ports: {
   clock: Clock;
@@ -365,6 +369,7 @@ export function createAssistant(ports: {
     question: string,
     signal: AbortSignal,
     context?: ChannelContext,
+    audience?: AssistantAudience,
   ) => {
     const identity = authority(actor);
     if (identity.mode !== "user" || !identity.roles.includes("Member"))
@@ -372,11 +377,17 @@ export function createAssistant(ports: {
     if (!question.trim()) return "You forgot the question.";
     if (question.length > 2000) return "Keep it under 2,000 characters.";
     if (!(await ports.claim(identity.userId, signal))) return COOLDOWN;
-    const messages = context ? await context(signal) : [];
+    const access = audience
+      ? await audience()
+      : { guildRecords: true, history: true };
+    let messages = access.history && context ? await context(signal) : [];
     signal.throwIfAborted();
-    const records = await ports.data
-      .forUser(actor)
-      .get(recordKey("member", identity.userId, ports.guildId));
+    const emptyRecords = [] as unknown as UserResult<GuildRecord>;
+    let records = access.guildRecords
+      ? await ports.data
+          .forUser(actor)
+          .get(recordKey("member", identity.userId, ports.guildId))
+      : emptyRecords;
     signal.throwIfAborted();
     const routing = await ports.route(question, signal);
     signal.throwIfAborted();
@@ -391,18 +402,27 @@ export function createAssistant(ports: {
         evidence = await ports.search(routing.searchQuery, signal);
     }
     signal.throwIfAborted();
-    return ports.converse(
-      {
-        actor,
-        records: routing.needsGuild
-          ? records
-          : ([] as unknown as UserResult<GuildRecord>),
-        question,
-        evidence,
-        guildId: ports.guildId,
-        context: messages,
-      },
-      signal,
-    );
+    if (!routing.needsGuild) records = emptyRecords;
+    for (;;) {
+      const answer = await ports.converse(
+        {
+          actor,
+          records,
+          question,
+          evidence,
+          guildId: ports.guildId,
+          context: messages,
+        },
+        signal,
+      );
+      if (!audience) return answer;
+      const current = await audience();
+      const dropRecords = records.length > 0 && !current.guildRecords;
+      const dropHistory = messages.length > 0 && !current.history;
+      if (!dropRecords && !dropHistory) return answer;
+      // Regenerate without revoked data, keeping the original cooldown claim.
+      if (dropRecords) records = emptyRecords;
+      if (dropHistory) messages = [];
+    }
   };
 }
