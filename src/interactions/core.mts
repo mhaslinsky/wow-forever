@@ -1,4 +1,6 @@
 import { createPublicKey, verify } from "node:crypto";
+import { createAskRoutes } from "../assistant/interactions.mts";
+import { assistantAnswer } from "../assistant/runtime.mts";
 import { createFollowUpRoutes } from "../recruiting/followup.mts";
 import { createRecruitingRoutes } from "../recruiting/interactions.mts";
 import { recruitingContextForInteraction } from "../recruiting/runtime.mts";
@@ -99,6 +101,7 @@ export type Route = RouteDefinition &
     | { mode: "slow"; cooldownSeconds?: number }
   );
 export const registry: readonly Route[] = [
+  ...createAskRoutes(assistantAnswer),
   ...createWishlistRoutes(wishlistContextForInteraction),
   ...createRecruitingRoutes(recruitingContextForInteraction),
   ...createRegisterRoutes(recruitingContextForInteraction),

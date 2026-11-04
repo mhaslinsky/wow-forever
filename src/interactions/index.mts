@@ -12,6 +12,47 @@ const lambda = new LambdaClient({ maxAttempts: 1 });
 const dynamo = new DynamoDBClient({ maxAttempts: 1 });
 const claimsTable = process.env.CLAIMS_TABLE;
 const secrets = new Map<string, string>();
+export function assistantClaim(
+  table: string,
+  now: () => number,
+  send: (
+    command: PutItemCommand,
+    options: { abortSignal: AbortSignal },
+  ) => Promise<unknown> = (command, options) => dynamo.send(command, options),
+) {
+  return async (guildId: string, userId: string, signal: AbortSignal) => {
+    const nowMs = now();
+    try {
+      if (!table || !guildId || !userId)
+        throw new Error("Invalid assistant claim");
+      await send(
+        new PutItemCommand({
+          TableName: table,
+          Item: {
+            pk: { S: `assistant#${guildId}#${userId}` },
+            cooldownUntilMs: { N: String(nowMs + 60000) },
+            expiresAt: { N: String(Math.ceil((nowMs + 60000) / 1000)) },
+          },
+          ConditionExpression:
+            "attribute_not_exists(pk) OR cooldownUntilMs <= :now",
+          ExpressionAttributeValues: { ":now": { N: String(nowMs) } },
+        }),
+        { abortSignal: signal },
+      );
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "ConditionalCheckFailedException"
+      )
+        return false;
+      throw new Error("Claims unavailable");
+    }
+  };
+}
+export const claimAssistant = assistantClaim(claimsTable ?? "", () =>
+  clock.now(),
+);
 export async function readSecret(name: string, signal: AbortSignal) {
   const cached = secrets.get(name);
   if (cached) return cached;

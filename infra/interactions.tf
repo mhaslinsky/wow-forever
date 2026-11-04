@@ -49,6 +49,16 @@ data "aws_iam_policy_document" "interactions" {
     resources = [
       aws_ssm_parameter.secrets["discord_app_public_key"].arn,
       aws_ssm_parameter.secrets["discord_bot_token"].arn,
+      "arn:aws:ssm:us-east-1:${var.aws_account_id}:parameter/wow-forever/parallel_api_key",
+    ]
+  }
+  statement {
+    actions = ["bedrock:InvokeModel"]
+    resources = [
+      "arn:aws:bedrock:us-east-1:${var.aws_account_id}:inference-profile/us.anthropic.claude-sonnet-4-6",
+      "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6",
+      "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6",
+      "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6",
     ]
   }
   statement {
@@ -98,6 +108,7 @@ resource "aws_lambda_function" "interactions" {
     variables = {
       PUBLIC_KEY_PARAM      = aws_ssm_parameter.secrets["discord_app_public_key"].name
       CLAIMS_TABLE          = aws_dynamodb_table.claims.name
+      GUILD_TABLE           = aws_dynamodb_table.guild.name
       GUILD_ID              = var.guild_id
       WISHLIST_LOCK_MINUTES = tostring(var.wishlist_lock_minutes)
     }
