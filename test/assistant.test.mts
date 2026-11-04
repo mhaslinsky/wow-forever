@@ -651,6 +651,33 @@ test("askers without history permission get no context; missing and malformed pe
   );
 });
 
+test("channel context includes 3-hour-old messages and excludes 13-hour-old messages", async () => {
+  let now = 0;
+  const channelContext = createChannelContext(
+    {
+      clock: { ...clock, now: () => now },
+      get: async () => [
+        {
+          author: { username: "Author" },
+          content: "Recent",
+          timestamp: new Date(0).toISOString(),
+        },
+        {
+          author: { username: "Author" },
+          content: "Old",
+          timestamp: new Date(-10 * 60 * 60 * 1000).toISOString(),
+        },
+      ],
+      report: () => {},
+    },
+    "channel",
+  );
+  now += 3 * 60 * 60 * 1000;
+  assert.deepEqual(await channelContext(signal), [
+    { author: "Author", content: "Recent" },
+  ]);
+});
+
 test("stalled history times out on a stepped clock and answers without context", async () => {
   const state = setup();
   let expire: () => void = () => assert.fail("Deadline not scheduled");
