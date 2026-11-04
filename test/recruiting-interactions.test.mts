@@ -74,6 +74,7 @@ function fixture(role = "visitor") {
     return route.handler(input, new AbortController().signal);
   };
   return {
+    core,
     items,
     interaction,
     run,
@@ -255,4 +256,35 @@ test("a submit without raid nights or raid history is refused", async () => {
     assert.deepEqual(reply, message(error));
   }
   assert.equal(setup.items.length, 0);
+});
+
+test("repeat application preserves an existing Trial stage", async () => {
+  const setup = fixture();
+  await setup.core.create({
+    name: "Synthetic",
+    source: "Officer lead",
+    actorId: "officer",
+    discordUserId: "person",
+  });
+  await setup.core.setStage("thread", "Trial", "officer", "trial");
+  await setup.run({
+    ...setup.interaction,
+    type: 5,
+    data: {
+      custom_id: "apply:Mage:Frost:Damage:-:0",
+      components: [
+        {
+          components: [
+            { custom_id: "name", value: "Synthetic" },
+            { custom_id: "raidHistory", value: "Synthetic raids" },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(
+    (await setup.core.candidate("thread"))?.recruiting?.stage,
+    "Trial",
+  );
+  assert.ok(setup.applied().includes("Trial"));
 });

@@ -347,7 +347,7 @@ test("failed officer acceptance restores tags without overwriting a newer edit",
 
 for (const [behaviour, name, discordUserId, count] of [
   ["same Discord account merges", "Othermain", "applicant", 1],
-  ["same character name from two sources merges", " synthetic ", "other", 1],
+  ["same character name from two sources merges", " synthetic ", undefined, 1],
   ["different people stay separate", "Different", "other", 2],
 ] as const) {
   test(behaviour, async () => {
@@ -374,3 +374,30 @@ for (const [behaviour, name, discordUserId, count] of [
     );
   });
 }
+
+test("Discord identity separates namesakes and wins over a name match", async () => {
+  const setup = fixture();
+  const intake = {
+    name: "Synthetic",
+    source: "Apply form" as const,
+    actorId: "actor",
+  };
+  await setup.core.create({ ...intake, name: "Alias" });
+  const first = await setup.core.create({
+    ...intake,
+    discordUserId: "account-a",
+  });
+  const second = await setup.core.create({
+    ...intake,
+    discordUserId: "account-b",
+  });
+  assert.notEqual(second.sk, first.sk);
+  const repeated = await setup.core.create({
+    ...intake,
+    discordUserId: "account-b",
+    name: "Alias",
+    content: "Updated",
+  });
+  assert.equal(repeated.sk, second.sk);
+  assert.equal(setup.created(), 3);
+});

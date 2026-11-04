@@ -212,13 +212,21 @@ export function createRecruiting(
           .trim()
           .normalize("NFC")
           .toLowerCase();
-      const existing = candidates.find(
-        (record): record is Candidate =>
-          record.kind === "candidate" &&
-          ((!!input.discordUserId &&
-            record.discordUserId === input.discordUserId) ||
-            mainName(record) === mainName(input)),
+      const candidateRecords = candidates.filter(
+        (record): record is Candidate => record.kind === "candidate",
       );
+      const accountMatch = input.discordUserId
+        ? candidateRecords.find(
+            (record) => record.discordUserId === input.discordUserId,
+          )
+        : undefined;
+      const existing =
+        accountMatch ??
+        candidateRecords.find(
+          (record) =>
+            (!input.discordUserId || !record.discordUserId) &&
+            mainName(record) === mainName(input),
+        );
       const note = (threadId: string) => ({
         ...recordKey(
           "officerNote",

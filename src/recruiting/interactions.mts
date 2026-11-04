@@ -344,12 +344,13 @@ export function createRecruitingRoutes(
           content: `${character.name}\nClass: ${character.class}\nSpec: ${character.spec}\nRole: ${character.raidRole === "Damage" ? "DPS" : character.raidRole}\nOffspecs: ${application.offspecs.join(", ") || "None"}\nRaid nights: ${application.nights.join(", ")}\nRaid history: ${application.raidHistory}\nLogs or armory: ${application.logsUrl || "None"}\nWhy us: ${application.about || "None"}`,
         });
         if (!candidate.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
-        await core.setStage(
-          candidate.recruiting.threadId,
-          "Applied",
-          actorId,
-          interaction.id,
-        );
+        if (candidate.recruiting.stage === "New")
+          await core.setStage(
+            candidate.recruiting.threadId,
+            "Applied",
+            actorId,
+            interaction.id,
+          );
         return message("Got it! An officer will reach out soon.");
       },
     },
