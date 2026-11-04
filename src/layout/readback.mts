@@ -133,12 +133,12 @@ function ignoredGrantFindings(
       const liveRole = snapshot.roles.find(
         (entry) => entry.id === ids.roles[role.key],
       );
-      if (!liveRole) continue;
+      if (!liveRole || liveRole.id === snapshot.guildId) continue;
       const everyoneBits = BigInt(everyone.permissions);
       const roleBits = BigInt(liveRole.permissions);
       const base = everyoneBits | roleBits;
       // Live grants can drift from the layout and expose ignored channels.
-      const withoutGrant = base & ~flags.ViewChannel;
+      const withoutGrant = everyoneBits | (roleBits & ~flags.ViewChannel);
       const visible = (bits: bigint) =>
         effectivePermissions(
           bits,
