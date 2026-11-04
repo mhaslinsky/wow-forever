@@ -1,3 +1,5 @@
+import { type RecruitingState, recruitingState } from "./recruiting.mts";
+
 export const KIND_POLICY = Object.freeze({
   candidate: "Officer",
   officerNote: "Officer",
@@ -48,7 +50,9 @@ export type GuildRecord = {
     > &
     (Current extends "voicePresence"
       ? { leftAt?: string; endUnknown?: boolean }
-      : Record<never, never>);
+      : Current extends "candidate"
+        ? { recruiting?: RecruitingState }
+        : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -78,7 +82,7 @@ export function decode(raw: unknown): GuildRecord | undefined {
     item.sk.length === prefix.length
   )
     return;
-  const output: Record<string, string | boolean> = {
+  const output: Record<string, unknown> = {
     kind,
     pk: item.pk,
     sk: item.sk,
@@ -95,6 +99,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
   if (kind === "voicePresence" && item.endUnknown !== undefined) {
     if (typeof item.endUnknown !== "boolean" || !item.leftAt) return;
     output.endUnknown = item.endUnknown;
+  }
+  if (kind === "candidate" && item.recruiting !== undefined) {
+    if (!recruitingState(item.recruiting)) return;
+    output.recruiting = { ...item.recruiting };
   }
   return output as GuildRecord;
 }

@@ -4,6 +4,8 @@ import {
 } from "@aws-sdk/client-cloudwatch";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { Client, GatewayIntentBits } from "discord.js";
+import { createSystemPrincipal } from "../auth/index.mts";
+import { recruitingHandlers } from "../recruiting/discord.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import {
   attachGateway,
@@ -40,6 +42,7 @@ async function main() {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildModeration,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildVoiceStates,
@@ -53,6 +56,11 @@ async function main() {
     client,
     {
       ...handlers,
+      ...recruitingHandlers(
+        client,
+        createDynamoDataAccess({ tableName: "wow-forever", region }),
+        createSystemPrincipal(["candidate", "officerNote"]),
+      ),
       voiceStateUpdate: voicePresence,
       clientReady: async (readyClient) => {
         const guild = readyClient.guilds.cache.get(guildId);
