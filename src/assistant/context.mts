@@ -118,7 +118,7 @@ export function createChannelContext(
             .filter(
               (entry) =>
                 entry.content &&
-                entry.timestamp >= now - 7200000 &&
+                entry.timestamp >= now - 43200000 &&
                 entry.timestamp <= now,
             )
             .sort((left, right) => left.timestamp - right.timestamp)
