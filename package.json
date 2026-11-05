@@ -20,7 +20,8 @@
     "build:recruiting-retention": "esbuild src/recruiting/retention-handler.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/recruiting-retention/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:class-news": "esbuild src/class-news/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/class-news/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:gow-intake": "esbuild src/gow-intake/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gow-intake/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
-    "build:snapshot-ingest": "esbuild src/snapshot-ingest/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/snapshot-ingest/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
+    "build:snapshot-ingest": "esbuild src/snapshot-ingest/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/snapshot-ingest/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
+    "build:reader": "esbuild src/reader/index.mts --bundle --platform=node --target=node22 --format=esm --external:@napi-rs/keyring --outfile=build/reader/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.3",
@@ -41,6 +42,7 @@
     "@aws-sdk/lib-dynamodb": "^3.1161.0",
     "@aws-sdk/util-dynamodb": "^3.996.9",
     "@discordjs/rest": "2.6.3",
+    "@napi-rs/keyring": "^2.1.2",
     "discord.js": "^14.28.0",
     "fast-xml-parser": "^5.12.0",
     "luaparse": "^0.3.1",
