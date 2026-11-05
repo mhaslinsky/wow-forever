@@ -7,7 +7,7 @@ import { type GuildRecord, recordKey } from "../src/data/records.mts";
 
 import { createDepartures } from "../src/roster/departures.mts";
 
-function fixture() {
+function fixture(failPosts = 0) {
   const member: GuildRecord = {
     ...recordKey("member", "user", "guild"),
     kind: "member",
@@ -15,7 +15,7 @@ function fixture() {
     name: "Example",
     roster: [
       {
-        name: "Example",
+        name: "eXaMpLe-Firemaw",
         class: "Mage",
         spec: "Fire",
         raidRole: "Damage",
@@ -24,6 +24,11 @@ function fixture() {
       },
     ],
   };
+  member.roster?.push({
+    ...member.roster[0],
+    name: "AbsentAlt-Firemaw",
+    main: false,
+  });
   const items = new Map<string, GuildRecord>([[member.sk + member.pk, member]]);
   const posts: { content: string; components: unknown[] }[] = [];
   const data = createDataAccess({
@@ -32,6 +37,24 @@ function fixture() {
     batch: async () => [],
     put: async (item, condition) => {
       const previous = items.get(item.sk + item.pk);
+      const expected = condition?.departure;
+      const rejected =
+        expected &&
+        ("claim" in expected
+          ? previous !== undefined &&
+            (previous.kind !== "departure" ||
+              previous.state === "pending" ||
+              (item.kind === "departure" &&
+                previous.evidence === item.evidence))
+          : previous?.kind !== "departure" ||
+            previous.requestId !== expected.requestId ||
+            previous.state !== expected.state ||
+            (expected.delivery !== undefined &&
+              previous.delivery !== expected.delivery));
+      if (rejected)
+        throw Object.assign(new Error("conflict"), {
+          name: "ConditionalCheckFailedException",
+        });
       if (
         condition?.departureSnapshotId !== undefined &&
         (condition.departureSnapshotId === null
@@ -46,6 +69,7 @@ function fixture() {
     },
   });
   const core = createDepartures(data, "guild", async (content, components) => {
+    if (failPosts-- > 0) throw new Error("POST_FAILED");
     posts.push({ content, components });
   });
   const actor = createPrincipalFactory({
@@ -100,16 +124,21 @@ function fixture() {
 }
 test("member removal posts an officer confirmation request", async () => {
   const { core, posts } = fixture();
-  await core.memberRemoved({ id: "user", guild: { id: "guild" } });
+  await Promise.all([
+    core.memberRemoved({ id: "user", guild: { id: "guild" } }),
+    core.memberRemoved({ id: "user", guild: { id: "guild" } }),
+  ]);
   assert.equal(posts.length, 1);
   assert.match(JSON.stringify(posts[0]), /Confirm.*Keep/);
 });
 test("one missing snapshot does not flag", async () => {
   const { posts, snapshot } = fixture();
   await snapshot(1, true);
-  await snapshot(2, false);
+  await snapshot(2, true);
   await snapshot(3, true);
   await snapshot(4, false);
+  await snapshot(5, true);
+  await snapshot(6, false);
   assert.equal(posts.length, 0);
 });
 test("two consecutive missing snapshots flag once", async () => {
@@ -119,6 +148,16 @@ test("two consecutive missing snapshots flag once", async () => {
   await Promise.all([snapshot(3, false), core.checkSnapshot("game-guild")]);
   await core.checkSnapshot("game-guild");
   assert.equal(posts.length, 1);
+  const retry = fixture(1);
+  await retry.snapshot(1, false);
+  await assert.rejects(retry.snapshot(2, false), /POST_FAILED/);
+  const check = [...retry.items.values()].find(
+    (item) => item.kind === "departureCheck",
+  );
+  assert.ok(check?.kind === "departureCheck");
+  assert.equal(check.snapshotId, "2".padStart(64, "0"));
+  await retry.core.checkSnapshot("game-guild");
+  assert.equal(retry.posts.length, 1);
 });
 test("Keep clears the flag", async () => {
   const { core, items, actor } = fixture();
@@ -130,4 +169,24 @@ test("Keep clears the flag", async () => {
     [...items.values()].find((item) => item.kind === "departure")?.state,
     "kept",
   );
+  for (const order of [
+    ["confirm", "keep"],
+    ["keep", "confirm"],
+  ]) {
+    await core.memberRemoved({ id: "user", guild: { id: "guild" } });
+    const request = [...items.values()].find(
+      (item) => item.kind === "departure",
+    );
+    assert.ok(request?.kind === "departure");
+    const results = await Promise.all(
+      order.map((action) =>
+        core.resolve(actor, "user", action, request.requestId),
+      ),
+    );
+    assert.deepEqual(results, [true, false]);
+    const member = [...items.values()].find((item) => item.kind === "member");
+    assert.ok(member?.kind === "member");
+    assert.equal(member.active, order[0] === "confirm" ? false : undefined);
+    items.set(member.sk + member.pk, { ...member, active: undefined });
+  }
 });

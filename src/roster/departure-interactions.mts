@@ -22,8 +22,8 @@ export const departureRoutes: readonly Route[] = [
         extra ||
         !["keep", "confirm"].includes(action)
       )
-        return message("Invalid departure request");
-      await createDepartures(
+        return message("That request is out of date.");
+      const resolved = await createDepartures(
         createDynamoDataAccess({
           tableName: "wow-forever",
           region: "us-east-1",
@@ -34,7 +34,11 @@ export const departureRoutes: readonly Route[] = [
         },
       ).resolve(actor, memberId, action, requestId);
       return message(
-        action === "keep" ? "Departure cleared" : "Departure confirmed",
+        !resolved
+          ? "That request is out of date."
+          : action === "keep"
+            ? "Kept."
+            : "Marked inactive.",
       );
     },
   },

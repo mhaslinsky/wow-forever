@@ -41,7 +41,7 @@ const CODECS = Object.freeze({
   },
   departure: {
     prefix: "DEPARTURE",
-    fields: ["memberId", "evidence", "state", "requestId"],
+    fields: ["memberId", "evidence", "state", "requestId", "delivery"],
   },
   guildSnapshot: { prefix: "SNAPSHOT", fields: ["snapshotId", "addonVersion"] },
   guildSnapshotLatest: { prefix: "SNAPSHOT_LATEST", fields: ["snapshotId"] },
@@ -185,7 +185,8 @@ export function decode(raw: unknown): GuildRecord | undefined {
   }
   if (
     kind === "departure" &&
-    !["pending", "kept", "confirmed"].includes(String(item.state))
+    (!["pending", "kept", "confirmed"].includes(String(item.state)) ||
+      !["sending", "undelivered", "delivered"].includes(String(item.delivery)))
   )
     return;
   if (kind === "guildSnapshot" || kind === "guildSnapshotLatest") {

@@ -33,6 +33,9 @@ export type QueryCursor = Readonly<Record<string, string>> & {
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
   departureSnapshotId?: string | null;
+  departure?:
+    | { claim: true }
+    | { requestId: string; state: string; delivery?: string };
   candidateThreadId?: string;
   absent?: true;
   intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
@@ -150,6 +153,14 @@ export function createDataAccess(
       }
     }
     return {
+      async transitionDeparture(
+        input: Extract<GuildRecord, { kind: "departure" }>,
+        expected: NonNullable<WriteCondition["departure"]>,
+      ) {
+        systemWrite(input);
+        if (!decode(input)) throw new Error("INVALID_RECORD");
+        await stored(() => storage.put(input, { departure: expected }));
+      },
       async advanceDepartureCheck(
         input: Extract<GuildRecord, { kind: "departureCheck" }>,
         previousSnapshotId: string | null,
@@ -181,7 +192,8 @@ export function createDataAccess(
         if (
           input.kind === "guildSnapshot" ||
           input.kind === "guildSnapshotLatest" ||
-          input.kind === "departureCheck"
+          input.kind === "departureCheck" ||
+          input.kind === "departure"
         )
           throw new Error("WRITE_DENIED");
         systemWrite(input);
@@ -246,7 +258,8 @@ export function createDataAccess(
         if (
           input.kind === "guildSnapshot" ||
           input.kind === "guildSnapshotLatest" ||
-          input.kind === "departureCheck"
+          input.kind === "departureCheck" ||
+          input.kind === "departure"
         )
           throw new Error("WRITE_DENIED");
         let raw: RecordInput = input;
@@ -446,8 +459,38 @@ function createDynamoStorage(config: {
       );
     },
     async put(item, condition) {
+      const departure = condition?.departure;
+      const departureCondition =
+        departure &&
+        ("claim" in departure
+          ? {
+              ConditionExpression:
+                "attribute_not_exists(pk) OR (#state IN (:kept, :confirmed) AND evidence <> :evidence)",
+              ExpressionAttributeNames: { "#state": "state" },
+              ExpressionAttributeValues: {
+                ":kept": "kept",
+                ":confirmed": "confirmed",
+                ":evidence": item.kind === "departure" ? item.evidence : "",
+              },
+            }
+          : {
+              ConditionExpression:
+                "requestId = :request AND #state = :state" +
+                (departure.delivery === undefined
+                  ? ""
+                  : " AND delivery = :delivery"),
+              ExpressionAttributeNames: { "#state": "state" },
+              ExpressionAttributeValues: {
+                ":request": departure.requestId,
+                ":state": departure.state,
+                ...(departure.delivery === undefined
+                  ? {}
+                  : { ":delivery": departure.delivery }),
+              },
+            });
       const conditional =
-        condition?.departureSnapshotId !== undefined
+        departureCondition ??
+        (condition?.departureSnapshotId !== undefined
           ? condition.departureSnapshotId === null
             ? { ConditionExpression: "attribute_not_exists(pk)" }
             : {
@@ -476,7 +519,7 @@ function createDynamoStorage(config: {
                       : { ":noticeSent": condition.intake.noticeSent }),
                   },
                 }
-              : undefined;
+              : undefined);
       const put = {
         TableName: config.tableName,
         Item: {
