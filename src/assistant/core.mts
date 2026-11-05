@@ -19,7 +19,7 @@ export const NOT_VERIFIED =
 export const SEARCH_UNAVAILABLE =
   "Web search didn't work, so this is from guild info only.";
 export const REFUSAL = "Sorry, this one's for guild members.";
-export const COOLDOWN = "Give it a minute and try again.";
+export const COOLDOWN = "Give it a few seconds and try again.";
 const FAILURE = "Couldn't come up with an answer, try again in a bit.";
 export type Evidence = { url: string; title: string; excerpts: string[] };
 export type SearchResult =
