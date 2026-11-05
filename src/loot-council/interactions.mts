@@ -133,9 +133,9 @@ export function createLootCouncilRoutes(
               required: true,
             },
             {
-              type: 3,
+              type: 6,
               name: "winner",
-              description: "Contender's Discord user ID",
+              description: "Winner",
               required: true,
             },
             {

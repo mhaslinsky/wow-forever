@@ -166,7 +166,8 @@ export function createDataAccess(
               Array.isArray(error.CancellationReasons) &&
               error.CancellationReasons.some(
                 (reason: { Code?: string }) =>
-                  reason.Code === "ConditionalCheckFailed",
+                  reason.Code === "ConditionalCheckFailed" ||
+                  reason.Code === "TransactionConflict",
               )))
         )
           throw new Error("WRITE_CONFLICT");

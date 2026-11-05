@@ -4,6 +4,7 @@ import { createPrincipalFactory } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { normalize } from "../src/guildos/index.mts";
+import { createAwardCheck } from "../src/loot-council/awards.mts";
 import { createLootCouncil } from "../src/loot-council/core.mts";
 import { createLootCouncilRoutes } from "../src/loot-council/interactions.mts";
 import { createDepartureSnapshotHandler } from "../src/roster/snapshot-handler.mts";
@@ -178,7 +179,16 @@ function fixture(evidence = true) {
     lockMinutes: 60,
     now: () => time,
   });
-  return { core, records, actor, start, data, time };
+  return {
+    core,
+    records,
+    actor,
+    start,
+    data,
+    time,
+    accepted,
+    latest: records.find((entry) => entry.kind === "guildSnapshotLatest"),
+  };
 }
 
 test("vote posts both contenders with locked rank, attendance source, recent loot and raid role", async () => {
@@ -382,76 +392,104 @@ test("decision log is officer-only", async () => {
   );
 });
 
-for (const recipient of ["FIRST-Ex Ample", "second-example"]) {
-  test(
-    recipient.startsWith("FIRST")
-      ? "new accepted in-game award confirms normalized winner"
-      : "different recipient alerts officers",
-    async () => {
-      const { core, actor, records, data, time } = fixture();
-      await core.start(actor("officer"), "vote", "Sword");
-      await core.close(actor("officer"), "vote", "first", "Upgrade");
-      const posts: string[] = [];
-      const scheduled = createDepartureSnapshotHandler(
-        data,
-        "guild",
-        "example",
-        async (content) => {
-          posts.push(content);
-          return "message";
-        },
-      );
-      await scheduled();
-      const decision = () =>
-        records.find((entry) => entry.kind === "lootDecision");
-      assert.equal(decision()?.award?.status, "pending");
-      const history = records.find(
-        (entry) =>
-          entry.kind === "guildSnapshot" && entry.snapshotId === "a".repeat(64),
-      );
-      assert.ok(history?.kind === "guildSnapshot");
-      const exportedAt = history.exportedAt + 60;
-      records.push({
-        ...history,
-        ...recordKey(
-          "guildSnapshot",
-          "example",
-          `${String(exportedAt).padStart(16, "0")}#${"c".repeat(64)}`,
-        ),
-        exportedAt,
-        snapshotId: "c".repeat(64),
-        snapshot: {
-          ...history.snapshot,
-          exportedAt,
-          loot: [
-            {
-              ...history.snapshot.loot[0],
-              itemName: "Sword",
-              playerKey: recipient,
-              timestamp: time / 1000 + 10,
-            },
-          ],
-        },
-      });
-      const pointer = records.find(
-        (entry) => entry.kind === "guildSnapshotLatest",
-      );
-      assert.ok(pointer?.kind === "guildSnapshotLatest");
-      pointer.snapshotId = "c".repeat(64);
-      pointer.exportedAt = exportedAt;
-      await scheduled();
-      await scheduled();
-      const matches = recipient.startsWith("FIRST");
-      assert.equal(
-        decision()?.award?.status,
-        matches ? "confirmed" : "mismatch",
-      );
-      const alerts = posts.filter((content) =>
-        content.startsWith("Loot mismatch:"),
-      );
-      assert.equal(alerts.length, matches ? 0 : 1);
-      if (!matches)
-        assert.match(alerts[0], /Loot mismatch: Sword.*second-example.*first/);
+test("award window prefers the normalized winner and ignores awards outside twelve hours", async () => {
+  const winner = "FIRST-Ex Ample";
+  const other = "second-example";
+  for (const [entries, expected] of [
+    [[[winner, 0]], "confirmed"],
+    [[[other, 1]], "mismatch"],
+    [
+      [
+        [other, 1],
+        [winner, 2],
+      ],
+      "confirmed",
+    ],
+    [
+      [
+        [winner, -1],
+        [other, 43200],
+      ],
+      "pending",
+    ],
+    [[], "pending"],
+  ] as const) {
+    const {
+      core,
+      actor,
+      records,
+      data,
+      time,
+      accepted: history,
+      latest: pointer,
+    } = fixture();
+    await core.start(actor("officer"), "vote", "Sword");
+    await core.close(actor("officer"), "vote", "first", "Upgrade");
+    assert.ok(
+      history?.kind === "guildSnapshot" &&
+        pointer?.kind === "guildSnapshotLatest",
+    );
+    const loot = history.snapshot.loot[0];
+    history.exportedAt += 86400;
+    history.snapshot = {
+      ...history.snapshot,
+      exportedAt: history.exportedAt,
+      loot: entries.map(([playerKey, offset]) => ({
+        ...loot,
+        itemName: "Sword",
+        playerKey,
+        timestamp: time / 1000 + offset,
+      })),
+    };
+    history.sk = recordKey(
+      "guildSnapshot",
+      "example",
+      `${String(history.exportedAt).padStart(16, "0")}#${history.snapshotId}`,
+    ).sk;
+    pointer.exportedAt = history.exportedAt;
+    const posts: string[] = [];
+    const scheduled = createDepartureSnapshotHandler(
+      data,
+      "guild",
+      "example",
+      async (content) => {
+        posts.push(content);
+        return "message";
+      },
+    );
+    await scheduled();
+    await scheduled();
+    const decision = records.find((entry) => entry.kind === "lootDecision");
+    assert.equal(decision?.award?.status, expected);
+    assert.equal(
+      posts.filter((content) => content.startsWith("Loot mismatch:")).length,
+      expected === "mismatch" ? 1 : 0,
+    );
+  }
+});
+
+test("two decisions cannot claim the same in-game award", async () => {
+  const { core, actor, records, data, time, accepted: history } = fixture();
+  for (const vote of ["first-vote", "second-vote"]) {
+    await core.start(actor("officer"), vote, "Sword");
+    await core.close(actor("officer"), vote, "first", "Upgrade");
+  }
+  assert.ok(history?.kind === "guildSnapshot");
+  history.exportedAt += 60;
+  history.snapshot.loot = [
+    {
+      ...history.snapshot.loot[0],
+      itemName: "Sword",
+      timestamp: time / 1000 + 1,
     },
+  ];
+  const check = createAwardCheck(data, "guild", async () => "message");
+  await check(history);
+  await check(history);
+  const decisions = records.filter((entry) => entry.kind === "lootDecision");
+  assert.deepEqual(
+    decisions.map((entry) => entry.award?.status),
+    ["confirmed", "pending"],
   );
-}
+  assert.equal(typeof decisions[0].award?.fingerprint, "string");
+});

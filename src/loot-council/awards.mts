@@ -11,7 +11,22 @@ export function createAwardCheck(
   const store = data.forSystem(createSystemPrincipal(["lootDecision"]));
   return async (accepted: SnapshotHistory) => {
     const snapshot = accepted.snapshot;
-    for (const decision of await store.query(`LOOT_DECISION#${guildId}`)) {
+    const decisions = await store.query(`LOOT_DECISION#${guildId}`);
+    const claimed = new Set(
+      decisions.flatMap((decision) =>
+        decision.kind === "lootDecision" && decision.award?.fingerprint
+          ? [decision.award.fingerprint]
+          : [],
+      ),
+    );
+    const fingerprint = (entry: (typeof snapshot.loot)[number]) =>
+      JSON.stringify([
+        entry.itemId,
+        characterIdentity(entry.playerKey, snapshot.realm),
+        entry.timestamp,
+        entry.raid,
+      ]);
+    for (const decision of decisions) {
       if (
         decision.kind !== "lootDecision" ||
         !decision.award ||
@@ -20,27 +35,25 @@ export function createAwardCheck(
         continue;
       const award = decision.award;
       if (accepted.exportedAt <= award.baselineExportedAt) continue;
-      const loot = snapshot.loot
+      const eligible = snapshot.loot
         .filter(
           (entry) =>
             entry.itemName.trim().toLowerCase() === award.item.toLowerCase() &&
-            entry.timestamp >= award.raidStart &&
-            !award.baselineLoot.includes(
-              JSON.stringify([
-                entry.itemId,
-                characterIdentity(entry.playerKey, snapshot.realm),
-                entry.timestamp,
-                entry.raid,
-              ]),
-            ),
+            entry.timestamp * 1000 >= award.closedAt &&
+            entry.timestamp * 1000 < award.closedAt + 12 * 3_600_000 &&
+            !claimed.has(fingerprint(entry)) &&
+            !award.baselineLoot.includes(fingerprint(entry)),
         )
-        .sort((left, right) => left.timestamp - right.timestamp)[0];
+        .sort((left, right) => left.timestamp - right.timestamp);
+      const isWinner = (entry: (typeof snapshot.loot)[number]) =>
+        award.names.some(
+          (name) =>
+            characterIdentity(name, snapshot.realm) ===
+            characterIdentity(entry.playerKey, snapshot.realm),
+        );
+      const loot = eligible.find(isWinner) ?? eligible[0];
       if (!loot) continue;
-      const matches = award.names.some(
-        (name) =>
-          characterIdentity(name, snapshot.realm) ===
-          characterIdentity(loot.playerKey, snapshot.realm),
-      );
+      const matches = isWinner(loot);
       if (!matches) {
         const messageId = await post(
           `Loot mismatch: ${award.item.slice(0, 100)} went to ${loot.playerKey.slice(0, 100)}; expected <@${decision.winner}>`,
@@ -54,8 +67,10 @@ export function createAwardCheck(
           ...award,
           status: matches ? "confirmed" : "mismatch",
           snapshotId: accepted.snapshotId,
+          fingerprint: fingerprint(loot),
         },
       });
+      claimed.add(fingerprint(loot));
     }
   };
 }

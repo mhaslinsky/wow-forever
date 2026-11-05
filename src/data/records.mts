@@ -46,6 +46,7 @@ export type DecisionAward = {
   baselineLoot: string[];
   status: "pending" | "confirmed" | "mismatch";
   snapshotId?: string;
+  fingerprint?: string;
 };
 const CODECS = Object.freeze({
   departureCheck: {
@@ -219,6 +220,8 @@ export function decode(raw: unknown): GuildRecord | undefined {
       !Array.isArray(award.baselineLoot) ||
       !award.baselineLoot.every((entry) => typeof entry === "string") ||
       !["pending", "confirmed", "mismatch"].includes(award.status) ||
+      (award.fingerprint !== undefined &&
+        (typeof award.fingerprint !== "string" || !award.fingerprint)) ||
       (award.snapshotId !== undefined &&
         !/^[a-f0-9]{64}$/.test(award.snapshotId))
     )
