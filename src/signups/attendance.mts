@@ -1,5 +1,8 @@
 import { createSystemPrincipal } from "../auth/index.mts";
-import type { createDataAccess } from "../data/index.mts";
+import {
+  type createDataAccess,
+  reportInvalidDataItem,
+} from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
 import { createDigestDiscord } from "../recruiting/alerts.mts";
 import type { SignUp } from "./poller.mts";
@@ -25,6 +28,7 @@ type Presence = Pick<
 >;
 export type AttendanceReport = {
   source: AttendanceSource;
+  skippedBadVoiceRecords: number;
   attendance: Attendance[];
   noShows: string[];
   unsignedAttendees: string[];
@@ -74,6 +78,7 @@ export function resolveAttendance(input: {
   )
     throw new Error("INVALID_SNAPSHOT_ATTENDANCE");
   const source: AttendanceSource = snapshot ? "guildos" : "voice";
+  let skippedBadVoiceRecords = 0;
   const attendees = new Set(
     snapshot
       ? snapshot.memberIds
@@ -83,12 +88,19 @@ export function resolveAttendance(input: {
             const joined = Date.parse(entry.joinedAt);
             const left = entry.leftAt ? Date.parse(entry.leftAt) : raid.endsAt;
             if (
+              joined >= raid.endsAt ||
+              (Number.isFinite(left) && left <= raid.startsAt && left >= joined)
+            )
+              return false;
+            if (
               !memberId(entry.memberId) ||
               !Number.isFinite(joined) ||
               !Number.isFinite(left) ||
               left < joined
-            )
-              throw new Error("INVALID_VOICE_PRESENCE");
+            ) {
+              skippedBadVoiceRecords++;
+              return false;
+            }
             // A restart cannot prove presence between the last join and startup.
             return entry.endUnknown
               ? joined >= raid.startsAt && joined < raid.endsAt
@@ -96,9 +108,25 @@ export function resolveAttendance(input: {
           })
           .map((entry) => entry.memberId),
   );
-  const signedUp = new Set(input.signedUp);
+  return buildReport(
+    source,
+    [...attendees],
+    input.signedUp,
+    skippedBadVoiceRecords,
+  );
+}
+
+function buildReport(
+  source: AttendanceSource,
+  members: string[],
+  accepted: string[],
+  skippedBadVoiceRecords: number,
+): AttendanceReport {
+  const attendees = new Set(members);
+  const signedUp = new Set(accepted);
   return {
     source,
+    skippedBadVoiceRecords,
     attendance: [...attendees].sort().map((memberId) => ({ memberId, source })),
     noShows: [...signedUp].filter((id) => !attendees.has(id)).sort(),
     unsignedAttendees: [...attendees].filter((id) => !signedUp.has(id)).sort(),
@@ -109,10 +137,13 @@ export function resolveAttendance(input: {
 export function attendanceMessages(raidId: string, report: AttendanceReport) {
   const lines = [
     `Raid ${raidId} attendance (${report.source})`,
+    ...(report.skippedBadVoiceRecords > 0
+      ? [`Skipped ${report.skippedBadVoiceRecords} bad voice records`]
+      : []),
     ...(
       [
         ["No-shows", report.noShows],
-        ["Unsigned attendees", report.unsignedAttendees],
+        ["Walk-ins", report.unsignedAttendees],
         ["Signed and came", report.signedAndCame],
       ] as const
     ).flatMap(([label, members]) => [
@@ -139,6 +170,7 @@ export function createPostRaidReporter(config: {
   post(content: string): Promise<void>;
   snapshots?: SnapshotAttendancePort;
   now?: () => number;
+  metric?: (count: number) => void;
 }) {
   if (!config.guildId.trim()) throw new Error("GUILD_ID_REQUIRED");
   const data = config.data.forSystem(createSystemPrincipal(["attendance"]));
@@ -153,26 +185,49 @@ export function createPostRaidReporter(config: {
     const presence = snapshot
       ? []
       : await data.query(recordKey("voicePresence", config.guildId, "all").pk);
+    const signedUp = acceptedSignups(signup.signUps);
     const report = resolveAttendance({
       raid,
-      signedUp: acceptedSignups(signup.signUps),
+      signedUp,
       snapshot,
       presence: Array.from(presence).filter(
         (entry): entry is Extract<GuildRecord, { kind: "voicePresence" }> =>
           entry.kind === "voicePresence",
       ),
     });
-    await data.write({
-      ...recordKey("attendance", config.guildId, raid.raidId),
-      kind: "attendance",
-      ownerId: config.guildId,
-      raidId: raid.raidId,
-      source: report.source,
-      attendees: JSON.stringify(report.attendance),
-    });
-    for (const content of attendanceMessages(raid.raidId, report))
+    try {
+      if (report.skippedBadVoiceRecords > 0)
+        (config.metric ?? reportInvalidDataItem)(report.skippedBadVoiceRecords);
+    } catch {
+      console.error(JSON.stringify({ event: "ATTENDANCE_METRIC_FAILED" }));
+    }
+    const key = recordKey("attendance", config.guildId, raid.raidId);
+    try {
+      await data.write({
+        ...key,
+        kind: "attendance",
+        ownerId: config.guildId,
+        raidId: raid.raidId,
+        source: report.source,
+        attendees: JSON.stringify(report.attendance),
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "WRITE_CONFLICT")
+        throw error;
+    }
+    const [persisted] = await data.get(key);
+    if (persisted?.kind !== "attendance" || persisted.raidId !== raid.raidId)
+      throw new Error("ATTENDANCE_NOT_SAVED");
+    const members: Attendance[] = JSON.parse(persisted.attendees);
+    const winner = buildReport(
+      persisted.source as AttendanceSource,
+      members.map((entry) => entry.memberId),
+      signedUp,
+      report.skippedBadVoiceRecords,
+    );
+    for (const content of attendanceMessages(raid.raidId, winner))
       await config.post(content);
-    return report;
+    return winner;
   };
 }
 
