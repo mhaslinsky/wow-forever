@@ -13,6 +13,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createReader, errorName, type Status } from "./reader.mts";
 import { uploadSnapshot } from "./transport.mts";
+import { refreshTray, type TrayPort } from "./tray.mts";
+import { windowsTray } from "./tray-windows.mts";
 import { readToken, scheduledTask } from "./windows.mts";
 
 function main() {
@@ -75,11 +77,25 @@ function main() {
     console.error(`Status unavailable: ${errorName(error)}`);
   }
   delete status.pendingRetryAt;
+  let tray: TrayPort | undefined;
+  try {
+    tray = windowsTray();
+  } catch (error) {
+    console.error(`Tray unavailable: ${errorName(error)}`);
+  }
+  const updateTray = () => {
+    if (tray) refreshTray(tray, () => readFileSync(statusPath, "utf8"));
+  };
+  if (tray) {
+    updateTray();
+    watchFile(statusPath, { interval: 1000 }, updateTray);
+  }
   const save = (value: Status) => {
     try {
       const temporary = `${statusPath}.new`;
       writeFileSync(temporary, JSON.stringify(value, null, 2));
       renameSync(temporary, statusPath);
+      updateTray();
       const log = join(directory, "reader.log");
       if (existsSync(log) && statSync(log).size >= 1024 * 1024)
         renameSync(log, `${log}.1`);
@@ -129,6 +145,8 @@ function main() {
   const stop = () => {
     reader.stop();
     unwatchFile(config.savedVariablesPath);
+    unwatchFile(statusPath);
+    tray?.close();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
