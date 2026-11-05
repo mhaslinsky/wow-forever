@@ -1,0 +1,83 @@
+{
+  "snapshotVersion": 1,
+  "guildKey": "Raid Guild-Firemaw",
+  "guildName": "Raid Guild",
+  "realm": "Firemaw",
+  "exportedAt": 1754400000,
+  "exportedBy": "Chehul-Firemaw",
+  "addonVersion": "0.46.0",
+  "v": 14,
+  "game": "FOREVER",
+  "members": [
+    {
+      "key": "Chehul-Firemaw",
+      "name": "Chehul",
+      "class": "HUNTER",
+      "race": "Orc",
+      "level": 70,
+      "rank": "Guild Master",
+      "rankIndex": 0,
+      "avgIlvl": 132,
+      "lastUpdate": 1754399000,
+      "att25": 92,
+      "prefRoles": ["DPS"],
+      "spec": {
+        "points": [41, 20, 0],
+        "tree": "Beast Mastery",
+        "treeIndex": 1
+      }
+    },
+    {
+      "key": "Fulano-Firemaw",
+      "name": "Fulano",
+      "class": "PRIEST",
+      "race": "Human",
+      "level": 70,
+      "rank": "Raider",
+      "rankIndex": 4,
+      "avgIlvl": 128,
+      "lastUpdate": 1754398000,
+      "att25": 78,
+      "prefRoles": [],
+      "spec": {
+        "points": [23, 38, 0],
+        "tree": "Holy",
+        "treeIndex": 2
+      },
+      "main": "Chehul-Firemaw"
+    },
+    {
+      "key": "Semdados-Firemaw",
+      "name": "Semdados",
+      "class": "MAGE",
+      "race": "",
+      "level": 68,
+      "rank": "Trial",
+      "rankIndex": 6,
+      "avgIlvl": 0,
+      "lastUpdate": 0,
+      "att25": 0,
+      "prefRoles": []
+    }
+  ],
+  "loot": [
+    {
+      "itemId": 30107,
+      "itemName": "Vestments of the Sea-Witch",
+      "player": "Fulano",
+      "playerKey": "Fulano-Firemaw",
+      "quality": 4,
+      "raid": "Serpentshrine Cavern",
+      "timestamp": 1754300000
+    },
+    {
+      "itemId": 32235,
+      "itemName": "Crystal \"Spire\" of\tKarabor",
+      "player": "Chehul",
+      "playerKey": "Chehul-Firemaw",
+      "quality": 4,
+      "raid": "Black\nTemple",
+      "timestamp": 1754200000
+    }
+  ]
+}
