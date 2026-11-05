@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { REST } from "discord.js";
-import { createPrincipalFactory } from "../auth/index.mts";
+import { authority, createPrincipalFactory } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { createSpendStore } from "../data/spend.mts";
 import { clock, type Interaction } from "../interactions/core.mts";
@@ -97,6 +97,36 @@ export async function assistantAnswer(
       interactionHistoryChannel(interaction),
     ),
   );
+}
+
+export async function assistantForget(
+  interaction: Interaction,
+  signal: AbortSignal,
+) {
+  const guildId = process.env.GUILD_ID;
+  const userId = interaction.member?.user?.id;
+  if (!guildId || interaction.guild_id !== guildId || !userId) return REFUSAL;
+  const { readSecret } = await import("../interactions/index.mts");
+  const token = await readSecret("/wow-forever/discord_bot_token", signal);
+  const actor = await assistantPrincipal(guildId, userId, async (path) => {
+    const response = await fetch(`https://discord.com/api/v10${path}`, {
+      headers: { authorization: `Bot ${token}` },
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error("ASSISTANT_IDENTITY_UNAVAILABLE");
+    }
+    return response.json();
+  });
+  if (!authority(actor).roles.includes("Member")) return REFUSAL;
+  await createDynamoDataAccess({
+    tableName: process.env.GUILD_TABLE ?? "wow-forever",
+    region: "us-east-1",
+  })
+    .forUser(actor)
+    .forgetFacts();
+  return "Forgot your saved facts.";
 }
 
 export async function runtimeAssistant(

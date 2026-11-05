@@ -84,6 +84,7 @@ function setup(
         return stored;
       },
       query: async (partition) => {
+        if (partition === "FACT#asker") return { items: [] };
         assert.ok(["MEMBER#ALL", "CHARACTER#ALL"].includes(partition));
         return {
           items:

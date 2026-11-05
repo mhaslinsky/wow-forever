@@ -48,6 +48,7 @@ export type StoragePort = SnapshotWrites & {
   removeIntake?(
     item: Extract<GuildRecord, { kind: "recruitingIntake" }>,
   ): Promise<void>;
+  removeFact?(item: Extract<GuildRecord, { kind: "fact" }>): Promise<void>;
   removeNote?(item: OfficerNote): Promise<void>;
 };
 type Result<Mode extends "user" | "system"> = Mode extends "user"
@@ -208,6 +209,22 @@ export function createDataAccess(
         const remove = storage.removeIntake;
         if (!remove) throw new Error("INTAKE_REMOVAL_UNAVAILABLE");
         await stored(() => remove(item));
+      },
+      async forgetFacts() {
+        const actor = authority(principal);
+        if (
+          actor.mode !== "user" ||
+          !actor.roles.includes("Member") ||
+          !actor.userId
+        )
+          throw new Error("WRITE_DENIED");
+        const remove = storage.removeFact;
+        if (!remove) throw new Error("FACT_REMOVAL_UNAVAILABLE");
+        const items = await query(`FACT#${actor.userId}`, false);
+        for (const item of items) {
+          if (item.kind !== "fact") throw new Error("INVALID_RECORD");
+          await stored(() => remove(item));
+        }
       },
       async removeOfficerNote(input: OfficerNote): Promise<void> {
         const item = decode(input);
@@ -403,6 +420,21 @@ function createDynamoStorage(config: {
         if (pending.length) throw new Error("BATCH_INCOMPLETE");
       }
       return items;
+    },
+    async removeFact(item) {
+      await client.send(
+        new DeleteCommand({
+          TableName: config.tableName,
+          Key: { pk: item.pk, sk: item.sk },
+          ConditionExpression:
+            "attribute_not_exists(pk) OR (#kind = :kind AND ownerId = :owner)",
+          ExpressionAttributeNames: { "#kind": "kind" },
+          ExpressionAttributeValues: {
+            ":kind": "fact",
+            ":owner": item.ownerId,
+          },
+        }),
+      );
     },
     async removeNote(item) {
       await client.send(

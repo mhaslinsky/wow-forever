@@ -47,3 +47,20 @@ export function createAskRoutes(
     },
   ];
 }
+
+export function createForgetRoutes(
+  forget: (interaction: Interaction, signal: AbortSignal) => Promise<string>,
+): Route[] {
+  return [
+    {
+      type: 2,
+      name: "forget",
+      description: "Delete your remembered facts",
+      mode: "slow",
+      visibility: "ephemeral",
+      async handler(interaction, signal) {
+        return message(await forget(interaction, signal));
+      },
+    },
+  ];
+}
