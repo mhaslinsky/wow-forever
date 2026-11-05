@@ -469,27 +469,52 @@ test("award window prefers the normalized winner and ignores awards outside twel
 });
 
 test("two decisions cannot claim the same in-game award", async () => {
-  const { core, actor, records, data, time, accepted: history } = fixture();
-  for (const vote of ["first-vote", "second-vote"]) {
-    await core.start(actor("officer"), vote, "Sword");
-    await core.close(actor("officer"), vote, "first", "Upgrade");
-  }
-  assert.ok(history?.kind === "guildSnapshot");
-  history.exportedAt += 60;
-  history.snapshot.loot = [
-    {
+  for (const sameWinner of [true, false]) {
+    const { core, actor, records, data, time, accepted: history } = fixture();
+    for (const vote of ["first-vote", "second-vote"]) {
+      await core.start(actor("officer"), vote, "Sword");
+      await core.close(
+        actor("officer"),
+        vote,
+        sameWinner || vote === "first-vote" ? "first" : "second",
+        "Upgrade",
+      );
+    }
+    assert.ok(history?.kind === "guildSnapshot");
+    history.exportedAt += 60;
+    history.snapshot.loot = [
+      {
+        ...history.snapshot.loot[0],
+        itemName: "Sword",
+        playerKey: sameWinner ? "first-example" : "second-example",
+        timestamp: time / 1000 + 1,
+      },
+    ];
+    const posts: string[] = [];
+    const check = createAwardCheck(data, "guild", async (content) => {
+      posts.push(content);
+      return "message";
+    });
+    await check(history);
+    await check(history);
+    const decisions = records.filter((entry) => entry.kind === "lootDecision");
+    assert.deepEqual(
+      decisions.map((entry) => entry.award?.status),
+      sameWinner ? ["confirmed", "pending"] : ["pending", "confirmed"],
+    );
+    history.exportedAt += 60;
+    history.snapshot.loot.push({
       ...history.snapshot.loot[0],
-      itemName: "Sword",
-      timestamp: time / 1000 + 1,
-    },
-  ];
-  const check = createAwardCheck(data, "guild", async () => "message");
-  await check(history);
-  await check(history);
-  const decisions = records.filter((entry) => entry.kind === "lootDecision");
-  assert.deepEqual(
-    decisions.map((entry) => entry.award?.status),
-    ["confirmed", "pending"],
-  );
-  assert.equal(typeof decisions[0].award?.fingerprint, "string");
+      playerKey: "first-example",
+      timestamp: time / 1000 + 2,
+    });
+    await check(history);
+    assert.deepEqual(
+      records
+        .filter((entry) => entry.kind === "lootDecision")
+        .map((entry) => entry.award?.status),
+      ["confirmed", "confirmed"],
+    );
+    assert.deepEqual(posts, []);
+  }
 });

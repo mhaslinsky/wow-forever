@@ -26,51 +26,58 @@ export function createAwardCheck(
         entry.timestamp,
         entry.raid,
       ]);
-    for (const decision of decisions) {
-      if (
-        decision.kind !== "lootDecision" ||
-        !decision.award ||
-        decision.award.status !== "pending"
-      )
-        continue;
-      const award = decision.award;
-      if (accepted.exportedAt <= award.baselineExportedAt) continue;
-      const eligible = snapshot.loot
-        .filter(
-          (entry) =>
-            entry.itemName.trim().toLowerCase() === award.item.toLowerCase() &&
-            entry.timestamp * 1000 >= award.closedAt &&
-            entry.timestamp * 1000 < award.closedAt + 12 * 3_600_000 &&
-            !claimed.has(fingerprint(entry)) &&
-            !award.baselineLoot.includes(fingerprint(entry)),
+    const settled = new Set<string>();
+    for (const status of ["confirmed", "mismatch"] as const) {
+      for (const decision of decisions) {
+        if (
+          decision.kind !== "lootDecision" ||
+          !decision.award ||
+          decision.award.status !== "pending" ||
+          settled.has(decision.sk)
         )
-        .sort((left, right) => left.timestamp - right.timestamp);
-      const isWinner = (entry: (typeof snapshot.loot)[number]) =>
-        award.names.some(
-          (name) =>
-            characterIdentity(name, snapshot.realm) ===
-            characterIdentity(entry.playerKey, snapshot.realm),
+          continue;
+        const award = decision.award;
+        if (accepted.exportedAt <= award.baselineExportedAt) continue;
+        const eligible = snapshot.loot
+          .filter(
+            (entry) =>
+              entry.itemName.trim().toLowerCase() ===
+                award.item.toLowerCase() &&
+              entry.timestamp * 1000 >= award.closedAt &&
+              entry.timestamp * 1000 < award.closedAt + 12 * 3_600_000 &&
+              !claimed.has(fingerprint(entry)) &&
+              !award.baselineLoot.includes(fingerprint(entry)),
+          )
+          .sort((left, right) => left.timestamp - right.timestamp);
+        const isWinner = (entry: (typeof snapshot.loot)[number]) =>
+          award.names.some(
+            (name) =>
+              characterIdentity(name, snapshot.realm) ===
+              characterIdentity(entry.playerKey, snapshot.realm),
+          );
+        const loot = eligible.find(
+          (entry) => isWinner(entry) === (status === "confirmed"),
         );
-      const loot = eligible.find(isWinner) ?? eligible[0];
-      if (!loot) continue;
-      const matches = isWinner(loot);
-      if (!matches) {
-        const messageId = await post(
-          `Loot mismatch: ${award.item.slice(0, 100)} went to ${loot.playerKey.slice(0, 100)}; expected <@${decision.winner}>`,
-          [],
-        );
-        if (!messageId) throw new Error("AWARD_ALERT_MESSAGE_ID_MISSING");
+        if (!loot) continue;
+        if (status === "mismatch") {
+          const messageId = await post(
+            `Loot mismatch: ${award.item.slice(0, 100)} went to ${loot.playerKey.slice(0, 100)}; expected <@${decision.winner}>`,
+            [],
+          );
+          if (!messageId) throw new Error("AWARD_ALERT_MESSAGE_ID_MISSING");
+        }
+        await store.write({
+          ...decision,
+          award: {
+            ...award,
+            status,
+            snapshotId: accepted.snapshotId,
+            fingerprint: fingerprint(loot),
+          },
+        });
+        claimed.add(fingerprint(loot));
+        settled.add(decision.sk);
       }
-      await store.write({
-        ...decision,
-        award: {
-          ...award,
-          status: matches ? "confirmed" : "mismatch",
-          snapshotId: accepted.snapshotId,
-          fingerprint: fingerprint(loot),
-        },
-      });
-      claimed.add(fingerprint(loot));
     }
   };
 }
