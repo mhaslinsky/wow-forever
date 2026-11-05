@@ -149,6 +149,91 @@ test(
         await assert.rejects(intakes.deleteIntake(intake), /WRITE_CONFLICT/);
         await intakes.deleteIntake(uncertain);
         assert.deepEqual(await intakes.get(intake), []);
+        const blocked = {
+          ...intake,
+          state: "blocked" as const,
+          noticeSent: true,
+          outcome: "uncertain" as const,
+        };
+        await intakes.insert(blocked);
+        const { payload: _payload, ...releasedFields } = intake;
+        const released = {
+          ...releasedFields,
+          state: "released" as const,
+          attemptId: "release",
+        };
+        await intakes.transitionIntake(released, {
+          state: "blocked",
+          attemptId: "first",
+          noticeSent: true,
+        });
+        assert.deepEqual(await intakes.get(intake), [released]);
+        const resolving = data.forSystem(
+          createSystemPrincipal(["candidate", "recruitingIntake"]),
+        );
+        const original: Extract<GuildRecord, { kind: "candidate" }> = {
+          ...recordKey("candidate", "guild", "cas"),
+          kind: "candidate",
+          ownerId: "guild",
+          name: "CAS candidate",
+        };
+        await resolving.write(original);
+        const edited = { ...original, name: "Officer edit" };
+        await officer.write(edited);
+        await assert.rejects(
+          resolving.write(original, {
+            candidatePrevious: original,
+            releasedIntake: released,
+          }),
+          /WRITE_CONFLICT/,
+        );
+        assert.deepEqual(await resolving.get(original), [edited]);
+        await resolving.write(edited, {
+          candidatePrevious: edited,
+          releasedIntake: released,
+        });
+        await assert.rejects(
+          intakes.transitionIntake(blocked, {
+            state: "blocked",
+            attemptId: "first",
+            noticeSent: true,
+          }),
+          /WRITE_CONFLICT/,
+        );
+        const claimed = {
+          ...intake,
+          attemptId: "claimed",
+          released: true as const,
+        };
+        const claims = await Promise.allSettled(
+          ["claimed", "loser"].map((attemptId) =>
+            intakes.transitionIntake(
+              { ...claimed, attemptId },
+              { state: "released", attemptId: "release" },
+            ),
+          ),
+        );
+        assert.equal(
+          claims.filter((result) => result.status === "fulfilled").length,
+          1,
+        );
+        await assert.rejects(
+          resolving.write(edited, {
+            candidatePrevious: edited,
+            releasedIntake: released,
+          }),
+          /WRITE_CONFLICT/,
+        );
+        assert.deepEqual(await resolving.get(original), [edited]);
+        console.log(
+          "DynamoDB Local: stale candidate snapshot rejected, current snapshot saved, consumed release cannot write candidate",
+        );
+        await intakes.deleteIntake(
+          (await intakes.get(intake))[0] as typeof claimed,
+        );
+        console.log(
+          "DynamoDB Local: release stripped payload, stale blocked write rejected, released generation claim=1 winner",
+        );
         console.log(
           "DynamoDB Local: concurrent intake insert=1 winner, stale transition/delete rejected, conditional delete passed",
         );

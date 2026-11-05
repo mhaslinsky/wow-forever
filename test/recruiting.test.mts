@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import {
   GuildAuditLogsEntry as AuditEntry,
   Client,
@@ -13,12 +14,16 @@ import {
   createPrincipalFactory,
   createSystemPrincipal,
 } from "../src/auth/index.mts";
-import { createDataAccess } from "../src/data/index.mts";
+import { applicationRecord } from "../src/data/gow-applications.mts";
+import { createDataAccess, type StoragePort } from "../src/data/index.mts";
 import type { GuildRecord } from "../src/data/records.mts";
+import { decode, recordKey } from "../src/data/records.mts";
 import { SOURCES, STAGES } from "../src/data/recruiting.mts";
+import { mapApplications } from "../src/gow-intake/mapping.mts";
 import type { RecruitingFailure } from "../src/recruiting/alarm.mts";
 import {
   type Candidate,
+  type CreateCandidateInput,
   createRecruiting,
   type ForumPort,
 } from "../src/recruiting/core.mts";
@@ -46,11 +51,12 @@ async function seed(
 
 function fixture(
   accepted: (candidate: Candidate) => Promise<void> = async () => {},
+  guildId = "guild",
 ) {
   const items = new Map<string, GuildRecord>();
   const failures: RecruitingFailure[] = [];
   let failWrites: GuildRecord["kind"] | undefined;
-  const data = createDataAccess({
+  const storage: StoragePort = {
     get: async (key) => items.get(`${key.pk}/${key.sk}`),
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
@@ -60,8 +66,16 @@ function fixture(
     put: async (item, condition) => {
       if (failWrites === item.kind) throw new Error("storage unavailable");
       const previous = items.get(`${item.pk}/${item.sk}`);
+      const released = condition?.releasedIntake;
+      const intake = released && items.get(`${released.pk}/${released.sk}`);
       if (
         (condition?.absent && previous) ||
+        (condition?.candidatePrevious &&
+          !isDeepStrictEqual(previous, condition.candidatePrevious)) ||
+        (released &&
+          (intake?.kind !== "recruitingIntake" ||
+            intake.state !== "released" ||
+            intake.attemptId !== released.attemptId)) ||
         (condition?.intake &&
           (previous?.kind !== "recruitingIntake" ||
             previous.state !== condition.intake.state ||
@@ -77,7 +91,8 @@ function fixture(
     removeIntake: async (item) => {
       items.delete(`${item.pk}/${item.sk}`);
     },
-  });
+  };
+  const data = createDataAccess(storage);
   const tags = [...STAGES, ...SOURCES].map((name) => ({
     name,
     id: `TAG_${name.toUpperCase()}_ID`,
@@ -102,12 +117,12 @@ function fixture(
     },
   };
   const actor = createPrincipalFactory({
-    guildId: "guild",
+    guildId,
     memberRoleId: "member",
     officerRoleId: "officer",
     jobs: {},
   }).fromVerifiedInteraction({
-    guild_id: "guild",
+    guild_id: guildId,
     member: { user: { id: "officer" }, roles: ["officer"] },
   });
   const principal = createSystemPrincipal([
@@ -118,7 +133,7 @@ function fixture(
   const core = createRecruiting(
     data,
     principal,
-    "guild",
+    guildId,
     port,
     (failure) => failures.push(failure),
     accepted,
@@ -134,6 +149,7 @@ function fixture(
       failWrites = kind;
     },
     data,
+    storage,
     principal,
     items,
     tags,
@@ -290,7 +306,12 @@ test("created replay preserves officer edits and retention", async () => {
     setup.items.set(`${record.pk}/${record.sk}`, record);
     if (retained) await assert.rejects(seed(setup), /CANDIDATE_SAVE_FAILED/);
     else assert.equal((await seed(setup)).name, "Officer edit");
-    assert.deepEqual(await setup.core.candidate(threadId), record);
+    const completed = await setup.core.candidate(threadId);
+    if (retained) assert.deepEqual(completed, record);
+    else {
+      assert.equal(completed?.name, record.name);
+      assert.equal(completed?.recruiting?.threadId, threadId);
+    }
     assert.equal(setup.created(), 1);
     assert.deepEqual(setup.posts, []);
   }
@@ -595,4 +616,397 @@ test("failed repeat post is reposted on retry", async () => {
   await assert.rejects(seed(setup, "Officer lead"));
   await seed(setup, "Officer lead");
   assert.equal(posts, 2);
+});
+
+const adoptedLink = "https://discord.com/channels/1/2";
+async function blockedFixture(
+  input: CreateCandidateInput = {
+    name: "Synthetic",
+    source: "Apply form" as const,
+    actorId: "officer",
+  },
+) {
+  const setup = fixture(undefined, "1");
+  const create = setup.port.create;
+  setup.port.create = async () => {
+    throw new Error("uncertain");
+  };
+  await assert.rejects(setup.core.create(input), /uncertain/);
+  await assert.rejects(setup.core.create(input), /CANDIDATE_INTAKE_BLOCKED/);
+  setup.port.create = create;
+  setup.port.verifyIntake = async () => {};
+  const state = () =>
+    [...setup.items.values()].find((item) => item.kind === "recruitingIntake");
+  const original = state();
+  assert.ok(original?.kind === "recruitingIntake");
+  return {
+    ...setup,
+    input,
+    state,
+    original,
+    resolve: (thread?: string) =>
+      setup.core.resolveIntake(setup.actor, {
+        ref: original.ref,
+        ...(thread ? { thread } : { release: true }),
+      }),
+  };
+}
+
+test("adoption resumes completion, preserves edits, refuses retention and clears payload", async () => {
+  for (const mismatched of [false, true]) {
+    const setup = await blockedFixture();
+    setup.failWrites("candidate");
+    await assert.rejects(setup.resolve(adoptedLink), /CANDIDATE_SAVE_FAILED/);
+    assert.equal(setup.state()?.state, "created");
+    setup.failWrites();
+    const edited: Candidate = {
+      ...recordKey("candidate", "1", "2"),
+      kind: "candidate",
+      ownerId: "1",
+      name: "Officer edit",
+      ...(mismatched
+        ? {
+            recruiting: {
+              threadId: "3",
+              stage: "Trial" as const,
+              source: "Apply form" as const,
+              changedBy: "officer",
+              changedAt: "2030-01-01T00:00:00Z",
+            },
+          }
+        : {}),
+    };
+    setup.items.set(`${edited.pk}/${edited.sk}`, edited);
+    assert.equal(await setup.resolve(adoptedLink), "adopted");
+    const completed = setup.state();
+    assert.equal(decode(completed)?.kind, "recruitingIntake");
+    assert.equal(completed?.payload, undefined);
+    assert.equal(await setup.resolve(adoptedLink), "adopted");
+    await assert.rejects(
+      setup.resolve("https://discord.com/channels/1/3"),
+      /ALREADY_RESOLVED/,
+    );
+    const adopted = await setup.core.candidate("2");
+    assert.equal(adopted?.name, edited.name);
+    assert.equal(adopted?.recruiting?.threadId, "2");
+    assert.equal(adopted?.recruiting?.stage, mismatched ? "Trial" : "New");
+    assert.equal(setup.items.size, 3);
+    assert.equal(setup.created(), 0);
+    assert.deepEqual(setup.posts, []);
+    const retained = {
+      ...edited,
+      retention: {
+        outcome: "Declined" as const,
+        threadId: "2",
+        archived: true,
+      },
+    };
+    setup.items.set(`${edited.pk}/${edited.sk}`, retained);
+    await assert.rejects(setup.resolve(adoptedLink), /CANDIDATE_RETAINED/);
+    assert.deepEqual(setup.state(), completed);
+  }
+});
+
+test("a release generation has one create winner and rejects stale payload writes", async (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now: 1_900_000_000_000 });
+  const setup = await blockedFixture();
+  assert.equal(await setup.resolve(), "released");
+  const released = setup.state();
+  assert.equal(released?.payload, undefined);
+  assert.ok(decode(released));
+  assert.equal(
+    decode({ ...released, payload: setup.original.payload }),
+    undefined,
+  );
+  await assert.rejects(
+    setup.data.forSystem(setup.principal).transitionIntake(setup.original, {
+      state: "blocked",
+      attemptId: setup.original.attemptId,
+      noticeSent: true,
+    }),
+    /WRITE_CONFLICT/,
+  );
+  context.mock.timers.tick(900_000);
+  const ready = deferred(),
+    claim = deferred(),
+    entered = deferred(),
+    finish = deferred();
+  const tags = setup.port.tags;
+  let arrived = 0,
+    creates = 0;
+  setup.port.tags = async () => {
+    if (++arrived === 2) ready.resolve();
+    await claim.promise;
+    return tags();
+  };
+  setup.port.create = async () => {
+    creates++;
+    if (creates > 1) return "duplicate";
+    entered.resolve();
+    await finish.promise;
+    return "fresh";
+  };
+  const outcomes = [
+    setup.core.create(setup.input),
+    setup.core.create(setup.input),
+  ].map(async (operation) => {
+    try {
+      return await operation;
+    } catch (error) {
+      return error;
+    }
+  });
+  await ready.promise;
+  claim.resolve();
+  await entered.promise;
+  assert.match(String(await Promise.race(outcomes)), /IN_PROGRESS/);
+  finish.resolve();
+  assert.equal(
+    (await Promise.all(outcomes)).filter((result) => !(result instanceof Error))
+      .length,
+    1,
+  );
+  assert.equal(creates, 1);
+  assert.equal(setup.state()?.payload, undefined);
+  assert.ok(decode(setup.state()));
+});
+
+test("competing decisions cannot act on a later blocked generation", async () => {
+  const setup = await blockedFixture();
+  const entered = deferred(),
+    finish = deferred();
+  setup.port.verifyIntake = async () => {
+    entered.resolve();
+    await finish.promise;
+  };
+  const adoption = setup.resolve(adoptedLink);
+  await entered.promise;
+  await setup.resolve();
+  let attempts = 0;
+  setup.port.create = async () => {
+    attempts++;
+    throw Object.assign(new Error("rejected"), { status: 400 });
+  };
+  await assert.rejects(setup.core.create(setup.input), /BLOCKED/);
+  const blocked = setup.state();
+  finish.resolve();
+  await assert.rejects(adoption, /BLOCKED/);
+  for (let retry = 0; retry < 3; retry++)
+    await assert.rejects(setup.core.create(setup.input), /BLOCKED/);
+  assert.equal(attempts, 1);
+  assert.deepEqual(setup.state(), blocked);
+  assert.equal(blocked?.outcome, "rejected");
+  await setup.resolve();
+  await assert.rejects(setup.core.create(setup.input), /BLOCKED/);
+  assert.equal(attempts, 2);
+});
+
+test("GoW resolved paths map once, while rejected attempts and real failures still alarm", async () => {
+  for (const adopt of [true, false]) {
+    const payload = {
+      id: 101,
+      character: { name: "Synthetic", className: "Mage" },
+      selectedRolesText: "Damage",
+      message: "Application",
+    };
+    const input = {
+      name: "Synthetic",
+      source: "Guilds of WoW",
+      actorId: "gow-intake",
+      submissionId: "101",
+      content: "Class: Mage\nRole: Damage\n\nApplication",
+    } as const;
+    const setup = await blockedFixture(input);
+    const records = setup.data.forSystem(
+      createSystemPrincipal([
+        "gowApplication",
+        "candidate",
+        "officerNote",
+        "recruitingIntake",
+      ]),
+    );
+    const raw = applicationRecord("1", payload);
+    await records.write(raw);
+    const mapping = {
+      guildId: "1",
+      records,
+      create: setup.core.create,
+      report: () => {},
+    };
+    await assert.rejects(mapApplications(mapping), /MAPPING_FAILED/);
+    if (adopt) await setup.resolve(adoptedLink);
+    else {
+      await setup.resolve();
+      let attempts = 0;
+      setup.port.create = async () => {
+        attempts++;
+        throw Object.assign(new Error("rejected"), { status: 400 });
+      };
+      for (let poll = 0; poll < 3; poll++)
+        await assert.rejects(mapApplications(mapping), /MAPPING_FAILED/);
+      assert.equal(attempts, 1);
+      await setup.resolve();
+      setup.port.create = async () => "fresh";
+    }
+    assert.deepEqual(await mapApplications(mapping), { mapped: 1 });
+    assert.deepEqual(await mapApplications(mapping), { mapped: 0 });
+    const [stored] = await records.get(raw);
+    assert.ok(stored.kind === "gowApplication");
+    assert.equal(stored.mappedThreadId, adopt ? "2" : "fresh");
+    assert.equal(stored.payload, raw.payload);
+    await records.write(raw);
+    await assert.rejects(
+      mapApplications({
+        ...mapping,
+        create: async () => {
+          throw new Error("real failure");
+        },
+      }),
+      /MAPPING_FAILED/,
+    );
+  }
+});
+
+test("release dedupe consumes the grant on both submission-note paths", async () => {
+  for (const previousNote of [false, true]) {
+    const setup = await blockedFixture();
+    const existing = await setup.core.create({
+      ...setup.input,
+      source: "Officer lead",
+    });
+    if (previousNote) {
+      await setup.data.forSystem(setup.principal).insert(
+        {
+          ...recordKey(
+            "officerNote",
+            "1",
+            `${threadId}#submission#${setup.original.ref}`,
+          ),
+          kind: "officerNote",
+          ownerId: "1",
+          text: "Previous submission",
+        },
+        threadId,
+      );
+    }
+    await setup.resolve();
+    assert.equal((await setup.core.create(setup.input)).sk, existing.sk);
+    assert.equal(setup.state()?.state, "done");
+    assert.equal(setup.state()?.payload, undefined);
+    assert.equal(setup.created(), 1);
+  }
+});
+
+test("released retry refuses a stale candidate write and recovers after a failed post", async () => {
+  const setup = await blockedFixture();
+  await setup.core.create({ ...setup.input, source: "Officer lead" });
+  await setup.resolve();
+  const entered = deferred(),
+    resume = deferred();
+  const put = setup.storage.put;
+  let pause = true;
+  setup.storage.put = async (item, condition) => {
+    if (item.kind === "candidate" && pause) {
+      pause = false;
+      entered.resolve();
+      await resume.promise;
+    }
+    await put(item, condition);
+  };
+  const stale = setup.core.create(setup.input).catch((error: unknown) => error);
+  await entered.promise;
+  await setup.core.setFollowUp(threadId, setup.actor, {
+    owner: "edited-owner",
+  });
+  resume.resolve();
+  const result = await stale;
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.owner,
+    "edited-owner",
+  );
+  assert.ok(result instanceof Error && /WRITE_CONFLICT/.test(result.message));
+  assert.equal(setup.state()?.state, "released");
+  const post = setup.port.post;
+  setup.port.post = async () => {
+    throw new Error("post failed");
+  };
+  await assert.rejects(setup.core.create(setup.input), /SAVE_FAILED/);
+  assert.equal(setup.state()?.state, "released");
+  setup.port.post = post;
+  await setup.core.create(setup.input);
+  assert.equal(setup.state()?.state, "done");
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.owner,
+    "edited-owner",
+  );
+});
+
+test("supplied-thread verifier checks authenticated ownership and the final starter ref", async () => {
+  const setup = await blockedFixture();
+  const ref = setup.original.ref;
+  const thread = {
+    type: 11,
+    guildId: "1",
+    parentId: "forum",
+    ownerId: "bot",
+    fetchStarterMessage: async () => ({
+      author: { id: "bot" },
+      content: `Application\n-# ref ${ref} \n`,
+    }),
+  };
+  const forum = {
+    id: "forum",
+    guild: { id: "1" },
+    client: {
+      rest: {
+        get: async (path: string) => {
+          assert.equal(path, "/users/@me");
+          return { id: "bot" };
+        },
+      },
+    },
+    threads: {
+      fetch: async (threadId: string) => (threadId === "2" ? thread : null),
+    },
+  };
+  const verify = discordForum(forum as unknown as ForumChannel).verifyIntake;
+  assert.ok(verify);
+  setup.port.verifyIntake = verify;
+  await assert.rejects(
+    setup.resolve("https://discord.com/channels/1/2/3"),
+    /VERIFICATION_FAILED/,
+  );
+  assert.deepEqual(setup.state(), setup.original);
+  for (const changed of [
+    { ownerId: "other" },
+    { parentId: "elsewhere" },
+    { guildId: "other" },
+    { type: 12 },
+    { fetchStarterMessage: async () => null },
+    {
+      fetchStarterMessage: async () => ({
+        author: { id: "bot" },
+        content: `Application\n-# ref ${"b".repeat(64)}`,
+      }),
+    },
+    {
+      fetchStarterMessage: async () => ({
+        author: { id: "other" },
+        content: `Application\n-# ref ${ref}`,
+      }),
+    },
+    {
+      fetchStarterMessage: async () => ({
+        author: { id: "bot" },
+        content: `Application\n-# ref ${ref}\nMore text`,
+      }),
+    },
+  ]) {
+    const snapshot = { ...thread };
+    Object.assign(thread, changed);
+    await assert.rejects(setup.resolve(adoptedLink), /VERIFICATION_FAILED/);
+    assert.deepEqual(setup.state(), setup.original);
+    Object.assign(thread, snapshot);
+  }
+  assert.equal(await setup.resolve(adoptedLink), "adopted");
 });

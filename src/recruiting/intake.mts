@@ -109,7 +109,16 @@ export function createIntake(ports: {
         },
         threadId,
       );
-      await insert({
+      const recruiting = {
+        threadId,
+        source: payload.source,
+        stage: "New" as const,
+        changedBy: payload.actorId,
+        changedAt: payload.changedAt,
+        nextActionAt: payload.nextActionAt,
+        ...(payload.owner ? { owner: payload.owner } : {}),
+      };
+      const initial: Candidate = {
         ...recordKey("candidate", guildId, threadId),
         kind: "candidate",
         ownerId: guildId,
@@ -119,20 +128,25 @@ export function createIntake(ports: {
           : {}),
         ...(payload.characters ? { characters: payload.characters } : {}),
         ...(payload.application ? { application: payload.application } : {}),
-        recruiting: {
-          threadId,
-          source: payload.source,
-          stage: "New",
-          changedBy: payload.actorId,
-          changedAt: payload.changedAt,
-          nextActionAt: payload.nextActionAt,
-          ...(payload.owner ? { owner: payload.owner } : {}),
-        },
-      });
-      const existing = await ports.candidate(threadId);
+        recruiting,
+      };
+      await insert(initial);
+      let existing = await ports.candidate(threadId);
       if (!existing || existing.retention)
         throw new Error("CANDIDATE_INTAKE_BLOCKED");
-      const { payload: _payload, ...completed } = intake;
+      if (existing.recruiting?.threadId !== threadId) {
+        const repaired: Candidate = {
+          ...existing,
+          recruiting: {
+            ...recruiting,
+            ...existing.recruiting,
+            threadId,
+          },
+        };
+        await records.write(repaired, { candidatePrevious: existing });
+        existing = repaired;
+      }
+      const { payload: _payload, released: _released, ...completed } = intake;
       if (!(await transition(intake, { ...completed, state: "done" })))
         return current(intake.ref);
       return existing;
@@ -141,14 +155,83 @@ export function createIntake(ports: {
   async function current(ref: string): Promise<Candidate> {
     const intake = await read(ref);
     if (!intake) throw new Error("CANDIDATE_INTAKE_MISSING");
+    if (intake.state === "released")
+      throw new Error("CANDIDATE_INTAKE_ALREADY_RESOLVED");
     return resume(intake, false);
   }
   return {
     async replay(ref: string) {
       const intake = await read(ref);
-      return intake ? resume(intake) : undefined;
+      if (intake?.state === "released") return { released: intake };
+      return { candidate: intake ? await resume(intake) : undefined };
     },
-    async create(ref: string, payload: IntakePayload, tags: string[]) {
+    async finishReleased(released: Intake | undefined, candidate: Candidate) {
+      if (!released) return candidate;
+      const threadId = candidate.recruiting?.threadId;
+      if (!threadId) throw new Error("INVALID_INTAKE_THREAD");
+      if (
+        !(await transition(released, {
+          ...released,
+          state: "done",
+          attemptId: randomUUID(),
+          threadId,
+        }))
+      )
+        return current(released.ref);
+      return candidate;
+    },
+    async resolve(ref: string, threadId?: string) {
+      const previous = await read(ref);
+      if (!previous) throw new Error("CANDIDATE_INTAKE_MISSING");
+      async function resolved(intake: Intake | undefined) {
+        if (!intake) throw new Error("CANDIDATE_INTAKE_MISSING");
+        if (intake.state === "blocked")
+          throw new Error("CANDIDATE_INTAKE_BLOCKED");
+        if (
+          threadId &&
+          intake?.threadId === threadId &&
+          (intake.state === "created" || intake.state === "done")
+        ) {
+          await resume(intake);
+          return "adopted" as const;
+        }
+        if (intake?.state === "pending" || intake?.state === "uncertain")
+          throw new Error("CANDIDATE_INTAKE_IN_PROGRESS");
+        throw new Error("CANDIDATE_INTAKE_ALREADY_RESOLVED");
+      }
+      if (threadId) {
+        if (!ports.forum.verifyIntake)
+          throw new Error("INTAKE_VERIFICATION_FAILED");
+        await ports.forum.verifyIntake(threadId, ref);
+        if ((await ports.candidate(threadId))?.retention)
+          throw new Error("CANDIDATE_RETAINED");
+      }
+      if (previous.state !== "blocked") return resolved(previous);
+      const base: Intake = {
+        ...recordKey("recruitingIntake", guildId, ref),
+        kind: "recruitingIntake",
+        ownerId: guildId,
+        ref,
+        attemptId: randomUUID(),
+        startedAt: new Date().toISOString(),
+        state: "released",
+      };
+      const next: Intake = threadId
+        ? { ...base, state: "created", threadId, payload: previous.payload }
+        : base;
+      if (!(await transition(previous, next))) return resolved(await read(ref));
+      if (threadId) {
+        await resume(next);
+        return "adopted" as const;
+      }
+      return "released" as const;
+    },
+    async create(
+      ref: string,
+      payload: IntakePayload,
+      tags: string[],
+      released?: Intake,
+    ) {
       const pending: Intake = {
         ...recordKey("recruitingIntake", guildId, ref),
         kind: "recruitingIntake",
@@ -158,12 +241,17 @@ export function createIntake(ports: {
         startedAt: new Date().toISOString(),
         ref,
         payload,
+        ...(released ? { released: true as const } : {}),
       };
-      try {
-        await records.insert(pending);
-      } catch (error) {
-        if (!conflict(error)) throw error;
-        return current(ref);
+      if (released) {
+        if (!(await transition(released, pending))) return current(ref);
+      } else {
+        try {
+          await records.insert(pending);
+        } catch (error) {
+          if (!conflict(error)) throw error;
+          return current(ref);
+        }
       }
       let threadId: string;
       try {
@@ -182,6 +270,17 @@ export function createIntake(ports: {
           error.status >= 400 &&
           error.status < 500;
         try {
+          // A rejected released attempt still consumes its one create opportunity.
+          if (definite && pending.released) {
+            const rejected: Intake = {
+              ...pending,
+              state: "blocked",
+              outcome: "rejected",
+              noticeSent: false,
+            };
+            if (await transition(pending, rejected)) return blocked(rejected);
+            return current(ref);
+          }
           if (definite) await records.deleteIntake(pending);
           else await transition(pending, { ...pending, state: "uncertain" });
         } catch (storageError) {

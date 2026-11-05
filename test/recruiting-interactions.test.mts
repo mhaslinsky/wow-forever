@@ -15,7 +15,7 @@ import {
 import { createRecruiting } from "../src/recruiting/core.mts";
 import { createRecruitingRoutes } from "../src/recruiting/interactions.mts";
 
-function fixture(role = "visitor") {
+function fixture(role = "visitor", guildId = "guild") {
   const items: GuildRecord[] = [];
   const tags = [...STAGES, ...SOURCES].map((name) => ({ id: name, name }));
   let applied: string[] = [];
@@ -31,7 +31,7 @@ function fixture(role = "visitor") {
       },
     }),
     createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
-    "guild",
+    guildId,
     {
       tags: async () => tags,
       post: async () => {},
@@ -47,26 +47,26 @@ function fixture(role = "visitor") {
     },
   );
   const actor = createPrincipalFactory({
-    guildId: "guild",
+    guildId,
     memberRoleId: "member",
     officerRoleId: "officer",
     officerRoleIds: ["gm"],
     jobs: {},
   }).fromVerifiedInteraction({
-    guild_id: "guild",
+    guild_id: guildId,
     member: { user: { id: "person" }, roles: [role] },
   });
   const interaction: Interaction = {
     id: "interaction",
     application_id: "app",
     token: "synthetic",
-    guild_id: "guild",
+    guild_id: guildId,
     type: 2,
     member: { user: { id: "person" }, roles: [role] },
   };
   const routes = createRecruitingRoutes(
     async () => ({ core, actor }),
-    () => "guild",
+    () => guildId,
   );
   const run = (input: Interaction) => {
     const route = findRoute(routes, input);
@@ -74,6 +74,7 @@ function fixture(role = "visitor") {
     return route.handler(input, new AbortController().signal);
   };
   return {
+    actor,
     core,
     items,
     interaction,
@@ -287,4 +288,62 @@ test("repeat application preserves an existing Trial stage", async () => {
     "Trial",
   );
   assert.ok(setup.applied().includes("Trial"));
+});
+
+test("resolve enforces Officer authority, guild and mutually exclusive validated choices", async () => {
+  const setup = fixture("officer", "1"),
+    ref = "a".repeat(64);
+  const choice = { type: 5, name: "release", value: true };
+  const run = (options: unknown[], guild = "1") =>
+    setup.run({
+      ...setup.interaction,
+      guild_id: guild,
+      data: {
+        name: "recruit",
+        options: [{ type: 1, name: "resolve", options }],
+      },
+    });
+  const reference = { type: 3, name: "ref", value: ref };
+  for (const options of [
+    [],
+    [reference],
+    [reference, choice, choice],
+    [reference, { ...choice, value: false }],
+    [
+      reference,
+      choice,
+      { type: 3, name: "thread", value: "https://discord.com/channels/1/2" },
+    ],
+    [reference, { ...choice, name: "unknown" }],
+    [{ ...reference, value: "bad" }, choice],
+  ]) {
+    assert.deepEqual(
+      await run(options),
+      message("Supply a ref and either a thread or release:true."),
+    );
+  }
+  assert.deepEqual(
+    await run([reference, choice], "other"),
+    message("Use this command in the server."),
+  );
+  const member = fixture("member", "1");
+  await assert.rejects(
+    member.core.resolveIntake(member.actor, { ref, release: true }),
+    /WRITE_DENIED/,
+  );
+  assert.deepEqual(
+    await member.run({ ...member.interaction, data: { name: "recruit" } }),
+    message("Officers only."),
+  );
+  assert.equal(setup.items.length, 0);
+  for (const link of [
+    "https://example.com/channels/1/2",
+    "https://discord.com/channels/9/2",
+    "http://discord.com/channels/1/2",
+  ]) {
+    assert.deepEqual(
+      await run([reference, { type: 3, name: "thread", value: link }]),
+      message("Use a Discord thread link from this server."),
+    );
+  }
 });

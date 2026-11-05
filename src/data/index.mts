@@ -31,7 +31,11 @@ export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
+type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
+type Intake = Extract<GuildRecord, { kind: "recruitingIntake" }>;
 export type WriteCondition = {
+  candidatePrevious?: Candidate;
+  releasedIntake?: Intake;
   council?: {
     guildId: string;
     voteId: string;
@@ -348,6 +352,25 @@ export function createDataAccess(
         }
         const item = decode(raw);
         if (!item) throw new Error("INVALID_RECORD");
+        if (
+          condition?.candidatePrevious &&
+          (item.kind !== "candidate" ||
+            !decode(condition.candidatePrevious) ||
+            condition.candidatePrevious.pk !== item.pk ||
+            condition.candidatePrevious.sk !== item.sk)
+        )
+          throw new Error("INVALID_RECORD");
+        if (condition?.releasedIntake) {
+          const released = decode(condition.releasedIntake);
+          if (
+            !condition.candidatePrevious ||
+            released?.kind !== "recruitingIntake" ||
+            released.state !== "released" ||
+            released.ownerId !== item.ownerId
+          )
+            throw new Error("INVALID_RECORD");
+          systemWrite(released);
+        }
         if (
           item.kind === "recruitingIntake" ||
           condition?.absent ||
@@ -856,34 +879,96 @@ function createDynamoStorage(config: {
         );
         return;
       }
-      await client.send(
-        new PutCommand({
-          TableName: config.tableName,
-          Item: {
-            ...item,
-            gsi1pk: `${item.pk.split("#")[0]}#ALL`,
-            gsi1sk: `${item.pk}#${item.sk}`,
-          },
-          ConditionExpression:
-            "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
-            (item.kind === "candidate"
-              ? " AND attribute_not_exists(retention)"
-              : "") +
-            (condition?.preserveMeasuredAttendance
-              ? " AND (attribute_not_exists(#source) OR #source <> :measured)"
-              : ""),
-          ...(condition?.preserveMeasuredAttendance
-            ? { ExpressionAttributeNames: { "#source": "source" } }
+      const previous = condition?.candidatePrevious;
+      const fields = [
+        "name",
+        "discordUserId",
+        "characters",
+        "application",
+        "recruiting",
+      ] as const;
+      const expected = previous
+        ? fields
+            .map((field) =>
+              previous[field] === undefined
+                ? `attribute_not_exists(#${field})`
+                : `#${field} = :${field}`,
+            )
+            .join(" AND ")
+        : "";
+      const candidatePut = {
+        TableName: config.tableName,
+        Item: {
+          ...item,
+          gsi1pk: `${item.pk.split("#")[0]}#ALL`,
+          gsi1sk: `${item.pk}#${item.sk}`,
+        },
+        ConditionExpression:
+          "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
+          (item.kind === "candidate"
+            ? " AND attribute_not_exists(retention)"
+            : "") +
+          (expected ? ` AND ${expected}` : "") +
+          (condition?.preserveMeasuredAttendance
+            ? " AND (attribute_not_exists(#source) OR #source <> :measured)"
+            : ""),
+        ...(previous || condition?.preserveMeasuredAttendance
+          ? {
+              ExpressionAttributeNames: {
+                ...(previous
+                  ? Object.fromEntries(
+                      fields.map((field) => [`#${field}`, field]),
+                    )
+                  : {}),
+                ...(condition?.preserveMeasuredAttendance
+                  ? { "#source": "source" }
+                  : {}),
+              },
+            }
+          : {}),
+        ExpressionAttributeValues: {
+          ":kind": item.kind,
+          ":owner": item.ownerId,
+          ...(previous
+            ? Object.fromEntries(
+                fields
+                  .filter((field) => previous[field] !== undefined)
+                  .map((field) => [`:${field}`, previous[field]]),
+              )
             : {}),
-          ExpressionAttributeValues: {
-            ":kind": item.kind,
-            ":owner": item.ownerId,
-            ...(condition?.preserveMeasuredAttendance
-              ? { ":measured": "guildos" }
-              : {}),
-          },
-        }),
-      );
+          ...(condition?.preserveMeasuredAttendance
+            ? { ":measured": "guildos" }
+            : {}),
+        },
+      };
+      if (condition?.releasedIntake) {
+        const released = condition.releasedIntake;
+        // A no-op intake Put checks the release using existing PutItem grants.
+        await client.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                Put: {
+                  TableName: config.tableName,
+                  Item: {
+                    ...released,
+                    gsi1pk: `RECRUITING_INTAKE#ALL`,
+                    gsi1sk: `${released.pk}#${released.sk}`,
+                  },
+                  ConditionExpression:
+                    "#state = :state AND attemptId = :attemptId",
+                  ExpressionAttributeNames: { "#state": "state" },
+                  ExpressionAttributeValues: {
+                    ":state": "released",
+                    ":attemptId": released.attemptId,
+                  },
+                },
+              },
+              { Put: candidatePut },
+            ],
+          }),
+        );
+      } else await client.send(new PutCommand(candidatePut));
     },
   };
   return storage;

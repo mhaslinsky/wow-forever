@@ -15,6 +15,7 @@ import {
   type Reply,
   type Route,
 } from "../interactions/core.mts";
+import { resolveRoute } from "./resolve-interactions.mts";
 import type { ResolveRecruitingContext } from "./runtime.mts";
 
 type RaidRole = CharacterDeclaration["raidRole"];
@@ -172,6 +173,7 @@ export function createRecruitingRoutes(
     );
   }
   return [
+    resolveRoute(resolveContext, inGuild),
     {
       type: 2,
       name: "apply",
