@@ -294,7 +294,15 @@ export function createRecruiting(
                 }
               : {}),
           };
-          await records.write(enriched);
+          await records.write(
+            enriched,
+            replay.released
+              ? {
+                  candidatePrevious: existing,
+                  releasedIntake: replay.released,
+                }
+              : undefined,
+          );
           await records.write(note(threadId), {
             candidateThreadId: threadId,
           });

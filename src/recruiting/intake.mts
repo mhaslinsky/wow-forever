@@ -109,7 +109,16 @@ export function createIntake(ports: {
         },
         threadId,
       );
-      await insert({
+      const recruiting = {
+        threadId,
+        source: payload.source,
+        stage: "New" as const,
+        changedBy: payload.actorId,
+        changedAt: payload.changedAt,
+        nextActionAt: payload.nextActionAt,
+        ...(payload.owner ? { owner: payload.owner } : {}),
+      };
+      const initial: Candidate = {
         ...recordKey("candidate", guildId, threadId),
         kind: "candidate",
         ownerId: guildId,
@@ -119,19 +128,24 @@ export function createIntake(ports: {
           : {}),
         ...(payload.characters ? { characters: payload.characters } : {}),
         ...(payload.application ? { application: payload.application } : {}),
-        recruiting: {
-          threadId,
-          source: payload.source,
-          stage: "New",
-          changedBy: payload.actorId,
-          changedAt: payload.changedAt,
-          nextActionAt: payload.nextActionAt,
-          ...(payload.owner ? { owner: payload.owner } : {}),
-        },
-      });
-      const existing = await ports.candidate(threadId);
+        recruiting,
+      };
+      await insert(initial);
+      let existing = await ports.candidate(threadId);
       if (!existing || existing.retention)
         throw new Error("CANDIDATE_INTAKE_BLOCKED");
+      if (existing.recruiting?.threadId !== threadId) {
+        const repaired: Candidate = {
+          ...existing,
+          recruiting: {
+            ...recruiting,
+            ...existing.recruiting,
+            threadId,
+          },
+        };
+        await records.write(repaired, { candidatePrevious: existing });
+        existing = repaired;
+      }
       const { payload: _payload, released: _released, ...completed } = intake;
       if (!(await transition(intake, { ...completed, state: "done" })))
         return current(intake.ref);

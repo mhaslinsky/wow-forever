@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import {
   GuildAuditLogsEntry as AuditEntry,
   Client,
@@ -14,7 +15,7 @@ import {
   createSystemPrincipal,
 } from "../src/auth/index.mts";
 import { applicationRecord } from "../src/data/gow-applications.mts";
-import { createDataAccess } from "../src/data/index.mts";
+import { createDataAccess, type StoragePort } from "../src/data/index.mts";
 import type { GuildRecord } from "../src/data/records.mts";
 import { decode, recordKey } from "../src/data/records.mts";
 import { SOURCES, STAGES } from "../src/data/recruiting.mts";
@@ -55,7 +56,7 @@ function fixture(
   const items = new Map<string, GuildRecord>();
   const failures: RecruitingFailure[] = [];
   let failWrites: GuildRecord["kind"] | undefined;
-  const data = createDataAccess({
+  const storage: StoragePort = {
     get: async (key) => items.get(`${key.pk}/${key.sk}`),
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
@@ -65,8 +66,16 @@ function fixture(
     put: async (item, condition) => {
       if (failWrites === item.kind) throw new Error("storage unavailable");
       const previous = items.get(`${item.pk}/${item.sk}`);
+      const released = condition?.releasedIntake;
+      const intake = released && items.get(`${released.pk}/${released.sk}`);
       if (
         (condition?.absent && previous) ||
+        (condition?.candidatePrevious &&
+          !isDeepStrictEqual(previous, condition.candidatePrevious)) ||
+        (released &&
+          (intake?.kind !== "recruitingIntake" ||
+            intake.state !== "released" ||
+            intake.attemptId !== released.attemptId)) ||
         (condition?.intake &&
           (previous?.kind !== "recruitingIntake" ||
             previous.state !== condition.intake.state ||
@@ -82,7 +91,8 @@ function fixture(
     removeIntake: async (item) => {
       items.delete(`${item.pk}/${item.sk}`);
     },
-  });
+  };
+  const data = createDataAccess(storage);
   const tags = [...STAGES, ...SOURCES].map((name) => ({
     name,
     id: `TAG_${name.toUpperCase()}_ID`,
@@ -139,6 +149,7 @@ function fixture(
       failWrites = kind;
     },
     data,
+    storage,
     principal,
     items,
     tags,
@@ -295,7 +306,12 @@ test("created replay preserves officer edits and retention", async () => {
     setup.items.set(`${record.pk}/${record.sk}`, record);
     if (retained) await assert.rejects(seed(setup), /CANDIDATE_SAVE_FAILED/);
     else assert.equal((await seed(setup)).name, "Officer edit");
-    assert.deepEqual(await setup.core.candidate(threadId), record);
+    const completed = await setup.core.candidate(threadId);
+    if (retained) assert.deepEqual(completed, record);
+    else {
+      assert.equal(completed?.name, record.name);
+      assert.equal(completed?.recruiting?.threadId, threadId);
+    }
     assert.equal(setup.created(), 1);
     assert.deepEqual(setup.posts, []);
   }
@@ -637,38 +653,58 @@ async function blockedFixture(
 }
 
 test("adoption resumes completion, preserves edits, refuses retention and clears payload", async () => {
-  const setup = await blockedFixture();
-  setup.failWrites("candidate");
-  await assert.rejects(setup.resolve(adoptedLink), /CANDIDATE_SAVE_FAILED/);
-  assert.equal(setup.state()?.state, "created");
-  setup.failWrites();
-  const edited: Candidate = {
-    ...recordKey("candidate", "1", "2"),
-    kind: "candidate",
-    ownerId: "1",
-    name: "Officer edit",
-  };
-  setup.items.set(`${edited.pk}/${edited.sk}`, edited);
-  assert.equal(await setup.resolve(adoptedLink), "adopted");
-  const completed = setup.state();
-  assert.equal(decode(completed)?.kind, "recruitingIntake");
-  assert.equal(completed?.payload, undefined);
-  assert.equal(await setup.resolve(adoptedLink), "adopted");
-  await assert.rejects(
-    setup.resolve("https://discord.com/channels/1/3"),
-    /ALREADY_RESOLVED/,
-  );
-  assert.deepEqual(await setup.core.candidate("2"), edited);
-  assert.equal(setup.items.size, 3);
-  assert.equal(setup.created(), 0);
-  assert.deepEqual(setup.posts, []);
-  const retained = {
-    ...edited,
-    retention: { outcome: "Declined" as const, threadId: "2", archived: true },
-  };
-  setup.items.set(`${edited.pk}/${edited.sk}`, retained);
-  await assert.rejects(setup.resolve(adoptedLink), /CANDIDATE_RETAINED/);
-  assert.deepEqual(setup.state(), completed);
+  for (const mismatched of [false, true]) {
+    const setup = await blockedFixture();
+    setup.failWrites("candidate");
+    await assert.rejects(setup.resolve(adoptedLink), /CANDIDATE_SAVE_FAILED/);
+    assert.equal(setup.state()?.state, "created");
+    setup.failWrites();
+    const edited: Candidate = {
+      ...recordKey("candidate", "1", "2"),
+      kind: "candidate",
+      ownerId: "1",
+      name: "Officer edit",
+      ...(mismatched
+        ? {
+            recruiting: {
+              threadId: "3",
+              stage: "Trial" as const,
+              source: "Apply form" as const,
+              changedBy: "officer",
+              changedAt: "2030-01-01T00:00:00Z",
+            },
+          }
+        : {}),
+    };
+    setup.items.set(`${edited.pk}/${edited.sk}`, edited);
+    assert.equal(await setup.resolve(adoptedLink), "adopted");
+    const completed = setup.state();
+    assert.equal(decode(completed)?.kind, "recruitingIntake");
+    assert.equal(completed?.payload, undefined);
+    assert.equal(await setup.resolve(adoptedLink), "adopted");
+    await assert.rejects(
+      setup.resolve("https://discord.com/channels/1/3"),
+      /ALREADY_RESOLVED/,
+    );
+    const adopted = await setup.core.candidate("2");
+    assert.equal(adopted?.name, edited.name);
+    assert.equal(adopted?.recruiting?.threadId, "2");
+    assert.equal(adopted?.recruiting?.stage, mismatched ? "Trial" : "New");
+    assert.equal(setup.items.size, 3);
+    assert.equal(setup.created(), 0);
+    assert.deepEqual(setup.posts, []);
+    const retained = {
+      ...edited,
+      retention: {
+        outcome: "Declined" as const,
+        threadId: "2",
+        archived: true,
+      },
+    };
+    setup.items.set(`${edited.pk}/${edited.sk}`, retained);
+    await assert.rejects(setup.resolve(adoptedLink), /CANDIDATE_RETAINED/);
+    assert.deepEqual(setup.state(), completed);
+  }
 });
 
 test("a release generation has one create winner and rejects stale payload writes", async (context) => {
@@ -861,6 +897,50 @@ test("release dedupe consumes the grant on both submission-note paths", async ()
   }
 });
 
+test("released retry refuses a stale candidate write and recovers after a failed post", async () => {
+  const setup = await blockedFixture();
+  await setup.core.create({ ...setup.input, source: "Officer lead" });
+  await setup.resolve();
+  const entered = deferred(),
+    resume = deferred();
+  const put = setup.storage.put;
+  let pause = true;
+  setup.storage.put = async (item, condition) => {
+    if (item.kind === "candidate" && pause) {
+      pause = false;
+      entered.resolve();
+      await resume.promise;
+    }
+    await put(item, condition);
+  };
+  const stale = setup.core.create(setup.input).catch((error: unknown) => error);
+  await entered.promise;
+  await setup.core.setFollowUp(threadId, setup.actor, {
+    owner: "edited-owner",
+  });
+  resume.resolve();
+  const result = await stale;
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.owner,
+    "edited-owner",
+  );
+  assert.ok(result instanceof Error && /WRITE_CONFLICT/.test(result.message));
+  assert.equal(setup.state()?.state, "released");
+  const post = setup.port.post;
+  setup.port.post = async () => {
+    throw new Error("post failed");
+  };
+  await assert.rejects(setup.core.create(setup.input), /SAVE_FAILED/);
+  assert.equal(setup.state()?.state, "released");
+  setup.port.post = post;
+  await setup.core.create(setup.input);
+  assert.equal(setup.state()?.state, "done");
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.owner,
+    "edited-owner",
+  );
+});
+
 test("supplied-thread verifier checks authenticated ownership and the final starter ref", async () => {
   const setup = await blockedFixture();
   const ref = setup.original.ref;
@@ -885,11 +965,18 @@ test("supplied-thread verifier checks authenticated ownership and the final star
         },
       },
     },
-    threads: { fetch: async () => thread },
+    threads: {
+      fetch: async (threadId: string) => (threadId === "2" ? thread : null),
+    },
   };
   const verify = discordForum(forum as unknown as ForumChannel).verifyIntake;
   assert.ok(verify);
   setup.port.verifyIntake = verify;
+  await assert.rejects(
+    setup.resolve("https://discord.com/channels/1/2/3"),
+    /VERIFICATION_FAILED/,
+  );
+  assert.deepEqual(setup.state(), setup.original);
   for (const changed of [
     { ownerId: "other" },
     { parentId: "elsewhere" },
