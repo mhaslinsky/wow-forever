@@ -291,10 +291,10 @@ test("Officer Converse request contains only selected own-roster fields (C1)", a
 });
 test("answers replace every em dash with a comma", async () => {
   const state = setup();
-  state.output("One\u2014two \u2014 three");
+  state.output("One\u2014two \u2014 three -- four");
   assert.equal(
     await state.ask(actor("member"), "Question", signal),
-    "One, two, three",
+    "One, two, three, four",
   );
 });
 test("answer prompt requires plain uncertainty and no em dashes", async () => {
@@ -311,6 +311,57 @@ test("answer prompt requires plain uncertainty and no em dashes", async () => {
     prompt.includes(
       "Answer any question, WoW or not, and play along with jokes and banter; never turn down a harmless question as off-topic.",
     ),
+  );
+});
+test("bracketed names link to Wowhead pages from evidence or a search", async () => {
+  const state = setup();
+  const quest =
+    "https://www.wowhead.com/forever/quest=96393/old-ironforge-incursion";
+  const ask = async (output: string) => {
+    state.output(output);
+    const records = await state.data
+      .forUser(actor("member"))
+      .get(recordKey("member", "asker", "guild"));
+    const results = [
+      {
+        url: "https://example.com/q",
+        title: "Q",
+        excerpts: [`[Quest](${quest}) ${quest}%20extra`],
+      },
+    ];
+    return state.converse(
+      {
+        actor: actor("member"),
+        records,
+        question: "Q",
+        guildId: "guild",
+        evidence: { status: "found", results },
+      },
+      signal,
+    );
+  };
+  assert.equal(
+    await ask(
+      "Do [[Old Ironforge Incursion]] and [[Thom's (Heirlooms)]] https://evil.example/x",
+    ),
+    `Do [Old Ironforge Incursion](<${quest}>) and [Thom's Heirlooms](<https://www.wowhead.com/forever/search?q=Thom's%20Heirlooms>)\nSources: <https://example.com/q>`,
+  );
+  assert.equal(
+    (
+      await ask(
+        "[[Deadmines\\]] ht[[ ]]tps://evil.example HTTPS://evil.example run --help",
+      )
+    ).split("\n")[0],
+    "[Deadmines](<https://www.wowhead.com/forever/search?q=Deadmines>)   run --help",
+  );
+  await assert.rejects(ask("[[ ]] [[***]]"), /ASSISTANT_GENERATION_FAILED/);
+  assert.match(
+    await ask("ht[[ ]]tps://x.example/[[Old Ironforge]]"),
+    /^\[Old Ironforge\]\(<.*search\?q=Old%20Ironforge>\)/,
+  );
+  const long = await ask("[[Old Ironforge Incursion]] ".repeat(60));
+  assert.ok(
+    !long.includes("](<") && long.startsWith("Old Ironforge Incursion Old"),
   );
 });
 test("answers cap evidence at three links without previews", async () => {
