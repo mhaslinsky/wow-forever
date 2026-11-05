@@ -37,6 +37,17 @@ export const KIND_POLICY = Object.freeze({
 } as const);
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
+export type DecisionAward = {
+  item: string;
+  names: string[];
+  raidStart: number;
+  closedAt: number;
+  baselineExportedAt: number;
+  baselineLoot: string[];
+  status: "pending" | "confirmed" | "mismatch";
+  snapshotId?: string;
+  fingerprint?: string;
+};
 const CODECS = Object.freeze({
   departureCheck: {
     prefix: "DEPARTURE_CHECK",
@@ -96,51 +107,55 @@ export type GuildRecord = {
       Fields<Current>,
       string
     > &
-    (Current extends "departure"
-      ? { claimedAt: number; messageId?: string }
-      : Current extends "guildSnapshot"
-        ? {
-            exportedAt: number;
-            receivedAt: number;
-            writtenAt: number;
-            snapshotVersion: 1;
-            snapshot: Snapshot;
-          }
-        : Current extends "guildSnapshotLatest"
-          ? { exportedAt: number }
-          : Current extends "recruitingIntake"
-            ? IntakeFields
-            : Current extends "voicePresence"
-              ? { leftAt?: string; endUnknown?: boolean }
-              : Current extends "candidate"
-                ? {
-                    recruiting?: RecruitingState;
-                    retention?: {
-                      outcome: "Declined" | "Withdrawn";
-                      threadId: string;
-                      archived: boolean;
-                    };
-                    application?: Application;
-                    discordUserId?: string;
-                    characters?: CharacterDeclaration[];
-                  }
-                : Current extends "gowApplication"
-                  ? { mappedThreadId?: string }
-                  : Current extends "member"
+    (Current extends "lootVote"
+      ? { revision?: string; closed?: boolean }
+      : Current extends "lootDecision"
+        ? { award?: DecisionAward }
+        : Current extends "departure"
+          ? { claimedAt: number; messageId?: string }
+          : Current extends "guildSnapshot"
+            ? {
+                exportedAt: number;
+                receivedAt: number;
+                writtenAt: number;
+                snapshotVersion: 1;
+                snapshot: Snapshot;
+              }
+            : Current extends "guildSnapshotLatest"
+              ? { exportedAt: number }
+              : Current extends "recruitingIntake"
+                ? IntakeFields
+                : Current extends "voicePresence"
+                  ? { leftAt?: string; endUnknown?: boolean }
+                  : Current extends "candidate"
                     ? {
-                        roster?: (CharacterDeclaration & {
-                          confirmed: boolean;
-                        })[];
-                        raidTeam?: string;
-                        active?: boolean;
+                        recruiting?: RecruitingState;
+                        retention?: {
+                          outcome: "Declined" | "Withdrawn";
+                          threadId: string;
+                          archived: boolean;
+                        };
+                        application?: Application;
+                        discordUserId?: string;
+                        characters?: CharacterDeclaration[];
                       }
-                    : Current extends "attendance"
-                      ? { attemptId?: string }
-                      : Current extends "fact"
-                        ? { createdAt?: number; forgetAt?: number }
-                        : Current extends "memoryReply"
-                          ? { expiresAt: number }
-                          : Record<never, never>);
+                    : Current extends "gowApplication"
+                      ? { mappedThreadId?: string }
+                      : Current extends "member"
+                        ? {
+                            roster?: (CharacterDeclaration & {
+                              confirmed: boolean;
+                            })[];
+                            raidTeam?: string;
+                            active?: boolean;
+                          }
+                        : Current extends "attendance"
+                          ? { attemptId?: string }
+                          : Current extends "fact"
+                            ? { createdAt?: number; forgetAt?: number }
+                            : Current extends "memoryReply"
+                              ? { expiresAt: number }
+                              : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -179,6 +194,39 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "lootVote") {
+    if (item.revision !== undefined) {
+      if (typeof item.revision !== "string" || !item.revision) return;
+      output.revision = item.revision;
+    }
+    if (item.closed !== undefined) {
+      if (typeof item.closed !== "boolean") return;
+      output.closed = item.closed;
+    }
+  }
+  if (kind === "lootDecision" && item.award !== undefined) {
+    const award = item.award as DecisionAward;
+    if (
+      !award ||
+      typeof award.item !== "string" ||
+      !award.item.trim() ||
+      !Array.isArray(award.names) ||
+      !award.names.length ||
+      !award.names.every((name) => typeof name === "string" && name.trim()) ||
+      ![award.raidStart, award.closedAt, award.baselineExportedAt].every(
+        (value) => Number.isFinite(value) && value >= 0,
+      ) ||
+      !Array.isArray(award.baselineLoot) ||
+      !award.baselineLoot.every((entry) => typeof entry === "string") ||
+      !["pending", "confirmed", "mismatch"].includes(award.status) ||
+      (award.fingerprint !== undefined &&
+        (typeof award.fingerprint !== "string" || !award.fingerprint)) ||
+      (award.snapshotId !== undefined &&
+        !/^[a-f0-9]{64}$/.test(award.snapshotId))
+    )
+      return;
+    output.award = structuredClone(award);
   }
   if (kind === "memoryReply") {
     if (

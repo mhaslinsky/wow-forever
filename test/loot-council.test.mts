@@ -4,8 +4,10 @@ import { createPrincipalFactory } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { normalize } from "../src/guildos/index.mts";
+import { createAwardCheck } from "../src/loot-council/awards.mts";
 import { createLootCouncil } from "../src/loot-council/core.mts";
 import { createLootCouncilRoutes } from "../src/loot-council/interactions.mts";
+import { createDepartureSnapshotHandler } from "../src/roster/snapshot-handler.mts";
 
 function fixture(evidence = true) {
   const time = 1_800_000_000_000;
@@ -127,6 +129,24 @@ function fixture(evidence = true) {
         (entry) => entry.pk === record.pk && entry.sk === record.sk,
       );
       const stored = records[previous];
+      const council = condition?.council;
+      if (council) {
+        const vote = records.find(
+          (entry) =>
+            entry.pk === `LOOT_VOTE#${council.guildId}` &&
+            entry.sk === `LOOT_VOTE#${council.voteId}`,
+        );
+        if (
+          vote?.kind !== "lootVote" ||
+          vote.closed ||
+          vote.revision !== council.revision
+        )
+          throw Object.assign(new Error("conflict"), {
+            name: "ConditionalCheckFailedException",
+          });
+        vote.revision = council.nextRevision;
+        if (council.close) vote.closed = true;
+      }
       if (
         condition?.ballotSelectionId &&
         stored?.kind === "lootBallot" &&
@@ -159,7 +179,16 @@ function fixture(evidence = true) {
     lockMinutes: 60,
     now: () => time,
   });
-  return { core, records, actor, start };
+  return {
+    core,
+    records,
+    actor,
+    start,
+    data,
+    time,
+    accepted,
+    latest: records.find((entry) => entry.kind === "guildSnapshotLatest"),
+  };
 }
 
 test("vote posts both contenders with locked rank, attendance source, recent loot and raid role", async () => {
@@ -246,7 +275,7 @@ test("vote posts both contenders with locked rank, attendance source, recent loo
   );
   assert.equal(capped.embeds[0].fields.length, 25);
   assert.equal(capped.components[0].components[0].options.length, 25);
-  assert.equal(capped.content, "2 contenders left out");
+  assert.equal(capped.content, "Vote large: 2 contenders left out");
   assert.ok(capped.embeds[0].fields.every((field) => field.name !== "second"));
 });
 
@@ -308,4 +337,184 @@ test("raid selection rejects missing or malformed values and accepts an explicit
       .embeds[0].fields.length,
     2,
   );
+});
+
+test("closing requires a reason and freezes the logged tally", async () => {
+  const { core, actor, records } = fixture();
+  await core.start(actor("officer"), "vote", "Sword");
+  await core.vote(actor("officer"), "vote", "first", "100");
+  for (const reason of ["", "   "])
+    await assert.rejects(
+      core.close(actor("officer"), "vote", "first", reason),
+      /REASON_REQUIRED/,
+    );
+  assert.equal(
+    records.some((entry) => entry.kind === "lootDecision"),
+    false,
+  );
+  const decision = await core.close(
+    actor("officer"),
+    "vote",
+    "first",
+    "Best upgrade",
+  );
+  assert.deepEqual(
+    [
+      decision.award.item,
+      decision.winner,
+      decision.votes,
+      decision.reason,
+      decision.decidingOfficer,
+    ],
+    ["Sword", "first", '{"first":1}', "Best upgrade", "officer"],
+  );
+  await assert.rejects(
+    core.vote(actor("officer"), "vote", "second", "101"),
+    /VOTE_CLOSED/,
+  );
+});
+
+test("decision log is officer-only", async () => {
+  const { core, actor, data } = fixture();
+  await core.start(actor("officer"), "vote", "Sword");
+  await assert.rejects(
+    core.close(actor("member", "member"), "vote", "first", "Upgrade"),
+    /OFFICER_REQUIRED/,
+  );
+  await core.close(actor("officer"), "vote", "first", "Upgrade");
+  assert.equal(
+    (await data.forUser(actor("officer")).query("LOOT_DECISION#guild")).length,
+    1,
+  );
+  assert.deepEqual(
+    await data.forUser(actor("member", "member")).query("LOOT_DECISION#guild"),
+    [],
+  );
+});
+
+test("award window prefers the normalized winner and ignores awards outside twelve hours", async () => {
+  const winner = "FIRST-Ex Ample";
+  const other = "second-example";
+  for (const [entries, expected] of [
+    [[[winner, 0]], "confirmed"],
+    [[[other, 1]], "mismatch"],
+    [
+      [
+        [other, 1],
+        [winner, 2],
+      ],
+      "confirmed",
+    ],
+    [
+      [
+        [winner, -1],
+        [other, 43200],
+      ],
+      "pending",
+    ],
+    [[], "pending"],
+  ] as const) {
+    const {
+      core,
+      actor,
+      records,
+      data,
+      time,
+      accepted: history,
+      latest: pointer,
+    } = fixture();
+    await core.start(actor("officer"), "vote", "Sword");
+    await core.close(actor("officer"), "vote", "first", "Upgrade");
+    assert.ok(
+      history?.kind === "guildSnapshot" &&
+        pointer?.kind === "guildSnapshotLatest",
+    );
+    const loot = history.snapshot.loot[0];
+    history.exportedAt += 86400;
+    history.snapshot = {
+      ...history.snapshot,
+      exportedAt: history.exportedAt,
+      loot: entries.map(([playerKey, offset]) => ({
+        ...loot,
+        itemName: "Sword",
+        playerKey,
+        timestamp: time / 1000 + offset,
+      })),
+    };
+    history.sk = recordKey(
+      "guildSnapshot",
+      "example",
+      `${String(history.exportedAt).padStart(16, "0")}#${history.snapshotId}`,
+    ).sk;
+    pointer.exportedAt = history.exportedAt;
+    const posts: string[] = [];
+    const scheduled = createDepartureSnapshotHandler(
+      data,
+      "guild",
+      "example",
+      async (content) => {
+        posts.push(content);
+        return "message";
+      },
+    );
+    await scheduled();
+    await scheduled();
+    const decision = records.find((entry) => entry.kind === "lootDecision");
+    assert.equal(decision?.award?.status, expected);
+    assert.equal(
+      posts.filter((content) => content.startsWith("Loot mismatch:")).length,
+      expected === "mismatch" ? 1 : 0,
+    );
+  }
+});
+
+test("two decisions cannot claim the same in-game award", async () => {
+  for (const sameWinner of [true, false]) {
+    const { core, actor, records, data, time, accepted: history } = fixture();
+    for (const vote of ["first-vote", "second-vote"]) {
+      await core.start(actor("officer"), vote, "Sword");
+      await core.close(
+        actor("officer"),
+        vote,
+        sameWinner || vote === "first-vote" ? "first" : "second",
+        "Upgrade",
+      );
+    }
+    assert.ok(history?.kind === "guildSnapshot");
+    history.exportedAt += 60;
+    history.snapshot.loot = [
+      {
+        ...history.snapshot.loot[0],
+        itemName: "Sword",
+        playerKey: sameWinner ? "first-example" : "second-example",
+        timestamp: time / 1000 + 1,
+      },
+    ];
+    const posts: string[] = [];
+    const check = createAwardCheck(data, "guild", async (content) => {
+      posts.push(content);
+      return "message";
+    });
+    await check(history);
+    await check(history);
+    const decisions = records.filter((entry) => entry.kind === "lootDecision");
+    assert.deepEqual(
+      decisions.map((entry) => entry.award?.status),
+      sameWinner ? ["confirmed", "pending"] : ["pending", "confirmed"],
+    );
+    history.exportedAt += 60;
+    history.snapshot.loot.push({
+      ...history.snapshot.loot[0],
+      playerKey: "first-example",
+      timestamp: time / 1000 + 2,
+    });
+    await check(history);
+    assert.deepEqual(
+      records
+        .filter((entry) => entry.kind === "lootDecision")
+        .map((entry) => entry.award?.status),
+      ["confirmed", "confirmed"],
+    );
+    assert.deepEqual(posts, []);
+  }
 });

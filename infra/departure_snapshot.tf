@@ -44,6 +44,15 @@ data "aws_iam_policy_document" "departure_snapshot" {
     }
   }
   statement {
+    actions   = ["dynamodb:Query", "dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["LOOT_DECISION#${var.guild_id}"]
+    }
+  }
+  statement {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.secrets["discord_bot_token"].arn]
   }

@@ -1,6 +1,30 @@
 import type { Snapshot } from "../guildos/index.mts";
 import { decode, type GuildRecord, recordKey } from "./records.mts";
 
+export async function latestSnapshot(
+  store: {
+    get(key: { pk: string; sk: string }): Promise<readonly GuildRecord[]>;
+  },
+  guildKey: string,
+) {
+  const [latest] = await store.get(
+    recordKey("guildSnapshotLatest", guildKey, "latest"),
+  );
+  if (!latest) return;
+  if (latest.kind !== "guildSnapshotLatest")
+    throw new Error("INVALID_SNAPSHOT_POINTER");
+  const [history] = await store.get(
+    recordKey(
+      "guildSnapshot",
+      guildKey,
+      `${String(latest.exportedAt).padStart(16, "0")}#${latest.snapshotId}`,
+    ),
+  );
+  if (history?.kind !== "guildSnapshot")
+    throw new Error("LATEST_SNAPSHOT_MISSING");
+  return history;
+}
+
 export type SnapshotHistory = Extract<GuildRecord, { kind: "guildSnapshot" }>;
 export type SnapshotLatest = Extract<
   GuildRecord,

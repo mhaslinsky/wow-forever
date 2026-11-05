@@ -365,3 +365,21 @@ test("one role id for Member and Officer is rejected", () => {
     /INVALID_ROLE_CONFIG/,
   );
 });
+
+test("transaction contention maps to a retryable write conflict", async () => {
+  const { data } = fixture([], {
+    put: async () => {
+      throw Object.assign(new Error("transaction canceled"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [
+          { Code: "None" },
+          { Code: "TransactionConflict" },
+        ],
+      });
+    },
+  });
+  await assert.rejects(
+    data.forUser(officer).write(candidate),
+    /^Error: WRITE_CONFLICT$/,
+  );
+});

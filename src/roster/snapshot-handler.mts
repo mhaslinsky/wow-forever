@@ -1,6 +1,9 @@
 import { REST } from "discord.js";
+import { createSystemPrincipal } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
+import { latestSnapshot } from "../data/snapshots.mts";
 import { readSecret } from "../interactions/index.mts";
+import { createAwardCheck } from "../loot-council/awards.mts";
 import { discordAlertMessage } from "../recruiting/alerts.mts";
 import { createDepartures } from "./departures.mts";
 
@@ -19,7 +22,14 @@ export function createDepartureSnapshotHandler(
   if (!guildId.trim() || !guildKey.trim())
     throw new Error("DEPARTURE_GUILD_REQUIRED");
   const departures = createDepartures(data, guildId, post);
-  return () => departures.checkSnapshot(guildKey);
+  const checkAwards = createAwardCheck(data, guildId, post);
+  const store = data.forSystem(createSystemPrincipal([]));
+  return async () => {
+    const accepted = await latestSnapshot(store, guildKey);
+    if (!accepted) return;
+    await departures.checkSnapshot(guildKey, accepted);
+    await checkAwards(accepted);
+  };
 }
 
 export async function handler() {
