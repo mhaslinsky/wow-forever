@@ -307,6 +307,11 @@ test("answer prompt requires plain uncertainty and no em dashes", async () => {
     ),
   );
   assert.ok(prompt.includes("Never use em dashes."));
+  assert.ok(
+    prompt.includes(
+      "Answer any question, WoW or not, and play along with jokes and banter; never turn down a harmless question as off-topic.",
+    ),
+  );
 });
 test("answers cap evidence at three links without previews", async () => {
   const state = setup();
