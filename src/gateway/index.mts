@@ -97,7 +97,7 @@ async function main() {
       ...recruitingHandlers(
         client,
         createDynamoDataAccess({ tableName: "wow-forever", region }),
-        createSystemPrincipal(["candidate", "officerNote"]),
+        createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
         guildId,
       ),
       messageCreate: mentionForwarder(client, guildId),

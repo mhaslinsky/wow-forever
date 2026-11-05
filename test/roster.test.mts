@@ -42,6 +42,7 @@ function fixture() {
     "member",
     "candidate",
     "officerNote",
+    "recruitingIntake",
   ]);
   const failures: string[] = [];
   const roster = createRoster(data, "guild");

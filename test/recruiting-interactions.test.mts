@@ -30,7 +30,7 @@ function fixture(role = "visitor") {
         items.unshift(item);
       },
     }),
-    createSystemPrincipal(["candidate", "officerNote"]),
+    createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
     "guild",
     {
       tags: async () => tags,

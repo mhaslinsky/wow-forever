@@ -15,6 +15,7 @@ import type { createDataAccess } from "../data/index.mts";
 import type { Handlers } from "../gateway/client.mts";
 import { createRoster } from "../roster/core.mts";
 import { reportRecruitingFailure } from "./alarm.mts";
+import { discordAlerts } from "./alerts.mts";
 import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
 type AppliedTagsChange = { key: "applied_tags"; new?: unknown };
@@ -73,10 +74,12 @@ export function discordForum(forum: ForumChannel): ForumPort {
       return (await forum.fetch()).availableTags;
     },
     async create(input) {
+      const reference = input.ref ? `\n-# ref ${input.ref}` : "";
       const thread = await forum.threads.create({
         name: discordText(input.name, 100),
         message: {
-          content: discordText(input.content, 2000),
+          content:
+            discordText(input.content, 2000 - reference.length) + reference,
           allowedMentions: { parse: [] },
         },
         appliedTags: input.tags,
@@ -142,6 +145,7 @@ export async function recruitingForGuild(
     discordForum(forum),
     reportRecruitingFailure,
     acceptForGuild(guild, data),
+    discordAlerts(guild.client.rest, guild.id),
   );
 }
 

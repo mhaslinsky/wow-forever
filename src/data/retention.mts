@@ -14,9 +14,17 @@ export function createRetentionStorage(config: {
   tableName: string;
   region: string;
   guildId: string;
+  endpoint?: string;
+  localCredentials?: boolean;
 }) {
   const client = DynamoDBDocumentClient.from(
-    new DynamoDBClient({ region: config.region }),
+    new DynamoDBClient({
+      region: config.region,
+      endpoint: config.endpoint,
+      ...(config.localCredentials
+        ? { credentials: { accessKeyId: "local", secretAccessKey: "local" } }
+        : {}),
+    }),
   );
   const data = createDynamoDataAccess(config).forSystem(
     createSystemPrincipal([]),
@@ -92,6 +100,43 @@ export function createRetentionStorage(config: {
                     Key: { pk: note.pk, sk: note.sk },
                   },
                 })),
+              ],
+            }),
+          );
+        }
+        cursor = page.LastEvaluatedKey as Key | undefined;
+      } while (cursor);
+      do {
+        const page = await client.send(
+          new QueryCommand({
+            TableName: config.tableName,
+            ConsistentRead: true,
+            KeyConditionExpression: "pk = :pk",
+            ExpressionAttributeValues: {
+              ":pk": recordKey("recruitingIntake", config.guildId, "unused").pk,
+            },
+            ExclusiveStartKey: cursor,
+          }),
+        );
+        for (const intake of page.Items ?? []) {
+          if (intake.threadId !== retention.threadId) continue;
+          await client.send(
+            new TransactWriteCommand({
+              TransactItems: [
+                { ConditionCheck: { ...fenced, Key: candidateKey(candidate) } },
+                {
+                  Delete: {
+                    TableName: config.tableName,
+                    Key: { pk: intake.pk, sk: intake.sk },
+                    ConditionExpression:
+                      "#state = :state AND attemptId = :attemptId",
+                    ExpressionAttributeNames: { "#state": "state" },
+                    ExpressionAttributeValues: {
+                      ":state": intake.state,
+                      ":attemptId": intake.attemptId,
+                    },
+                  },
+                },
               ],
             }),
           );

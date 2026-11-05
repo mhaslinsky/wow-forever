@@ -29,6 +29,7 @@ export async function handler() {
     const principal = createSystemPrincipal([
       "gowApplication",
       "candidate",
+      "recruitingIntake",
       "officerNote",
     ]);
     const data = createDynamoDataAccess({

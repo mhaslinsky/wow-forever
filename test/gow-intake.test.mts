@@ -103,12 +103,17 @@ function mappingFixture() {
     },
   });
   const records = data.forSystem(
-    createSystemPrincipal(["gowApplication", "candidate", "officerNote"]),
+    createSystemPrincipal([
+      "gowApplication",
+      "candidate",
+      "officerNote",
+      "recruitingIntake",
+    ]),
   );
   const threads: { name: string; content: string; tags: string[] }[] = [];
   const core = createRecruiting(
     data,
-    createSystemPrincipal(["candidate", "officerNote"]),
+    createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
     "synthetic-guild",
     {
       tags: async () => [
@@ -197,7 +202,8 @@ test("captured real-shaped application maps once to a Guilds of WoW candidate", 
   assert.deepEqual(setup.threads, [
     {
       name: "SyntheticApplicant",
-      content: "Class: Warrior\nRole: Tank\n\nSynthetic application text",
+      content:
+        "Class: Warrior\nRole: Tank\n\nSynthetic application text\n-# ref 1523e46235416cfbb726a4caea5cb5af46653972e292f502539bef254433a67e",
       tags: ["new", "gow"],
     },
   ]);
@@ -263,7 +269,7 @@ test("long application maps with bounded Discord text and full stored content", 
   });
   assert.equal(setup.threads[0].name, `${"N".repeat(97)}...`);
   assert.equal(setup.threads[0].content.length, 2000);
-  assert.ok(setup.threads[0].content.endsWith("..."));
+  assert.match(setup.threads[0].content, /\.\.\.\n-# ref [a-f0-9]{64}$/);
   assert.ok(
     [...setup.items.values()].some(
       (item) =>

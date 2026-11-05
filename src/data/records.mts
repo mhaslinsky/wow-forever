@@ -1,4 +1,5 @@
 import { type Application, applicationAnswers } from "./application.mts";
+import type { IntakeFields } from "./intake.mts";
 import { parseTargets } from "./needs.mts";
 import {
   type CharacterDeclaration,
@@ -11,6 +12,7 @@ export const KIND_POLICY = Object.freeze({
   needsBoard: "Officer",
   raidTeam: "Member",
   candidate: "Officer",
+  recruitingIntake: "Officer",
   gowApplication: "Officer",
   classNews: "Member",
   officerNote: "Officer",
@@ -33,6 +35,10 @@ const CODECS = Object.freeze({
   classNews: { prefix: "CLASS_NEWS", fields: ["guid", "className", "status"] },
   gowApplication: { prefix: "GOW_APPLICATION", fields: ["payload"] },
   candidate: { prefix: "CANDIDATE", fields: ["name"] },
+  recruitingIntake: {
+    prefix: "RECRUITING_INTAKE",
+    fields: ["state", "attemptId", "startedAt", "ref"],
+  },
   officerNote: { prefix: "OFFICER_NOTE", fields: ["text"] },
   member: { prefix: "MEMBER", fields: ["name"] },
   character: { prefix: "CHARACTER", fields: ["name"] },
@@ -63,29 +69,31 @@ export type GuildRecord = {
       Fields<Current>,
       string
     > &
-    (Current extends "voicePresence"
-      ? { leftAt?: string; endUnknown?: boolean }
-      : Current extends "candidate"
-        ? {
-            recruiting?: RecruitingState;
-            retention?: {
-              outcome: "Declined" | "Withdrawn";
-              threadId: string;
-              archived: boolean;
-            };
-            application?: Application;
-            discordUserId?: string;
-            characters?: CharacterDeclaration[];
-          }
-        : Current extends "gowApplication"
-          ? { mappedThreadId?: string }
-          : Current extends "member"
-            ? {
-                roster?: (CharacterDeclaration & { confirmed: boolean })[];
-                raidTeam?: string;
-                active?: boolean;
-              }
-            : Record<never, never>);
+    (Current extends "recruitingIntake"
+      ? IntakeFields
+      : Current extends "voicePresence"
+        ? { leftAt?: string; endUnknown?: boolean }
+        : Current extends "candidate"
+          ? {
+              recruiting?: RecruitingState;
+              retention?: {
+                outcome: "Declined" | "Withdrawn";
+                threadId: string;
+                archived: boolean;
+              };
+              application?: Application;
+              discordUserId?: string;
+              characters?: CharacterDeclaration[];
+            }
+          : Current extends "gowApplication"
+            ? { mappedThreadId?: string }
+            : Current extends "member"
+              ? {
+                  roster?: (CharacterDeclaration & { confirmed: boolean })[];
+                  raidTeam?: string;
+                  active?: boolean;
+                }
+              : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -124,6 +132,62 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "recruitingIntake") {
+    if (
+      !["pending", "uncertain", "created", "done", "blocked"].includes(
+        item.state as string,
+      ) ||
+      !Number.isFinite(Date.parse(item.startedAt as string)) ||
+      !/^[a-f0-9]{64}$/.test(item.ref as string) ||
+      item.sk !== `${prefix}${item.ref}`
+    )
+      return;
+    if (item.state === "created" || item.state === "done") {
+      if (typeof item.threadId !== "string" || !item.threadId) return;
+      output.threadId = item.threadId;
+    }
+    if (item.state === "done") {
+      if (item.payload !== undefined) return;
+    } else {
+      const payload = item.payload as Record<string, unknown> | undefined;
+      if (
+        !payload ||
+        typeof payload.content !== "string" ||
+        !payload.content ||
+        typeof payload.submission !== "string" ||
+        !payload.submission ||
+        !decode({
+          ...recordKey("candidate", item.ownerId, "payload"),
+          kind: "candidate",
+          ownerId: item.ownerId,
+          name: payload.name,
+          discordUserId: payload.discordUserId,
+          characters: payload.characters,
+          application: payload.application,
+          recruiting: {
+            threadId: "payload",
+            source: payload.source,
+            stage: "New",
+            changedBy: payload.actorId,
+            changedAt: payload.changedAt,
+            owner: payload.owner,
+            nextActionAt: payload.nextActionAt,
+          },
+        })
+      )
+        return;
+      output.payload = structuredClone(payload);
+    }
+    if (item.state === "blocked") {
+      if (
+        typeof item.noticeSent !== "boolean" ||
+        !["expired", "uncertain"].includes(item.outcome as string)
+      )
+        return;
+      output.noticeSent = item.noticeSent;
+      output.outcome = item.outcome;
+    }
   }
   if (kind === "gowApplication" && item.mappedThreadId !== undefined) {
     if (typeof item.mappedThreadId !== "string" || !item.mappedThreadId) return;
