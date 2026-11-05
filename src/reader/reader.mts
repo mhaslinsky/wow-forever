@@ -2,6 +2,7 @@ import {
   decodeCompanion,
   normalize,
   parseSavedVariables,
+  SavedVariablesError,
 } from "../guildos/index.mts";
 
 export type Status = {
@@ -14,6 +15,24 @@ export type Clock = {
   now(): number;
   schedule(callback: () => void, delay: number): () => void;
 };
+export function errorName(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error);
+  const value = error as {
+    name?: string;
+    code?: string;
+    cause?: { code?: string };
+    message?: string;
+  };
+  return (
+    (value.name && !["Error", "TypeError"].includes(value.name)
+      ? value.name
+      : undefined) ??
+    value.code ??
+    value.cause?.code ??
+    value.message ??
+    "UnknownError"
+  );
+}
 export function createReader(
   ports: {
     clock: Clock;
@@ -33,16 +52,28 @@ export function createReader(
   const failure = (error: string) => {
     status.lastFailure = { at: ports.clock.now(), error };
   };
+  function retry(
+    version: number,
+    operation: (version: number) => Promise<void>,
+  ) {
+    const delay = Math.min(5000 * 2 ** Math.min(attempts++, 6), 300000);
+    status.pendingRetryAt = ports.clock.now() + delay;
+    cancel = ports.clock.schedule(() => {
+      void operation(version);
+    }, delay);
+  }
   async function upload(version: number) {
     if (!pending || version !== generation) return;
     delete status.pendingRetryAt;
-    let retry = false;
+    let shouldRetry = false;
     try {
       const result = await ports.upload(pending);
       if (version !== generation) return;
       if (
         result.status === 200 &&
-        ["stored", "duplicate", "stale"].includes(result.outcome ?? "")
+        ["stored", "duplicate", "stale", "conflict"].includes(
+          result.outcome ?? "",
+        )
       ) {
         status.lastSuccess = {
           at: ports.clock.now(),
@@ -51,24 +82,20 @@ export function createReader(
         pending = undefined;
       } else {
         failure(result.error ?? result.outcome ?? `Http${result.status}Error`);
-        retry = result.status >= 500;
-        if (!retry) pending = undefined;
+        shouldRetry =
+          result.status >= 500 || [408, 429].includes(result.status);
+        if (!shouldRetry) pending = undefined;
       }
     } catch (error) {
       if (version !== generation) return;
-      failure(error instanceof Error ? error.name : "UploadError");
-      retry = true;
+      failure(errorName(error));
+      shouldRetry = true;
     }
-    if (retry) {
-      const delay = Math.min(5000 * 2 ** Math.min(attempts++, 6), 300000);
-      status.pendingRetryAt = ports.clock.now() + delay;
-      cancel = ports.clock.schedule(() => {
-        void upload(version);
-      }, delay);
-    }
+    if (shouldRetry) retry(version, upload);
     save();
   }
   async function read(version: number) {
+    delete status.pendingRetryAt;
     try {
       const file = await ports.read();
       if (version !== generation) return;
@@ -80,7 +107,18 @@ export function createReader(
       };
     } catch (error) {
       if (version !== generation) return;
-      failure(error instanceof Error ? error.name : "ReadError");
+      failure(errorName(error));
+      if (
+        !(error instanceof SavedVariablesError) &&
+        [
+          "EBUSY",
+          "EPERM",
+          "EACCES",
+          "ENOENT",
+          "FileChangedDuringReadError",
+        ].includes(errorName(error))
+      )
+        retry(version, read);
       save();
       return;
     }

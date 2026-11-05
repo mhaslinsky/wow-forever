@@ -19,7 +19,9 @@ export function scheduledTask(
   if (command === "uninstall")
     return run("schtasks.exe", ["/Delete", "/TN", task, "/F"]);
   if (/["\r\n]/.test(script + process.execPath))
-    throw new Error("InvalidTaskPathError");
+    throw Object.assign(new Error("Invalid task path"), {
+      name: "InvalidTaskPathError",
+    });
   return run("schtasks.exe", [
     "/Create",
     "/TN",

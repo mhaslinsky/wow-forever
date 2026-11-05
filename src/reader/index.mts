@@ -11,19 +11,29 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createReader, type Status } from "./reader.mts";
+import { createReader, errorName, type Status } from "./reader.mts";
+import { uploadSnapshot } from "./transport.mts";
 import { readToken, scheduledTask } from "./windows.mts";
 
 function main() {
   const command = process.argv[2] ?? "run";
-  if (process.platform !== "win32") throw new Error("WindowsRequiredError");
+  if (process.platform !== "win32")
+    throw Object.assign(new Error("WindowsRequiredError"), {
+      name: "WindowsRequiredError",
+    });
   const appData = process.env.APPDATA;
-  if (!appData) throw new Error("MissingAppDataError");
+  if (!appData)
+    throw Object.assign(new Error("MissingAppDataError"), {
+      name: "MissingAppDataError",
+    });
   const directory = join(appData, "wow-forever-reader");
   mkdirSync(directory, { recursive: true });
   const statusPath = join(directory, "status.json");
   if (command === "status") {
-    if (!existsSync(statusPath)) throw new Error("StatusUnavailableError");
+    if (!existsSync(statusPath))
+      throw Object.assign(new Error("StatusUnavailableError"), {
+        name: "StatusUnavailableError",
+      });
     console.log(readFileSync(statusPath, "utf8"));
     return;
   }
@@ -31,7 +41,10 @@ function main() {
     scheduledTask(command, resolve(fileURLToPath(import.meta.url)));
     return;
   }
-  if (command !== "run") throw new Error("UnknownCommandError");
+  if (command !== "run")
+    throw Object.assign(new Error("UnknownCommandError"), {
+      name: "UnknownCommandError",
+    });
   const config = JSON.parse(
     readFileSync(join(directory, "config.json"), "utf8"),
   );
@@ -40,22 +53,40 @@ function main() {
     !config.savedVariablesPath ||
     typeof config.endpoint !== "string"
   )
-    throw new Error("InvalidConfigError");
+    throw Object.assign(new Error("InvalidConfigError"), {
+      name: "InvalidConfigError",
+    });
   const endpoint = new URL(config.endpoint);
   if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password)
-    throw new Error("InvalidEndpointError");
+    throw Object.assign(new Error("InvalidEndpointError"), {
+      name: "InvalidEndpointError",
+    });
   let status: Status = {};
-  if (existsSync(statusPath))
-    status = JSON.parse(readFileSync(statusPath, "utf8"));
+  try {
+    if (existsSync(statusPath)) {
+      const loaded = JSON.parse(readFileSync(statusPath, "utf8"));
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded))
+        throw Object.assign(new Error("Invalid status"), {
+          name: "InvalidStatusError",
+        });
+      status = loaded;
+    }
+  } catch (error) {
+    console.error(`Status unavailable: ${errorName(error)}`);
+  }
   delete status.pendingRetryAt;
   const save = (value: Status) => {
-    const temporary = `${statusPath}.new`;
-    writeFileSync(temporary, JSON.stringify(value, null, 2));
-    renameSync(temporary, statusPath);
-    const log = join(directory, "reader.log");
-    if (existsSync(log) && statSync(log).size >= 1024 * 1024)
-      renameSync(log, `${log}.1`);
-    appendFileSync(log, `${JSON.stringify(value)}\n`);
+    try {
+      const temporary = `${statusPath}.new`;
+      writeFileSync(temporary, JSON.stringify(value, null, 2));
+      renameSync(temporary, statusPath);
+      const log = join(directory, "reader.log");
+      if (existsSync(log) && statSync(log).size >= 1024 * 1024)
+        renameSync(log, `${log}.1`);
+      appendFileSync(log, `${JSON.stringify(value)}\n`);
+    } catch (error) {
+      console.error(`Status write failed: ${errorName(error)}`);
+    }
   };
   const reader = createReader(
     {
@@ -71,27 +102,13 @@ function main() {
         const text = readFileSync(config.savedVariablesPath, "utf8");
         const after = statSync(config.savedVariablesPath);
         if (before.mtimeMs !== after.mtimeMs || before.size !== after.size)
-          throw new Error("FileChangedDuringReadError");
+          throw Object.assign(new Error("FileChangedDuringReadError"), {
+            name: "FileChangedDuringReadError",
+          });
         return { text, writtenAt: Math.floor(after.mtimeMs) };
       },
       async upload(snapshot) {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${readToken()}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(snapshot),
-          signal: AbortSignal.timeout(30000),
-          redirect: "error",
-        });
-        let body: { outcome?: string; error?: string } = {};
-        try {
-          body = (await response.json()) as typeof body;
-        } catch {
-          body = { error: "InvalidResponseError" };
-        }
-        return { ...body, status: response.status };
+        return uploadSnapshot(endpoint, readToken(), snapshot);
       },
       save,
     },
