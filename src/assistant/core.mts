@@ -461,7 +461,7 @@ export function createAssistant(ports: {
             text,
           ]).length > 10000
         )
-          return "Memory is full. Use /forget to clear it.";
+          return "Clear saved facts with /forget first.";
         await ports.data.forUser(actor).write({
           ...recordKey("fact", identity.userId, randomUUID()),
           kind: "fact",
