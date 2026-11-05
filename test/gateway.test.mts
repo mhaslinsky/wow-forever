@@ -142,6 +142,18 @@ test("gateway IAM scope limits token reads, decryption and metric writes", () =>
     actions: ["lambda:InvokeFunction"],
     resources: [`\${aws_lambda_function.mention.arn}`],
   });
+  expected.unshift({
+    actions: ["dynamodb:DeleteItem"],
+    resources: [`\${aws_dynamodb_table.guild.arn}`],
+    condition: [
+      {
+        test: "ForAllValues:StringEquals",
+        variable: "dynamodb:LeadingKeys",
+        values: [`DEPARTURE#\${var.guild_id}`],
+      },
+      { test: "Null", variable: "dynamodb:LeadingKeys", values: ["false"] },
+    ],
+  });
   equal(parsed.data.aws_iam_policy_document.gateway[0].statement, expected);
 });
 for (const script of ["gateway-bootstrap", "deploy-gateway"]) {

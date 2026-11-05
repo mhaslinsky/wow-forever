@@ -11,11 +11,8 @@ import {
   Routes,
 } from "discord.js";
 
-export function discordAlerts(
-  rest: Pick<REST, "get" | "post">,
-  guildId: string,
-) {
-  return async (content: string) => {
+function sendOfficerAlert(rest: Pick<REST, "get" | "post">, guildId: string) {
+  return async (content: string, components: unknown[] = []) => {
     const channels = (await rest.get(
       Routes.guildChannels(guildId),
     )) as APIGuildChannel<GuildChannelType>[];
@@ -93,9 +90,32 @@ export function discordAlerts(
       if (!assigned.some(privileged) && canView(assigned, entry.id))
         throw new Error("ALERTS_CHANNEL_PUBLIC");
     }
-    await rest.post(Routes.channelMessages(channel.id), {
-      body: { content, allowed_mentions: { parse: [] } },
-    });
+    const result = (await rest.post(Routes.channelMessages(channel.id), {
+      body: { content, components, allowed_mentions: { parse: [] } },
+    })) as { id: string };
+    return result;
+  };
+}
+
+export function discordAlertMessage(
+  rest: Pick<REST, "get" | "post">,
+  guildId: string,
+) {
+  const post = sendOfficerAlert(rest, guildId);
+  return async (content: string, components: unknown[]) => {
+    const result = await post(content, components);
+    if (!result?.id) throw new Error("ALERT_MESSAGE_ID_MISSING");
+    return result.id;
+  };
+}
+
+export function discordAlerts(
+  rest: Pick<REST, "get" | "post">,
+  guildId: string,
+) {
+  const post = sendOfficerAlert(rest, guildId);
+  return async (content: string) => {
+    await post(content);
   };
 }
 
