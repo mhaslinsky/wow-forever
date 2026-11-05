@@ -1,6 +1,7 @@
 import { clock } from "../interactions/core.mts";
 import { claimDelivery, readSecret } from "../interactions/index.mts";
 import { createChannelContext } from "./context.mts";
+import { runtimeMemoryReplies } from "./memory-replies.mts";
 import { createMention, type Mention } from "./mention.mts";
 import { runtimeAssistant } from "./runtime.mts";
 
@@ -29,6 +30,8 @@ export async function handler(event: Mention) {
     }
     return response.json();
   };
+  const memory = runtimeMemoryReplies();
+  const answer = await runtimeAssistant(guildId, request);
   return createMention({
     guildId,
     get: request,
@@ -39,12 +42,17 @@ export async function handler(event: Mention) {
         {
           clock,
           get: (path, childSignal) => request(path, undefined, childSignal),
+          hiddenMessage: memory.hidden,
         },
         channelId,
       )(abortSignal),
-    answer: await runtimeAssistant(guildId, request),
+    answer: (actor, question, abortSignal, context, audience) =>
+      answer(actor, question, abortSignal, context, audience, () =>
+        // Mark the source first so history cannot read a reply before its ID is saved.
+        memory.mark(event.authorId, event.messageId, 60000),
+      ),
     async reply(message, content) {
-      await request(
+      const reply = await request(
         `/channels/${encodeURIComponent(message.channelId)}/messages`,
         {
           content,
@@ -55,6 +63,16 @@ export async function handler(event: Mention) {
           allowed_mentions: { parse: [], replied_user: false },
         },
       );
+      if (await memory.hidden(event.authorId, event.messageId)) {
+        if (
+          !reply ||
+          typeof reply !== "object" ||
+          !("id" in reply) ||
+          typeof reply.id !== "string"
+        )
+          throw new Error("INVALID_MEMORY_REPLY");
+        await memory.mark(event.authorId, reply.id);
+      }
     },
     report(reason) {
       console.log(

@@ -4,6 +4,7 @@ import {
   type Clock,
   type Interaction,
 } from "../interactions/core.mts";
+import { HISTORY_WINDOW_MS } from "./memory-replies.mts";
 
 export type ChannelMessage = {
   author: string;
@@ -87,6 +88,7 @@ export function createChannelContext(
   ports: {
     clock: Clock;
     get(path: string, signal: AbortSignal): Promise<unknown>;
+    hiddenMessage?(ownerId: string, messageId: string): Promise<boolean>;
     report?: typeof reportContext;
   },
   channelId?: string,
@@ -135,53 +137,86 @@ export function createChannelContext(
               original?.author?.id;
             return typeof authorId === "string" ? authorId : undefined;
           };
-          return body
-            .map((raw: unknown) => {
-              if (
-                !raw ||
-                typeof raw !== "object" ||
-                !("content" in raw) ||
-                typeof raw.content !== "string" ||
-                !("timestamp" in raw) ||
-                typeof raw.timestamp !== "string" ||
-                !("author" in raw) ||
-                !raw.author ||
-                typeof raw.author !== "object"
-              )
-                throw new Error("INVALID_HISTORY");
-              const author = raw.author as Record<string, unknown>;
-              const member =
-                "member" in raw && raw.member && typeof raw.member === "object"
-                  ? (raw.member as Record<string, unknown>)
-                  : undefined;
-              const name =
-                member?.nick ?? author.global_name ?? author.username;
-              const timestamp = Date.parse(raw.timestamp);
-              if (
-                typeof name !== "string" ||
-                !name.trim() ||
-                !Number.isFinite(timestamp)
-              )
-                throw new Error("INVALID_HISTORY");
-              return {
-                timestamp,
-                authorId: typeof author.id === "string" ? author.id : undefined,
-                bot: author.bot === true,
-                replyToAuthorId: referencedAuthor(
+          return (
+            await Promise.all(
+              body.map(async (raw: unknown) => {
+                if (
+                  !raw ||
+                  typeof raw !== "object" ||
+                  !("content" in raw) ||
+                  typeof raw.content !== "string" ||
+                  !("timestamp" in raw) ||
+                  typeof raw.timestamp !== "string" ||
+                  !("author" in raw) ||
+                  !raw.author ||
+                  typeof raw.author !== "object"
+                )
+                  throw new Error("INVALID_HISTORY");
+                const author = raw.author as Record<string, unknown>;
+                const member =
+                  "member" in raw &&
+                  raw.member &&
+                  typeof raw.member === "object"
+                    ? (raw.member as Record<string, unknown>)
+                    : undefined;
+                const name =
+                  member?.nick ?? author.global_name ?? author.username;
+                const timestamp = Date.parse(raw.timestamp);
+                if (
+                  typeof name !== "string" ||
+                  !name.trim() ||
+                  !Number.isFinite(timestamp)
+                )
+                  throw new Error("INVALID_HISTORY");
+                const replyToAuthorId = referencedAuthor(
                   raw as Record<string, unknown>,
-                ),
-                author: name.slice(0, 100),
-                content: raw.content.trim().slice(0, 500),
-              };
-            })
+                );
+                const ownerId =
+                  author.bot === true ? replyToAuthorId : author.id;
+                const messageId =
+                  "id" in raw && typeof raw.id === "string"
+                    ? raw.id
+                    : undefined;
+                const reference = raw as {
+                  message_reference?: { message_id?: string };
+                  interaction_metadata?: { id?: string };
+                };
+                const referenceId =
+                  reference.message_reference?.message_id ??
+                  reference.interaction_metadata?.id;
+                let hidden = false;
+                if (ports.hiddenMessage && author.bot === true) {
+                  if (typeof ownerId !== "string" || !messageId) hidden = true;
+                  else
+                    hidden =
+                      (await ports.hiddenMessage(ownerId, messageId)) ||
+                      Boolean(
+                        referenceId &&
+                          (await ports.hiddenMessage(ownerId, referenceId)),
+                      );
+                }
+                return {
+                  hidden,
+                  timestamp,
+                  authorId:
+                    typeof author.id === "string" ? author.id : undefined,
+                  bot: author.bot === true,
+                  replyToAuthorId,
+                  author: name.slice(0, 100),
+                  content: raw.content.trim().slice(0, 500),
+                };
+              }),
+            )
+          )
             .filter(
               (entry) =>
                 entry.content &&
+                !entry.hidden &&
                 !rememberRequest(
                   entry.content.replace(/<@!?\d+>/gu, "").trim(),
                 ) &&
                 !(entry.bot && entry.content === "Remembered.") &&
-                entry.timestamp >= now - 43200000 &&
+                entry.timestamp >= now - HISTORY_WINDOW_MS &&
                 entry.timestamp <= now,
             )
             .sort((left, right) => left.timestamp - right.timestamp)

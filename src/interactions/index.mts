@@ -1,6 +1,7 @@
 import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
+import { runtimeMemoryReplies } from "../assistant/memory-replies.mts";
 import type { Interaction, Ports } from "./core.mts";
 import { clock, registry } from "./core.mts";
 import type { HttpEvent } from "./http.mts";
@@ -101,7 +102,10 @@ export async function readSecret(name: string, signal: AbortSignal) {
   secrets.set(name, value);
   return value;
 }
-export function discordClient(http: typeof fetch = fetch): Ports["discord"] {
+export function discordClient(
+  http: typeof fetch = fetch,
+  memory?: ReturnType<typeof runtimeMemoryReplies>,
+): Ports["discord"] {
   return async (interaction, method, content, signal, ephemeral) => {
     const webhook = `https://discord.com/api/v10/webhooks/${encodeURIComponent(interaction.application_id)}/${encodeURIComponent(interaction.token)}`;
     const response = await http(
@@ -126,7 +130,25 @@ export function discordClient(http: typeof fetch = fetch): Ports["discord"] {
               }),
       },
     );
-    await response.body?.cancel();
+    const ownerId = interaction.member?.user?.id;
+    if (
+      memory &&
+      response.ok &&
+      method !== "GET" &&
+      interaction.data?.name === "ask" &&
+      ownerId &&
+      (await memory.hidden(ownerId, interaction.id))
+    ) {
+      const reply: unknown = await response.json();
+      if (
+        !reply ||
+        typeof reply !== "object" ||
+        !("id" in reply) ||
+        typeof reply.id !== "string"
+      )
+        throw new Error("INVALID_MEMORY_REPLY");
+      await memory.mark(ownerId, reply.id);
+    } else await response.body?.cancel();
     return response.status;
   };
 }
@@ -150,7 +172,7 @@ const ports: Ports = {
     if (result.StatusCode !== 202) throw new Error("Worker not accepted");
   },
   claim: claimDelivery,
-  discord: discordClient(),
+  discord: discordClient(fetch, runtimeMemoryReplies()),
   report() {
     console.error("Interaction failed");
     console.log(

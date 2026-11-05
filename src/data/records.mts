@@ -29,6 +29,7 @@ export const KIND_POLICY = Object.freeze({
   lootAward: "Member",
   wishlist: "Member",
   fact: "Owner",
+  memoryReply: "Owner",
 } as const);
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
@@ -67,6 +68,7 @@ const CODECS = Object.freeze({
   },
   wishlist: { prefix: "WISHLIST", fields: ["item"] },
   fact: { prefix: "FACT", fields: ["text"] },
+  memoryReply: { prefix: "MEMORY_REPLY", fields: ["messageId"] },
 } as const);
 type Fields<Current extends Kind> = (typeof CODECS)[Current]["fields"][number];
 export type GuildRecord = {
@@ -112,7 +114,9 @@ export type GuildRecord = {
                     }
                   : Current extends "fact"
                     ? { createdAt?: number; forgetAt?: number }
-                    : Record<never, never>);
+                    : Current extends "memoryReply"
+                      ? { expiresAt: number }
+                      : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -151,6 +155,16 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "memoryReply") {
+    if (
+      !Number.isSafeInteger(item.expiresAt) ||
+      Number(item.expiresAt) < 0 ||
+      item.sk !==
+        recordKey(kind, item.ownerId as string, item.messageId as string).sk
+    )
+      return;
+    output.expiresAt = item.expiresAt;
   }
   if (kind === "fact") {
     for (const field of ["createdAt", "forgetAt"] as const) {

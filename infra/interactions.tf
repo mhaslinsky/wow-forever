@@ -41,12 +41,12 @@ resource "aws_iam_role" "interactions" {
 
 data "aws_iam_policy_document" "interactions" {
   statement {
-    actions   = ["dynamodb:Query", "dynamodb:DeleteItem", "dynamodb:PutItem"]
+    actions   = ["dynamodb:Query", "dynamodb:DeleteItem", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.guild.arn]
     condition {
       test     = "ForAllValues:StringLike"
       variable = "dynamodb:LeadingKeys"
-      values   = ["FACT#*"]
+      values   = ["FACT#*", "MEMORY_REPLY#*"]
     }
   }
 

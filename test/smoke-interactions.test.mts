@@ -73,7 +73,7 @@ test("production claims policy allows claims and atomic spend accounting", () =>
   const actions = statements.flatMap((statement) => statement.actions);
   assert.equal(
     actions.sort().join(","),
-    "bedrock:InvokeModel,dynamodb:ConditionCheckItem,dynamodb:DeleteItem,dynamodb:DeleteItem,dynamodb:GetItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,dynamodb:Query,dynamodb:Query,dynamodb:UpdateItem,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
+    "bedrock:InvokeModel,dynamodb:ConditionCheckItem,dynamodb:ConditionCheckItem,dynamodb:DeleteItem,dynamodb:DeleteItem,dynamodb:GetItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,dynamodb:Query,dynamodb:Query,dynamodb:UpdateItem,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
   );
   const claims = statements.filter((statement) =>
     statement.resources.includes(`\${aws_dynamodb_table.claims.arn}`),

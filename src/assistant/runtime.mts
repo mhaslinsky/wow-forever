@@ -13,6 +13,7 @@ import {
   createSearch,
   REFUSAL,
 } from "./core.mts";
+import { runtimeMemoryReplies } from "./memory-replies.mts";
 import { createSpend, spendMetric, spendTotalMetric } from "./spend.mts";
 
 export function assistantRoleIds(roles: unknown) {
@@ -88,14 +89,17 @@ export async function assistantAnswer(
     return response.json();
   };
   const actor = await assistantPrincipal(guildId, userId, get);
+  const memory = runtimeMemoryReplies();
   return (await runtimeAssistant(guildId, get))(
     actor,
     question,
     signal,
     createChannelContext(
-      { clock, get },
+      { clock, get, hiddenMessage: memory.hidden },
       interactionHistoryChannel(interaction),
     ),
+    undefined,
+    () => memory.mark(userId, interaction.id, 60000),
   );
 }
 

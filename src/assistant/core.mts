@@ -443,6 +443,7 @@ export function createAssistant(ports: {
     signal: AbortSignal,
     context?: ChannelContext,
     audience?: AssistantAudience,
+    memoryUsed?: () => Promise<void>,
   ) => {
     const identity = authority(actor);
     if (identity.mode !== "user" || !identity.roles.includes("Member"))
@@ -487,12 +488,15 @@ export function createAssistant(ports: {
         )
           return "Memory's full, run /forget first.";
         signal.throwIfAborted();
-        await ports.data.forUser(actor).write({
-          ...recordKey("fact", identity.userId, randomUUID()),
-          kind: "fact",
-          text,
-          createdAt: startedAt,
-        });
+        await ports.data.forUser(actor).write(
+          {
+            ...recordKey("fact", identity.userId, randomUUID()),
+            kind: "fact",
+            text,
+            createdAt: startedAt,
+          },
+          { memoryCutoff: forgetAt },
+        );
         if ((await readCutoff(identity.userId)) > forgetAt) return COOLDOWN;
         return "Remembered.";
       }
@@ -550,15 +554,22 @@ export function createAssistant(ports: {
           signal,
         );
         const current = audience ? await audience() : undefined;
-        for (const [userId, cutoff] of cutoffs) {
-          const latest = await readCutoff(userId);
-          if (latest > cutoff || latest > startedAt) return COOLDOWN;
+        const dropRecords = Boolean(
+          current &&
+            (records.length > 0 || facts.length > 0) &&
+            !current.guildRecords,
+        );
+        const dropHistory = Boolean(
+          current && messages.length > 0 && !current.history,
+        );
+        if (!dropRecords && !dropHistory) {
+          if (facts.length) await memoryUsed?.();
+          for (const [userId, cutoff] of cutoffs) {
+            const latest = await readCutoff(userId);
+            if (latest > cutoff || latest > startedAt) return COOLDOWN;
+          }
+          return answer;
         }
-        if (!current) return answer;
-        const dropRecords =
-          (records.length > 0 || facts.length > 0) && !current.guildRecords;
-        const dropHistory = messages.length > 0 && !current.history;
-        if (!dropRecords && !dropHistory) return answer;
         // Regenerate without revoked data, keeping the original cooldown claim.
         if (dropRecords) {
           records = emptyRecords;
@@ -567,6 +578,8 @@ export function createAssistant(ports: {
         if (dropHistory) messages = [];
       }
     } catch (error) {
+      if (error instanceof Error && error.message === "WRITE_CONFLICT")
+        return COOLDOWN;
       if (error instanceof SpendPaused) return PAUSED;
       if (error instanceof SpendError) return FAILURE;
       throw error;

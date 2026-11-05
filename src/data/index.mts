@@ -35,6 +35,7 @@ export type WriteCondition = {
   candidateThreadId?: string;
   absent?: true;
   forgetAt?: number;
+  memoryCutoff?: number;
   intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
 };
 export type StoragePort = SnapshotWrites & {
@@ -286,9 +287,13 @@ export function createDataAccess(
           condition?.intake
         )
           throw new Error("INTAKE_CONDITIONAL_OPERATION_REQUIRED");
-        const self = ["member", "character", "wishlist", "fact"].includes(
-          item.kind,
-        );
+        const self = [
+          "member",
+          "character",
+          "wishlist",
+          "fact",
+          "memoryReply",
+        ].includes(item.kind);
         const allowed =
           actor.mode === "system"
             ? actor.writableKinds.includes(item.kind)
@@ -302,6 +307,8 @@ export function createDataAccess(
             !item.sk.startsWith(`OFFICER_NOTE#${condition.candidateThreadId}#`))
         )
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
+        if (item.kind === "fact" && condition?.memoryCutoff === undefined)
+          throw new Error("MEMORY_CONDITION_REQUIRED");
         await stored(() => storage.put(item, condition));
       },
     };
@@ -481,6 +488,42 @@ function createDynamoStorage(config: {
       );
     },
     async put(item, condition) {
+      if (condition?.memoryCutoff !== undefined) {
+        if (item.kind !== "fact" || item.forgetAt !== undefined)
+          throw new Error("INVALID_MEMORY_WRITE");
+        const cutoff = condition.memoryCutoff;
+        await client.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                ConditionCheck: {
+                  TableName: config.tableName,
+                  Key: { pk: item.pk, sk: "FACT#forget" },
+                  ConditionExpression:
+                    cutoff === 0
+                      ? "attribute_not_exists(pk)"
+                      : "forgetAt = :cutoff",
+                  ...(cutoff === 0
+                    ? {}
+                    : { ExpressionAttributeValues: { ":cutoff": cutoff } }),
+                },
+              },
+              {
+                Put: {
+                  TableName: config.tableName,
+                  Item: {
+                    ...item,
+                    gsi1pk: "FACT#ALL",
+                    gsi1sk: `${item.pk}#${item.sk}`,
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+            ],
+          }),
+        );
+        return;
+      }
       if (condition?.forgetAt !== undefined) {
         await client.send(
           new PutCommand({
