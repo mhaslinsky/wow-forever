@@ -48,7 +48,7 @@
   PER-303 records the section map; a real capture is pending until the guild exists in game, with the genuine addon export standing in.
 - [x] 5.2 SavedVariables parser and normalizer to a versioned snapshot, rejecting unknown shapes by name (depends on: 1.1, 5.1) (complexity: standard) (gate: none)
   Snapshot v1 keeps the envelope, members and loot; other sections come with their consumer tasks (6.3 and 7.3).
-- [ ] 5.3 Snapshot ingest endpoint: authenticated, idempotent, newer snapshots win (depends on: 1.3, 1.4, 5.2) (complexity: judgment) (gate: none)
+- [x] 5.3 Snapshot ingest endpoint: authenticated, idempotent, newer snapshots win (depends on: 1.3, 1.4, 5.2) (complexity: judgment) (gate: none)
 - [ ] 5.4 Windows reader app: file watcher, upload with backoff, start at login on jetragon (depends on: 5.2, 5.3) (complexity: standard) (gate: none)
 
 ## 6. Raid attendance
@@ -67,9 +67,9 @@
 
 ## 8. Member assistant
 
-- [ ] 8.1 `/ask` and @-mention: members-only gate, Bedrock Sonnet worker grounded on guild records with web search, per-user cooldown (depends on: 1.3, 1.4, 1.5, 4.1) (complexity: judgment) (gate: none)
+- [x] 8.1 `/ask` and @-mention: members-only gate, Bedrock Sonnet worker grounded on guild records with web search, per-user cooldown (depends on: 1.3, 1.4, 1.5, 4.1) (complexity: judgment) (gate: none)
 - [ ] 8.2 Consented memory and `/forget` (depends on: 8.1) (complexity: standard) (gate: none)
-- [ ] 8.3 Monthly assistant spend circuit breaker with officer notice (depends on: 8.1) (complexity: standard) (gate: none)
+- [x] 8.3 Monthly assistant spend circuit breaker with officer notice (depends on: 8.1) (complexity: standard) (gate: none)
 
 ## 9. Retirement
 
