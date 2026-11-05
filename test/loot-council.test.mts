@@ -6,6 +6,7 @@ import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { normalize } from "../src/guildos/index.mts";
 import { createLootCouncil } from "../src/loot-council/core.mts";
 import { createLootCouncilRoutes } from "../src/loot-council/interactions.mts";
+import { createDepartureSnapshotHandler } from "../src/roster/snapshot-handler.mts";
 
 function fixture(evidence = true) {
   const time = 1_800_000_000_000;
@@ -127,6 +128,24 @@ function fixture(evidence = true) {
         (entry) => entry.pk === record.pk && entry.sk === record.sk,
       );
       const stored = records[previous];
+      const council = condition?.council;
+      if (council) {
+        const vote = records.find(
+          (entry) =>
+            entry.pk === `LOOT_VOTE#${council.guildId}` &&
+            entry.sk === `LOOT_VOTE#${council.voteId}`,
+        );
+        if (
+          vote?.kind !== "lootVote" ||
+          vote.closed ||
+          vote.revision !== council.revision
+        )
+          throw Object.assign(new Error("conflict"), {
+            name: "ConditionalCheckFailedException",
+          });
+        vote.revision = council.nextRevision;
+        if (council.close) vote.closed = true;
+      }
       if (
         condition?.ballotSelectionId &&
         stored?.kind === "lootBallot" &&
@@ -159,7 +178,7 @@ function fixture(evidence = true) {
     lockMinutes: 60,
     now: () => time,
   });
-  return { core, records, actor, start };
+  return { core, records, actor, start, data, time };
 }
 
 test("vote posts both contenders with locked rank, attendance source, recent loot and raid role", async () => {
@@ -246,7 +265,7 @@ test("vote posts both contenders with locked rank, attendance source, recent loo
   );
   assert.equal(capped.embeds[0].fields.length, 25);
   assert.equal(capped.components[0].components[0].options.length, 25);
-  assert.equal(capped.content, "2 contenders left out");
+  assert.equal(capped.content, "Vote large: 2 contenders left out");
   assert.ok(capped.embeds[0].fields.every((field) => field.name !== "second"));
 });
 
@@ -309,3 +328,130 @@ test("raid selection rejects missing or malformed values and accepts an explicit
     2,
   );
 });
+
+test("closing requires a reason and freezes the logged tally", async () => {
+  const { core, actor, records } = fixture();
+  await core.start(actor("officer"), "vote", "Sword");
+  await core.vote(actor("officer"), "vote", "first", "100");
+  for (const reason of ["", "   "])
+    await assert.rejects(
+      core.close(actor("officer"), "vote", "first", reason),
+      /REASON_REQUIRED/,
+    );
+  assert.equal(
+    records.some((entry) => entry.kind === "lootDecision"),
+    false,
+  );
+  const decision = await core.close(
+    actor("officer"),
+    "vote",
+    "first",
+    "Best upgrade",
+  );
+  assert.deepEqual(
+    [
+      decision.award.item,
+      decision.winner,
+      decision.votes,
+      decision.reason,
+      decision.decidingOfficer,
+    ],
+    ["Sword", "first", '{"first":1}', "Best upgrade", "officer"],
+  );
+  await assert.rejects(
+    core.vote(actor("officer"), "vote", "second", "101"),
+    /VOTE_CLOSED/,
+  );
+});
+
+test("decision log is officer-only", async () => {
+  const { core, actor, data } = fixture();
+  await core.start(actor("officer"), "vote", "Sword");
+  await assert.rejects(
+    core.close(actor("member", "member"), "vote", "first", "Upgrade"),
+    /OFFICER_REQUIRED/,
+  );
+  await core.close(actor("officer"), "vote", "first", "Upgrade");
+  assert.equal(
+    (await data.forUser(actor("officer")).query("LOOT_DECISION#guild")).length,
+    1,
+  );
+  assert.deepEqual(
+    await data.forUser(actor("member", "member")).query("LOOT_DECISION#guild"),
+    [],
+  );
+});
+
+for (const recipient of ["FIRST-Ex Ample", "second-example"]) {
+  test(
+    recipient.startsWith("FIRST")
+      ? "new accepted in-game award confirms normalized winner"
+      : "different recipient alerts officers",
+    async () => {
+      const { core, actor, records, data, time } = fixture();
+      await core.start(actor("officer"), "vote", "Sword");
+      await core.close(actor("officer"), "vote", "first", "Upgrade");
+      const posts: string[] = [];
+      const scheduled = createDepartureSnapshotHandler(
+        data,
+        "guild",
+        "example",
+        async (content) => {
+          posts.push(content);
+          return "message";
+        },
+      );
+      await scheduled();
+      const decision = () =>
+        records.find((entry) => entry.kind === "lootDecision");
+      assert.equal(decision()?.award?.status, "pending");
+      const history = records.find(
+        (entry) =>
+          entry.kind === "guildSnapshot" && entry.snapshotId === "a".repeat(64),
+      );
+      assert.ok(history?.kind === "guildSnapshot");
+      const exportedAt = history.exportedAt + 60;
+      records.push({
+        ...history,
+        ...recordKey(
+          "guildSnapshot",
+          "example",
+          `${String(exportedAt).padStart(16, "0")}#${"c".repeat(64)}`,
+        ),
+        exportedAt,
+        snapshotId: "c".repeat(64),
+        snapshot: {
+          ...history.snapshot,
+          exportedAt,
+          loot: [
+            {
+              ...history.snapshot.loot[0],
+              itemName: "Sword",
+              playerKey: recipient,
+              timestamp: time / 1000 + 10,
+            },
+          ],
+        },
+      });
+      const pointer = records.find(
+        (entry) => entry.kind === "guildSnapshotLatest",
+      );
+      assert.ok(pointer?.kind === "guildSnapshotLatest");
+      pointer.snapshotId = "c".repeat(64);
+      pointer.exportedAt = exportedAt;
+      await scheduled();
+      await scheduled();
+      const matches = recipient.startsWith("FIRST");
+      assert.equal(
+        decision()?.award?.status,
+        matches ? "confirmed" : "mismatch",
+      );
+      const alerts = posts.filter((content) =>
+        content.startsWith("Loot mismatch:"),
+      );
+      assert.equal(alerts.length, matches ? 0 : 1);
+      if (!matches)
+        assert.match(alerts[0], /Loot mismatch: Sword.*second-example.*first/);
+    },
+  );
+}

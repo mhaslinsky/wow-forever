@@ -27,6 +27,11 @@ export function createLootCouncilRoutes(
     NO_CONTENDERS: "No contenders found",
     VOTE_NOT_FOUND: "Vote not found",
     INVALID_ITEM: "Enter an item name",
+    REASON_REQUIRED: "Enter a reason (1 to 1000 characters)",
+    INVALID_WINNER: "Choose a contender",
+    WINNER_CHARACTER_REQUIRED: "Winner needs a registered character",
+    VOTE_CLOSED: "Vote closed",
+    VOTE_CHANGED: "Try again",
   };
   async function handle(interaction: Interaction, signal: AbortSignal) {
     const context = await resolve(interaction, signal);
@@ -47,6 +52,45 @@ export function createLootCouncilRoutes(
       const options = interaction.data?.options as
         | { name: string; options?: { name: string; value: unknown }[] }[]
         | undefined;
+      const close = options?.find((entry) => entry.name === "close");
+      if (close) {
+        const value = (name: string) => {
+          const found = close.options?.find(
+            (entry) => entry.name === name,
+          )?.value;
+          return typeof found === "string" ? found : "";
+        };
+        const decision = await context.core.close(
+          context.actor,
+          value("vote"),
+          value("winner"),
+          value("reason"),
+        );
+        await context.post(
+          "Decision recorded",
+          [],
+          [
+            {
+              title: `Award: ${decision.award.item}`,
+              fields: [
+                { name: "Winner", value: `<@${decision.winner}>` },
+                {
+                  name: "Votes",
+                  value:
+                    Object.entries(
+                      JSON.parse(decision.votes) as Record<string, number>,
+                    )
+                      .map(([id, count]) => `<@${id}>: ${count}`)
+                      .join("\n") || "No votes",
+                },
+                { name: "Reason", value: decision.reason },
+                { name: "Closed by", value: `<@${decision.decidingOfficer}>` },
+              ],
+            },
+          ],
+        );
+        return message("Decision recorded");
+      }
       const command = options?.find((entry) => entry.name === "item");
       const item = command?.options?.find(
         (entry) => entry.name === "name",
@@ -77,6 +121,32 @@ export function createLootCouncilRoutes(
       mode: "slow",
       visibility: "ephemeral",
       options: [
+        {
+          type: 1,
+          name: "close",
+          description: "Close an item vote",
+          options: [
+            {
+              type: 3,
+              name: "vote",
+              description: "Vote ID from the vote message",
+              required: true,
+            },
+            {
+              type: 3,
+              name: "winner",
+              description: "Contender's Discord user ID",
+              required: true,
+            },
+            {
+              type: 3,
+              name: "reason",
+              description: "Award reason",
+              required: true,
+              max_length: 1000,
+            },
+          ],
+        },
         {
           type: 1,
           name: "item",

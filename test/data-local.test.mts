@@ -96,6 +96,69 @@ test(
           await member.batch([candidate, publicItem, publicItem]),
           [publicItem],
         );
+        const vote = {
+          ...recordKey("lootVote", "guild", "smoke"),
+          kind: "lootVote" as const,
+          ownerId: "guild",
+          item: "Sword",
+          contenders: "[]",
+          raidStart: "1",
+        };
+        await officer.write(vote);
+        const ballot = {
+          ...recordKey("lootBallot", "guild:smoke", "synthetic"),
+          kind: "lootBallot" as const,
+          ownerId: "guild:smoke",
+          contenderId: "winner",
+          selectionId: "1".padStart(20, "0"),
+        };
+        await officer.write(ballot, {
+          ballotSelectionId: ballot.selectionId,
+          council: {
+            guildId: "guild",
+            voteId: "smoke",
+            nextRevision: "ballot",
+          },
+        });
+        const decision = {
+          ...recordKey("lootDecision", "guild", "smoke"),
+          kind: "lootDecision" as const,
+          ownerId: "guild",
+          winner: "winner",
+          votes: '{"winner":1}',
+          decidingOfficer: "synthetic",
+          reason: "Upgrade",
+        };
+        await officer.write(decision, {
+          council: {
+            guildId: "guild",
+            voteId: "smoke",
+            revision: "ballot",
+            nextRevision: "closed",
+            close: true,
+          },
+        });
+        assert.deepEqual(await officer.get(decision), [decision]);
+        assert.deepEqual(await member.get(decision), []);
+        assert.equal((await officer.get(vote))[0]?.kind === "lootVote", true);
+        await assert.rejects(
+          officer.write(
+            { ...ballot, selectionId: "2".padStart(20, "0") },
+            {
+              ballotSelectionId: "2".padStart(20, "0"),
+              council: {
+                guildId: "guild",
+                voteId: "smoke",
+                revision: "closed",
+                nextRevision: "late",
+              },
+            },
+          ),
+          /WRITE_CONFLICT/,
+        );
+        console.log(
+          "DynamoDB Local: ballot and close committed, private decision read passed, late ballot rejected",
+        );
         const intakes = data.forSystem(
           createSystemPrincipal(["recruitingIntake"]),
         );

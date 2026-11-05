@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { authority, type Principal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { recordKey } from "../data/records.mts";
+import { latestSnapshot } from "../data/snapshots.mts";
 import type { Snapshot } from "../guildos/index.mts";
 import { characterIdentity } from "../roster/identity.mts";
 import { createWishlist } from "../wishlist/core.mts";
@@ -146,8 +148,8 @@ export function createLootCouncil(
       return {
         content:
           contenders.length > 25
-            ? `${contenders.length - 25} contenders left out`
-            : "",
+            ? `Vote ${voteId}: ${contenders.length - 25} contenders left out`
+            : `Vote ${voteId}`,
         embeds: [
           {
             title: `Vote: ${item.trim()}`,
@@ -191,6 +193,8 @@ export function createLootCouncil(
       const [vote] = await store.get(
         recordKey("lootVote", config.guildId, voteId),
       );
+      if (vote?.kind === "lootVote" && vote.closed)
+        throw new Error("VOTE_CLOSED");
       if (
         vote?.kind !== "lootVote" ||
         !(JSON.parse(vote.contenders) as { id: string }[]).some(
@@ -211,12 +215,117 @@ export function createLootCouncil(
             contenderId,
             selectionId,
           },
-          { ballotSelectionId: selectionId },
+          {
+            ballotSelectionId: selectionId,
+            council: {
+              guildId: config.guildId,
+              voteId,
+              revision: vote.revision,
+              nextRevision: randomUUID(),
+            },
+          },
         );
       } catch (error) {
         if (!(error instanceof Error) || error.message !== "WRITE_CONFLICT")
           throw error;
+        const [current] = await store.get(
+          recordKey("lootBallot", `${config.guildId}:${voteId}`, officerId),
+        );
+        if (
+          current?.kind === "lootBallot" &&
+          current.selectionId >= selectionId
+        )
+          return;
+        throw new Error("VOTE_CHANGED");
       }
+    },
+    async close(
+      actor: Principal<"user">,
+      voteId: string,
+      winner: string,
+      reason: string,
+    ) {
+      const decidingOfficer = officer(actor);
+      if (!reason.trim() || reason.length > 1000)
+        throw new Error("REASON_REQUIRED");
+      const store = data.forUser(actor);
+      const [vote] = await store.get(
+        recordKey("lootVote", config.guildId, voteId),
+      );
+      if (vote?.kind !== "lootVote") throw new Error("VOTE_NOT_FOUND");
+      if (vote.closed) throw new Error("VOTE_CLOSED");
+      if (
+        !(JSON.parse(vote.contenders) as { id: string }[]).some(
+          (entry) => entry.id === winner,
+        )
+      )
+        throw new Error("INVALID_WINNER");
+      const [member] = await store.get(
+        recordKey("member", winner, config.guildId),
+      );
+      if (member?.kind !== "member")
+        throw new Error("WINNER_CHARACTER_REQUIRED");
+      const names = member.roster?.length
+        ? member.roster.map((character) => character.name)
+        : [member.name];
+      const votes: Record<string, number> = {};
+      for (const ballot of await store.query(
+        `LOOT_BALLOT#${config.guildId}:${voteId}`,
+      )) {
+        if (ballot.kind === "lootBallot")
+          votes[ballot.contenderId] = (votes[ballot.contenderId] ?? 0) + 1;
+      }
+      const latest = config.guildKey
+        ? await latestSnapshot(store, config.guildKey)
+        : undefined;
+      const decision = {
+        ...recordKey("lootDecision", config.guildId, voteId),
+        kind: "lootDecision" as const,
+        ownerId: config.guildId,
+        winner,
+        votes: JSON.stringify(votes),
+        decidingOfficer,
+        reason: reason.trim(),
+        award: {
+          item: vote.item,
+          names,
+          raidStart: Number(vote.raidStart),
+          closedAt: now(),
+          baselineExportedAt: latest?.exportedAt ?? 0,
+          baselineLoot:
+            latest?.snapshot.loot
+              .filter(
+                (entry) =>
+                  entry.itemName.trim().toLowerCase() ===
+                  vote.item.toLowerCase(),
+              )
+              .map((entry) =>
+                JSON.stringify([
+                  entry.itemId,
+                  characterIdentity(entry.playerKey, latest.snapshot.realm),
+                  entry.timestamp,
+                  entry.raid,
+                ]),
+              ) ?? [],
+          status: "pending" as const,
+        },
+      };
+      try {
+        await store.write(decision, {
+          council: {
+            guildId: config.guildId,
+            voteId,
+            revision: vote.revision,
+            nextRevision: randomUUID(),
+            close: true,
+          },
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "WRITE_CONFLICT")
+          throw new Error("VOTE_CHANGED");
+        throw error;
+      }
+      return decision;
     },
   };
 }

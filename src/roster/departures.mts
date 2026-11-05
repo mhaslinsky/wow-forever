@@ -6,6 +6,7 @@ import {
 } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
+import { latestSnapshot, type SnapshotHistory } from "../data/snapshots.mts";
 import { reportRecruitingFailure } from "../recruiting/alarm.mts";
 import { characterIdentity } from "./identity.mts";
 
@@ -85,30 +86,17 @@ export function createDepartures(
   async function checkSnapshot(
     guildKey: string,
     retry: boolean,
+    accepted?: SnapshotHistory,
   ): Promise<void> {
     if (!guildKey.trim()) throw new Error("GUILD_KEY_REQUIRED");
     const key = recordKey("departureCheck", guildId, guildKey);
     const previous = (await store.get(key))[0];
-    const latest = (
-      await store.get(recordKey("guildSnapshotLatest", guildKey, "latest"))
-    )[0];
-    if (!latest) return;
-    if (latest.kind !== "guildSnapshotLatest")
-      throw new Error("INVALID_SNAPSHOT_POINTER");
+    const snapshot = accepted ?? (await latestSnapshot(store, guildKey));
+    if (!snapshot) return;
+    const latest = snapshot;
     const processed =
       previous?.kind === "departureCheck" &&
       previous.snapshotId === latest.snapshotId;
-    const snapshot = (
-      await store.get(
-        recordKey(
-          "guildSnapshot",
-          guildKey,
-          `${String(latest.exportedAt).padStart(16, "0")}#${latest.snapshotId}`,
-        ),
-      )
-    )[0];
-    if (snapshot?.kind !== "guildSnapshot")
-      throw new Error("LATEST_SNAPSHOT_MISSING");
     const identity = (name: string) =>
       characterIdentity(name, snapshot.snapshot.realm);
     const oldCounts: Record<
@@ -181,8 +169,8 @@ export function createDepartures(
       )[0];
       if (member?.kind === "member") await flag(member, randomUUID());
     },
-    async checkSnapshot(guildKey: string) {
-      await checkSnapshot(guildKey, true);
+    async checkSnapshot(guildKey: string, accepted?: SnapshotHistory) {
+      await checkSnapshot(guildKey, true, accepted);
     },
     async resolve(
       actor: Principal<"user">,

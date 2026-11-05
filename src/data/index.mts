@@ -32,6 +32,13 @@ export type QueryCursor = Readonly<Record<string, string>> & {
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
+  council?: {
+    guildId: string;
+    voteId: string;
+    revision?: string;
+    nextRevision: string;
+    close?: true;
+  };
   ballotSelectionId?: string;
   departureSnapshotId?: string | null;
   departure?:
@@ -349,7 +356,8 @@ export function createDataAccess(
         if (
           item.kind === "lootBallot" &&
           (!/^[0-9]{20}$/.test(item.selectionId) ||
-            condition?.ballotSelectionId !== item.selectionId)
+            condition?.ballotSelectionId !== item.selectionId ||
+            !condition.council)
         )
           throw new Error("BALLOT_CONDITION_REQUIRED");
         const self = [
@@ -617,6 +625,58 @@ function createDynamoStorage(config: {
       );
     },
     async put(item, condition) {
+      if (condition?.council) {
+        const council = condition.council;
+        await client.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                Update: {
+                  TableName: config.tableName,
+                  Key: {
+                    pk: `LOOT_VOTE#${council.guildId}`,
+                    sk: `LOOT_VOTE#${council.voteId}`,
+                  },
+                  UpdateExpression: `SET revision = :next${council.close ? ", closed = :closed" : ""}`,
+                  ConditionExpression:
+                    "attribute_exists(pk) AND attribute_not_exists(closed) AND " +
+                    (council.revision
+                      ? "revision = :revision"
+                      : "attribute_not_exists(revision)"),
+                  ExpressionAttributeValues: {
+                    ":next": council.nextRevision,
+                    ...(council.revision
+                      ? { ":revision": council.revision }
+                      : {}),
+                    ...(council.close ? { ":closed": true } : {}),
+                  },
+                },
+              },
+              {
+                Put: {
+                  TableName: config.tableName,
+                  Item: {
+                    ...item,
+                    gsi1pk: `${item.pk.split("#")[0]}#ALL`,
+                    gsi1sk: `${item.pk}#${item.sk}`,
+                  },
+                  ConditionExpression: council.close
+                    ? "attribute_not_exists(pk)"
+                    : "attribute_not_exists(selectionId) OR selectionId < :selection",
+                  ...(!council.close
+                    ? {
+                        ExpressionAttributeValues: {
+                          ":selection": condition.ballotSelectionId,
+                        },
+                      }
+                    : {}),
+                },
+              },
+            ],
+          }),
+        );
+        return;
+      }
       if (condition?.memoryCutoff !== undefined) {
         if (item.kind !== "fact" || item.forgetAt !== undefined)
           throw new Error("INVALID_MEMORY_WRITE");
