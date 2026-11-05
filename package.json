@@ -21,7 +21,7 @@
     "build:class-news": "esbuild src/class-news/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/class-news/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:gow-intake": "esbuild src/gow-intake/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gow-intake/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:snapshot-ingest": "esbuild src/snapshot-ingest/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/snapshot-ingest/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
-    "build:reader": "esbuild src/reader/index.mts --bundle --platform=node --target=node22 --format=esm --external:@napi-rs/keyring --outfile=build/reader/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
+    "build:reader": "node scripts/build-reader.mts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.3",
