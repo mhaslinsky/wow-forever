@@ -18,7 +18,7 @@ import {
 } from "../src/assistant/core.mts";
 import { createAskRoutes } from "../src/assistant/interactions.mts";
 import { assistantPrincipal } from "../src/assistant/runtime.mts";
-import { createSpend, PAUSED } from "../src/assistant/spend.mts";
+import { createSpend, PAUSED, SpendError } from "../src/assistant/spend.mts";
 import {
   createPrincipalFactory,
   createSystemPrincipal,
@@ -969,7 +969,7 @@ test("an unset limit still meters and answers above the former threshold", async
   assert.deepEqual(state.errors, ["write", "write"]);
 });
 
-test("enforced counter read and write failures refuse and emit errors", async () => {
+test("enforced counter and model usage failures refuse and emit errors", async () => {
   for (const mode of ["read", "write"]) {
     const state = spendState(0.001);
     state.fail(mode);
@@ -981,4 +981,12 @@ test("enforced counter read and write failures refuse and emit errors", async ()
     assert.equal(assistant.requests.length, 0);
     assert.deepEqual(state.errors, [mode]);
   }
+  const state = spendState(0.001);
+  const route = createRouting(
+    state.spend.bedrock(async () => {
+      throw new Error("Model unavailable");
+    }),
+  );
+  await assert.rejects(route("Question", signal), SpendError);
+  assert.deepEqual(state.errors, ["model_usage"]);
 });

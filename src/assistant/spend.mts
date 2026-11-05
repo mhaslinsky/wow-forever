@@ -264,7 +264,15 @@ export function createSpend(ports: {
         options: { abortSignal: AbortSignal },
       ) => {
         const period = await check(options.abortSignal);
-        const result = await sendModel(command, options);
+        let result: ConverseCommandOutput;
+        try {
+          result = await sendModel(command, options);
+        } catch (error) {
+          ports.report("model_usage");
+          if (ports.limitUsd !== undefined)
+            throw new SpendError("Model usage unavailable");
+          throw error;
+        }
         const input = result.usage?.inputTokens;
         const output = result.usage?.outputTokens;
         if (
