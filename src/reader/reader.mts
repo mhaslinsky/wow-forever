@@ -16,20 +16,16 @@ export type Clock = {
   schedule(callback: () => void, delay: number): () => void;
 };
 export function errorName(error: unknown): string {
-  if (!error || typeof error !== "object") return String(error);
+  if (!error || typeof error !== "object") return "UnknownError";
   const value = error as {
     name?: string;
     code?: string;
     cause?: { code?: string };
-    message?: string;
   };
   return (
-    (value.name && !["Error", "TypeError"].includes(value.name)
-      ? value.name
-      : undefined) ??
+    (value.name && value.name !== "Error" ? value.name : undefined) ??
     value.code ??
     value.cause?.code ??
-    value.message ??
     "UnknownError"
   );
 }

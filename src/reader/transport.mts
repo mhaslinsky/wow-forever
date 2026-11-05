@@ -20,7 +20,12 @@ export async function uploadSnapshot(
   try {
     body = (await response.json()) as typeof body;
   } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
+    if (
+      response.status === 200 ||
+      response.status >= 500 ||
+      [408, 429].includes(response.status)
+    )
+      throw error;
     body = { error: "InvalidResponseError" };
   }
   return { ...body, status: response.status };
