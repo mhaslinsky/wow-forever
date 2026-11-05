@@ -13,6 +13,7 @@ import {
 import { createRoster } from "../roster/core.mts";
 import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
 import { createIntake } from "./intake.mts";
+import { type IntakeResolution, resolutionThread } from "./resolve.mts";
 
 export type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
 export type CreateCandidateInput = {
@@ -30,6 +31,7 @@ export type CreateCandidateInput = {
 };
 export type ForumTag = { id: string; name: string };
 export type ForumPort = {
+  verifyIntake?(threadId: string, ref: string): Promise<void>;
   tags(): Promise<readonly ForumTag[]>;
   create(input: {
     name: string;
@@ -182,6 +184,10 @@ export function createRecruiting(
   }
   return {
     candidate,
+    async resolveIntake(actor: Principal<"user">, input: IntakeResolution) {
+      const threadId = resolutionThread(actor, input, guildId);
+      return intake.resolve(input.ref, threadId);
+    },
     registerRoster: createRoster(data, guildId).register,
     async create(input: CreateCandidateInput) {
       if (
@@ -227,7 +233,7 @@ export function createRecruiting(
         )
         .digest("hex");
       const replay = await intake.replay(submissionId);
-      if (replay) return replay;
+      if (replay.candidate) return replay.candidate;
       const candidates = await records.query(
         recordKey("candidate", guildId, "unused").pk,
       );
@@ -273,7 +279,7 @@ export function createRecruiting(
         const threadId = existing.recruiting.threadId;
         return saving(threadId, async () => {
           const [previous] = await records.get(note(threadId));
-          if (previous) return existing;
+          if (previous) return intake.finishReleased(replay.released, existing);
           const enriched: Candidate = {
             ...existing,
             ...(!existing.discordUserId && input.discordUserId
@@ -306,7 +312,7 @@ export function createRecruiting(
             }
             throw cause;
           }
-          return enriched;
+          return intake.finishReleased(replay.released, enriched);
         });
       }
       const tags = await forum.tags();
@@ -329,6 +335,7 @@ export function createRecruiting(
           ...(input.application ? { application: input.application } : {}),
         },
         applied,
+        replay.released,
       );
     },
     async setFollowUp(

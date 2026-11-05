@@ -334,9 +334,14 @@ export function decode(raw: unknown): GuildRecord | undefined {
   }
   if (kind === "recruitingIntake") {
     if (
-      !["pending", "uncertain", "created", "done", "blocked"].includes(
-        item.state as string,
-      ) ||
+      ![
+        "pending",
+        "uncertain",
+        "created",
+        "done",
+        "blocked",
+        "released",
+      ].includes(item.state as string) ||
       !Number.isFinite(Date.parse(item.startedAt as string)) ||
       !/^[a-f0-9]{64}$/.test(item.ref as string) ||
       item.sk !== `${prefix}${item.ref}`
@@ -346,7 +351,18 @@ export function decode(raw: unknown): GuildRecord | undefined {
       if (typeof item.threadId !== "string" || !item.threadId) return;
       output.threadId = item.threadId;
     }
-    if (item.state === "done") {
+    if (item.state === "released" && item.threadId !== undefined) return;
+    if (item.released !== undefined) {
+      if (
+        item.released !== true ||
+        !["pending", "uncertain", "created", "blocked"].includes(
+          item.state as string,
+        )
+      )
+        return;
+      output.released = true;
+    }
+    if (item.state === "done" || item.state === "released") {
       if (item.payload !== undefined) return;
     } else {
       const payload = item.payload as Record<string, unknown> | undefined;
@@ -381,7 +397,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
     if (item.state === "blocked") {
       if (
         typeof item.noticeSent !== "boolean" ||
-        !["expired", "uncertain"].includes(item.outcome as string)
+        !["expired", "uncertain", "rejected"].includes(
+          item.outcome as string,
+        ) ||
+        (item.outcome === "rejected" && item.released !== true)
       )
         return;
       output.noticeSent = item.noticeSent;

@@ -5,6 +5,7 @@ import {
   type ForumChannel,
   type Guild,
   PermissionFlagsBits,
+  Routes,
 } from "discord.js";
 import {
   createPrincipalFactory,
@@ -70,6 +71,32 @@ function discordText(value: string, limit: number): string {
 
 export function discordForum(forum: ForumChannel): ForumPort {
   return {
+    async verifyIntake(threadId, ref) {
+      try {
+        const bot = (await forum.client.rest.get(Routes.user())) as {
+          id?: string;
+        };
+        const thread = await forum.threads.fetch(threadId, { force: true });
+        if (
+          !bot.id ||
+          !thread ||
+          thread.type !== ChannelType.PublicThread ||
+          thread.guildId !== forum.guild.id ||
+          thread.parentId !== forum.id ||
+          thread.ownerId !== bot.id
+        )
+          throw new Error("INTAKE_VERIFICATION_FAILED");
+        const starter = await thread.fetchStarterMessage({ force: true });
+        if (
+          !starter ||
+          starter.author.id !== bot.id ||
+          !starter.content.trimEnd().endsWith(`\n-# ref ${ref}`)
+        )
+          throw new Error("INTAKE_VERIFICATION_FAILED");
+      } catch (cause) {
+        throw new Error("INTAKE_VERIFICATION_FAILED", { cause });
+      }
+    },
     async tags() {
       return (await forum.fetch()).availableTags;
     },

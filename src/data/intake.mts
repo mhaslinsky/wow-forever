@@ -19,6 +19,7 @@ export type IntakeState =
   | "uncertain"
   | "created"
   | "done"
+  | "released"
   | "blocked";
 export type IntakeFields = {
   state: IntakeState;
@@ -28,5 +29,6 @@ export type IntakeFields = {
   payload?: IntakePayload;
   threadId?: string;
   noticeSent?: boolean;
-  outcome?: "expired" | "uncertain";
+  outcome?: "expired" | "uncertain" | "rejected";
+  released?: true;
 };
