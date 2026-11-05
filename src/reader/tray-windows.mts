@@ -1,4 +1,5 @@
-import { createRequire } from "node:module";
+import { createRequire as createModuleRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { errorName } from "./reader.mts";
 import type { TrayPort } from "./tray.mts";
 
@@ -23,8 +24,13 @@ export function windowsTray(): TrayPort {
   if (!["x64", "arm64"].includes(process.arch))
     throw new Error("Unsupported tray architecture");
   // The package's ESM entry contains CommonJS; load its pinned native export directly.
-  const native: Native = createRequire(import.meta.url)(
-    `tray-icon-node/tray-icon-node.win32-${process.arch}-msvc.node`,
+  const native: Native = createModuleRequire(import.meta.url)(
+    fileURLToPath(
+      new URL(
+        `./node_modules/tray-icon-node/tray-icon-node.win32-${process.arch}-msvc.node`,
+        import.meta.url,
+      ),
+    ),
   );
   native.initialize();
   const icon = (warning: boolean) => {
@@ -69,6 +75,7 @@ export function windowsTray(): TrayPort {
     }
   };
   const timer = setInterval(() => protect(() => native.update()), 16);
+  timer.unref();
   return {
     show(state) {
       protect(() => {

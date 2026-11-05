@@ -58,9 +58,15 @@ test("tray tooltip reflects the status file's last outcome and warning recovers"
         warning: true,
       });
     }
+    writeFileSync(path, "{}");
+    refreshTray(tray, () => readFileSync(path, "utf8"));
+    assert.equal(shown?.warning, false);
     rmSync(path);
     refreshTray(tray, () => readFileSync(path, "utf8"));
-    assert.equal(shown?.tooltip, "Guild OS: Status unavailable");
+    assert.deepEqual(shown, {
+      tooltip: "Guild OS: Status unavailable",
+      warning: true,
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

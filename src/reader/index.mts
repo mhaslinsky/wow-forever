@@ -12,6 +12,7 @@ import {
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createReader, errorName, type Status } from "./reader.mts";
+import { startReaderSession } from "./session.mts";
 import { uploadSnapshot } from "./transport.mts";
 import { refreshTray, type TrayPort } from "./tray.mts";
 import { windowsTray } from "./tray-windows.mts";
@@ -78,18 +79,9 @@ function main() {
   }
   delete status.pendingRetryAt;
   let tray: TrayPort | undefined;
-  try {
-    tray = windowsTray();
-  } catch (error) {
-    console.error(`Tray unavailable: ${errorName(error)}`);
-  }
   const updateTray = () => {
     if (tray) refreshTray(tray, () => readFileSync(statusPath, "utf8"));
   };
-  if (tray) {
-    updateTray();
-    watchFile(statusPath, { interval: 1000 }, updateTray);
-  }
   const save = (value: Status) => {
     try {
       const temporary = `${statusPath}.new`;
@@ -130,24 +122,44 @@ function main() {
     },
     status,
   );
-  watchFile(
-    config.savedVariablesPath,
-    { interval: 1000 },
-    (current, previous) => {
-      if (
-        current.mtimeMs !== previous.mtimeMs ||
-        current.size !== previous.size
-      )
-        reader.changed();
+  const stop = startReaderSession({
+    watch() {
+      watchFile(
+        config.savedVariablesPath,
+        { interval: 1000 },
+        (current, previous) => {
+          if (
+            current.mtimeMs !== previous.mtimeMs ||
+            current.size !== previous.size
+          )
+            reader.changed();
+        },
+      );
+      return () => unwatchFile(config.savedVariablesPath);
     },
-  );
-  reader.changed();
-  const stop = () => {
-    reader.stop();
-    unwatchFile(config.savedVariablesPath);
-    unwatchFile(statusPath);
-    tray?.close();
-  };
+    tray() {
+      const close = () => {
+        unwatchFile(statusPath);
+        tray?.close();
+        tray = undefined;
+      };
+      try {
+        tray = windowsTray();
+        updateTray();
+        watchFile(
+          statusPath,
+          { interval: 1000, persistent: false },
+          updateTray,
+        );
+      } catch (error) {
+        close();
+        console.error(`Tray unavailable: ${errorName(error)}`);
+      }
+      return close;
+    },
+    changed: () => reader.changed(),
+    stop: () => reader.stop(),
+  });
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 }
