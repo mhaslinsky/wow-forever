@@ -1,4 +1,5 @@
 import {
+  type APIEmbed,
   type APIGuildChannel,
   type APIGuildMember,
   type APIRole,
@@ -11,12 +12,20 @@ import {
   Routes,
 } from "discord.js";
 
-function sendOfficerAlert(rest: Pick<REST, "get" | "post">, guildId: string) {
-  return async (content: string, components: unknown[] = []) => {
+function sendOfficerAlert(
+  rest: Pick<REST, "get" | "post">,
+  guildId: string,
+  channelName = "alerts",
+) {
+  return async (
+    content: string,
+    components: unknown[] = [],
+    embeds: APIEmbed[] = [],
+  ) => {
     const channels = (await rest.get(
       Routes.guildChannels(guildId),
     )) as APIGuildChannel<GuildChannelType>[];
-    const matches = channels.filter((channel) => channel.name === "alerts");
+    const matches = channels.filter((channel) => channel.name === channelName);
     const channel = matches[0];
     if (matches.length !== 1 || channel?.type !== ChannelType.GuildText)
       throw new Error("ALERTS_CHANNEL_MISSING_OR_AMBIGUOUS");
@@ -91,7 +100,12 @@ function sendOfficerAlert(rest: Pick<REST, "get" | "post">, guildId: string) {
         throw new Error("ALERTS_CHANNEL_PUBLIC");
     }
     const result = (await rest.post(Routes.channelMessages(channel.id), {
-      body: { content, components, allowed_mentions: { parse: [] } },
+      body: {
+        content,
+        components,
+        ...(embeds.length ? { embeds } : {}),
+        allowed_mentions: { parse: [] },
+      },
     })) as { id: string };
     return result;
   };
@@ -100,10 +114,15 @@ function sendOfficerAlert(rest: Pick<REST, "get" | "post">, guildId: string) {
 export function discordAlertMessage(
   rest: Pick<REST, "get" | "post">,
   guildId: string,
+  channelName = "alerts",
 ) {
-  const post = sendOfficerAlert(rest, guildId);
-  return async (content: string, components: unknown[]) => {
-    const result = await post(content, components);
+  const post = sendOfficerAlert(rest, guildId, channelName);
+  return async (
+    content: string,
+    components: unknown[],
+    embeds: APIEmbed[] = [],
+  ) => {
+    const result = await post(content, components, embeds);
     if (!result?.id) throw new Error("ALERT_MESSAGE_ID_MISSING");
     return result.id;
   };

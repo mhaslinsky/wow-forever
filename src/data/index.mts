@@ -32,6 +32,7 @@ export type QueryCursor = Readonly<Record<string, string>> & {
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
+  ballotSelectionId?: string;
   departureSnapshotId?: string | null;
   departure?:
     | { claim: true; expiredBefore: number }
@@ -345,6 +346,12 @@ export function createDataAccess(
           condition?.intake
         )
           throw new Error("INTAKE_CONDITIONAL_OPERATION_REQUIRED");
+        if (
+          item.kind === "lootBallot" &&
+          (!/^[0-9]{20}$/.test(item.selectionId) ||
+            condition?.ballotSelectionId !== item.selectionId)
+        )
+          throw new Error("BALLOT_CONDITION_REQUIRED");
         const self = [
           "member",
           "character",
@@ -683,6 +690,15 @@ function createDynamoStorage(config: {
               },
             });
       const conditional =
+        (condition?.ballotSelectionId
+          ? {
+              ConditionExpression:
+                "attribute_not_exists(selectionId) OR selectionId < :selection",
+              ExpressionAttributeValues: {
+                ":selection": condition.ballotSelectionId,
+              },
+            }
+          : undefined) ??
         departureCondition ??
         (condition?.departureSnapshotId !== undefined
           ? condition.departureSnapshotId === null
