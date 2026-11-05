@@ -15,7 +15,7 @@ export function discordAlerts(
   rest: Pick<REST, "get" | "post">,
   guildId: string,
 ) {
-  return async (content: string) => {
+  return async (content: string, components: unknown[] = []) => {
     const channels = (await rest.get(
       Routes.guildChannels(guildId),
     )) as APIGuildChannel<GuildChannelType>[];
@@ -94,7 +94,7 @@ export function discordAlerts(
         throw new Error("ALERTS_CHANNEL_PUBLIC");
     }
     await rest.post(Routes.channelMessages(channel.id), {
-      body: { content, allowed_mentions: { parse: [] } },
+      body: { content, components, allowed_mentions: { parse: [] } },
     });
   };
 }

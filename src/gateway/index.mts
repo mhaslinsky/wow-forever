@@ -7,10 +7,12 @@ import { Client, GatewayIntentBits } from "discord.js";
 import { createSystemPrincipal } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { refreshNeedsBoard } from "../needs/discord.mts";
+import { discordAlerts } from "../recruiting/alerts.mts";
 import {
   checkRecruitingAuditAccess,
   recruitingHandlers,
 } from "../recruiting/discord.mts";
+import { createDepartures } from "../roster/departures.mts";
 import {
   attachGateway,
   handlers,
@@ -61,6 +63,11 @@ async function main() {
     tableName: "wow-forever",
     region,
   });
+  const departures = createDepartures(
+    needsData,
+    guildId,
+    discordAlerts(client.rest, guildId),
+  );
   let needsPending = false;
   async function refreshNeeds() {
     if (needsPending || !client.isReady()) return;
@@ -69,6 +76,7 @@ async function main() {
       const guild = client.guilds.cache.get(guildId as string);
       if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
       await refreshNeedsBoard(guild, needsData);
+      await departures.refreshSnapshots();
     } catch {
       log({ event: "needs_board_refresh_failed" });
       await cloudwatch
@@ -102,6 +110,7 @@ async function main() {
       ),
       messageCreate: mentionForwarder(client, guildId),
       voiceStateUpdate: voicePresence,
+      guildMemberRemove: departures.memberRemoved,
       clientReady: async (readyClient) => {
         const guild = readyClient.guilds.cache.get(guildId);
         if (!guild) throw new Error("GUILD_NOT_AVAILABLE");

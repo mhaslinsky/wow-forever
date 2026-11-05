@@ -10,6 +10,7 @@ import {
 } from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
+  departure: "Officer",
   guildSnapshot: "Officer",
   guildSnapshotLatest: "Officer",
   needsBoard: "Officer",
@@ -33,6 +34,10 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  departure: {
+    prefix: "DEPARTURE",
+    fields: ["memberId", "evidence", "state", "requestId"],
+  },
   guildSnapshot: { prefix: "SNAPSHOT", fields: ["snapshotId", "addonVersion"] },
   guildSnapshotLatest: { prefix: "SNAPSHOT_LATEST", fields: ["snapshotId"] },
   needsBoard: { prefix: "NEEDS_BOARD", fields: ["channelId", "messageId"] },
@@ -150,6 +155,11 @@ export function decode(raw: unknown): GuildRecord | undefined {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
   }
+  if (
+    kind === "departure" &&
+    !["pending", "kept", "confirmed"].includes(String(item.state))
+  )
+    return;
   if (kind === "guildSnapshot" || kind === "guildSnapshotLatest") {
     if (
       !Number.isSafeInteger(item.exportedAt) ||
