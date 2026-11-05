@@ -44,8 +44,10 @@
 
 ## 5. Guild data reader
 
-- [ ] 5.1 SPIKE (no PR): capture a Guild OS SavedVariables file from jetragon and map its sections against the addon's companion payload code; Done when a section map and a scrubbed sample are recorded (complexity: standard) (gate: none)
-- [ ] 5.2 SavedVariables parser and normalizer to a versioned snapshot, rejecting unknown shapes by name (depends on: 1.1, 5.1) (complexity: standard) (gate: none)
+- [x] 5.1 SPIKE (no PR): capture a Guild OS SavedVariables file from jetragon and map its sections against the addon's companion payload code; Done when a section map and a scrubbed sample are recorded (complexity: standard) (gate: none)
+  PER-303 records the section map; a real capture is pending until the guild exists in game, with the genuine addon export standing in.
+- [x] 5.2 SavedVariables parser and normalizer to a versioned snapshot, rejecting unknown shapes by name (depends on: 1.1, 5.1) (complexity: standard) (gate: none)
+  Snapshot v1 keeps the envelope, members and loot; other sections come with their consumer tasks (6.3 and 7.3).
 - [ ] 5.3 Snapshot ingest endpoint: authenticated, idempotent, newer snapshots win (depends on: 1.3, 1.4, 5.2) (complexity: judgment) (gate: none)
 - [ ] 5.4 Windows reader app: file watcher, upload with backoff, start at login on jetragon (depends on: 5.2, 5.3) (complexity: standard) (gate: none)
 
