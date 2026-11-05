@@ -7,6 +7,7 @@ import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { ingestSnapshot } from "../src/data/snapshots.mts";
 import { createDepartures } from "../src/roster/departures.mts";
 import { parseCharacters } from "../src/roster/interactions.mts";
+import { createDepartureSnapshotHandler } from "../src/roster/snapshot-handler.mts";
 
 function fixture(failPosts = 0, failMemberWrite = false, failRelease = false) {
   const postError = new Error("POST_FAILED");
@@ -85,11 +86,21 @@ function fixture(failPosts = 0, failMemberWrite = false, failRelease = false) {
       items.set(item.sk + item.pk, item);
     },
   });
-  const core = createDepartures(data, "guild", async (content, components) => {
+  const post: Parameters<typeof createDepartures>[2] = async (
+    content,
+    components,
+  ) => {
     if (failPosts-- > 0) throw postError;
     posts.push({ content, components });
     return String(posts.length);
-  });
+  };
+  const core = createDepartures(data, "guild", post);
+  const scheduled = createDepartureSnapshotHandler(
+    data,
+    "guild",
+    "game-guild",
+    post,
+  );
   const actor = createPrincipalFactory({
     guildId: "guild",
     memberRoleId: "member",
@@ -124,7 +135,7 @@ function fixture(failPosts = 0, failMemberWrite = false, failRelease = false) {
         },
       },
     );
-    await core.checkSnapshot("game-guild");
+    await scheduled();
   };
   return { core, posts, items, actor, snapshot, getFlag, postError };
 }
@@ -150,8 +161,15 @@ test("member removal posts an officer confirmation request", async ({
   assert.deepEqual(failures, ["DEPARTURE_CLAIM_RELEASE_FAILED"]);
 });
 test("one missing snapshot does not flag", async () => {
-  const { posts, snapshot } = fixture();
+  const { posts, snapshot, core, items } = fixture();
   await snapshot(1, true);
+  const check = [...items.values()].find(
+    (item) => item.kind === "departureCheck",
+  );
+  assert.equal(check?.snapshotId, "1".padStart(64, "0"));
+  const before = JSON.stringify([...items]);
+  await core.checkSnapshot("game-guild");
+  assert.equal(JSON.stringify([...items]), before);
   await snapshot(2, true);
   await snapshot(3, true);
   await snapshot(4, false);
