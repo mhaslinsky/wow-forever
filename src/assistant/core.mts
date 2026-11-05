@@ -233,8 +233,8 @@ async function rosterNames(
 }
 
 const WOWHEAD_PAGE =
-  /https:\/\/www\.wowhead\.com\/forever\/(?:quest|item|npc|spell|zone|object)=\d+\/([a-z0-9-]+)(?![\w%])/g;
-const MODEL_URL = /https?:\/\/[^\s<>]+/gi;
+  /https:\/\/www\.wowhead\.com\/forever\/(?:quest|item|npc|spell|zone|object)=\d+\/([a-z0-9-]+)(?![\w%-])/g;
+const MODEL_URL = /https?:\/\/[^\s<>\uE000]+/gi;
 const slug = (name: string) =>
   name
     .toLowerCase()
@@ -364,11 +364,10 @@ export function createConverse(
       .replace(/\s*(?:\u2014|\s--(?=\s))\s*/g, ", ")
       .replace(MODEL_URL, "")
       .trim();
-    if (!linkNames(answerText, evidence, true))
-      throw new Error("ASSISTANT_GENERATION_FAILED");
-    const compose = (plain: boolean) =>
+    const plainBody = linkNames(answerText, evidence, true);
+    const compose = (body: string) =>
       [
-        linkNames(answerText, evidence, plain),
+        body,
         ...(evidence.length
           ? [
               `Sources: ${evidence
@@ -377,15 +376,18 @@ export function createConverse(
                 .join(" ")}`,
             ]
           : []),
-        ...(input.evidence.status !== "found" && /\d/.test(answerText)
+        ...(input.evidence.status !== "found" && /\d/.test(plainBody)
           ? [NOT_VERIFIED]
           : []),
         ...(input.evidence.status === "unavailable"
           ? [SEARCH_UNAVAILABLE]
           : []),
       ].join("\n");
-    let answer = compose(false);
-    if (answer.length >= 1900) answer = compose(true);
+    const linkedBody = linkNames(answerText, evidence, false);
+    if (!plainBody || !linkedBody)
+      throw new Error("ASSISTANT_GENERATION_FAILED");
+    let answer = compose(linkedBody);
+    if (answer.length >= 1900) answer = compose(plainBody);
     if (answer.length >= 1900)
       return [
         FAILURE,

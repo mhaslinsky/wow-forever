@@ -326,7 +326,7 @@ test("bracketed names link to Wowhead pages from evidence or a search", async ()
       {
         url: "https://example.com/q",
         title: "Q",
-        excerpts: [`[Quest](${quest})`],
+        excerpts: [`[Quest](${quest}) ${quest}%20extra`],
       },
     ];
     return state.converse(
@@ -355,6 +355,10 @@ test("bracketed names link to Wowhead pages from evidence or a search", async ()
     "[Deadmines](<https://www.wowhead.com/forever/search?q=Deadmines>)   run --help",
   );
   await assert.rejects(ask("[[ ]] [[***]]"), /ASSISTANT_GENERATION_FAILED/);
+  assert.match(
+    await ask("ht[[ ]]tps://x.example/[[Old Ironforge]]"),
+    /^\[Old Ironforge\]\(<.*search\?q=Old%20Ironforge>\)/,
+  );
   const long = await ask("[[Old Ironforge Incursion]] ".repeat(60));
   assert.ok(
     !long.includes("](<") && long.startsWith("Old Ironforge Incursion Old"),
