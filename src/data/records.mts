@@ -52,7 +52,10 @@ const CODECS = Object.freeze({
     prefix: "VOICE_PRESENCE",
     fields: ["guildId", "memberId", "channelId", "joinedAt"],
   },
-  attendance: { prefix: "ATTENDANCE", fields: ["raidId"] },
+  attendance: {
+    prefix: "ATTENDANCE",
+    fields: ["raidId", "source", "attendees"],
+  },
   signup: {
     prefix: "SIGNUP",
     fields: ["raidId", "startTime", "signUps", "polledAt"],
@@ -110,7 +113,9 @@ export type GuildRecord = {
                       raidTeam?: string;
                       active?: boolean;
                     }
-                  : Record<never, never>);
+                  : Current extends "attendance"
+                    ? { attemptId?: string }
+                    : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -256,6 +261,29 @@ export function decode(raw: unknown): GuildRecord | undefined {
   if (kind === "gowApplication" && item.mappedThreadId !== undefined) {
     if (typeof item.mappedThreadId !== "string" || !item.mappedThreadId) return;
     output.mappedThreadId = item.mappedThreadId;
+  }
+  if (kind === "attendance") {
+    if (item.attemptId !== undefined) {
+      if (typeof item.attemptId !== "string" || !item.attemptId) return;
+      output.attemptId = item.attemptId;
+    }
+    if (item.source !== "guildos" && item.source !== "voice") return;
+    try {
+      const attendees: unknown = JSON.parse(item.attendees as string);
+      if (
+        !Array.isArray(attendees) ||
+        !attendees.every(
+          (entry) =>
+            entry &&
+            typeof entry.memberId === "string" &&
+            entry.memberId.length > 0 &&
+            entry.source === item.source,
+        )
+      )
+        return;
+    } catch {
+      return;
+    }
   }
   if (kind === "voicePresence" && item.leftAt !== undefined) {
     if (typeof item.leftAt !== "string" || !item.leftAt) return;
