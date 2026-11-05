@@ -62,8 +62,8 @@
 ## 7. Loot council
 
 - [x] 7.1 `/wishlist` ranked lists with a pre-raid lock (depends on: 4.1) (complexity: standard) (gate: none)
-- [ ] 7.2 `/lc item` vote post with contender evidence and officer vote buttons (depends on: 5.3, 6.3, 7.1) (complexity: standard) (gate: none)
-- [ ] 7.3 Vote close with required reason, officer-only decision log, award confirmation and mismatch alert from snapshots (depends on: 7.2) (complexity: standard) (gate: none)
+- [x] 7.2 `/lc item` vote post with contender evidence and officer vote buttons (depends on: 5.3, 6.3, 7.1) (complexity: standard) (gate: none)
+- [x] 7.3 Vote close with required reason, officer-only decision log, award confirmation and mismatch alert from snapshots (depends on: 7.2) (complexity: standard) (gate: none)
 
 ## 8. Member assistant
 
