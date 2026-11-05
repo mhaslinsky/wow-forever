@@ -8,7 +8,8 @@ import { ingestSnapshot } from "../src/data/snapshots.mts";
 import { createDepartures } from "../src/roster/departures.mts";
 import { parseCharacters } from "../src/roster/interactions.mts";
 
-function fixture(failPosts = 0, failMemberWrite = false) {
+function fixture(failPosts = 0, failMemberWrite = false, failRelease = false) {
+  const postError = new Error("POST_FAILED");
   const member: GuildRecord = {
     ...recordKey("member", "user", "guild"),
     kind: "member",
@@ -32,6 +33,7 @@ function fixture(failPosts = 0, failMemberWrite = false) {
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
     releaseDeparture: async (flag) => {
+      if (failRelease) throw new Error("RELEASE_FAILED");
       const previous = items.get(flag.sk + flag.pk);
       if (
         previous?.kind !== "departure" ||
@@ -84,7 +86,7 @@ function fixture(failPosts = 0, failMemberWrite = false) {
     },
   });
   const core = createDepartures(data, "guild", async (content, components) => {
-    if (failPosts-- > 0) throw new Error("POST_FAILED");
+    if (failPosts-- > 0) throw postError;
     posts.push({ content, components });
     return String(posts.length);
   });
@@ -124,9 +126,11 @@ function fixture(failPosts = 0, failMemberWrite = false) {
     );
     await core.checkSnapshot("game-guild");
   };
-  return { core, posts, items, actor, snapshot, getFlag };
+  return { core, posts, items, actor, snapshot, getFlag, postError };
 }
-test("member removal posts an officer confirmation request", async () => {
+test("member removal posts an officer confirmation request", async ({
+  mock,
+}) => {
   const { core, posts } = fixture();
   await Promise.all([
     core.memberRemoved({ id: "user", guild: { id: "guild" } }),
@@ -134,6 +138,16 @@ test("member removal posts an officer confirmation request", async () => {
   ]);
   assert.equal(posts.length, 1);
   assert.match(JSON.stringify(posts[0]), /Confirm.*Keep/);
+  const failures: string[] = [];
+  mock.method(console, "error", (entry: string) => {
+    failures.push(JSON.parse(entry).code);
+  });
+  const failure = fixture(1, false, true);
+  await assert.rejects(
+    failure.core.memberRemoved({ id: "user", guild: { id: "guild" } }),
+    (error) => error === failure.postError,
+  );
+  assert.deepEqual(failures, ["DEPARTURE_CLAIM_RELEASE_FAILED"]);
 });
 test("one missing snapshot does not flag", async () => {
   const { posts, snapshot } = fixture();

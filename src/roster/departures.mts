@@ -7,6 +7,8 @@ import {
 import type { createDataAccess } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
 
+import { reportRecruitingFailure } from "../recruiting/alarm.mts";
+
 type Member = Extract<GuildRecord, { kind: "member" }>;
 export function createDepartures(
   data: ReturnType<typeof createDataAccess>,
@@ -61,7 +63,14 @@ export function createDepartures(
       ]);
       if (!messageId) throw new Error("DEPARTURE_MESSAGE_ID_MISSING");
     } catch (error) {
-      await store.releaseDeparture(pending);
+      try {
+        await store.releaseDeparture(pending);
+      } catch {
+        reportRecruitingFailure({
+          code: "DEPARTURE_CLAIM_RELEASE_FAILED",
+          guildId,
+        });
+      }
       throw error;
     }
     try {
