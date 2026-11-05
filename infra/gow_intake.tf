@@ -22,7 +22,7 @@ data "aws_iam_policy_document" "gow_intake" {
     condition {
       test     = "ForAllValues:StringEquals"
       variable = "dynamodb:LeadingKeys"
-      values   = ["GOW_APPLICATION#${var.guild_id}", "CANDIDATE#${var.guild_id}", "OFFICER_NOTE#${var.guild_id}"]
+      values   = ["GOW_APPLICATION#${var.guild_id}", "CANDIDATE#${var.guild_id}", "OFFICER_NOTE#${var.guild_id}", "RECRUITING_INTAKE#${var.guild_id}"]
     }
   }
   statement {
@@ -40,7 +40,7 @@ data "aws_iam_policy_document" "gow_intake" {
     condition {
       test     = "ForAllValues:StringEquals"
       variable = "dynamodb:LeadingKeys"
-      values   = ["OFFICER_NOTE#${var.guild_id}"]
+      values   = ["OFFICER_NOTE#${var.guild_id}", "RECRUITING_INTAKE#${var.guild_id}"]
     }
   }
   statement {

@@ -46,7 +46,7 @@ data "aws_iam_policy_document" "interactions" {
     condition {
       test     = "ForAllValues:StringEquals"
       variable = "dynamodb:LeadingKeys"
-      values   = ["OFFICER_NOTE#${var.guild_id}"]
+      values   = ["OFFICER_NOTE#${var.guild_id}", "RECRUITING_INTAKE#${var.guild_id}"]
     }
   }
 

@@ -5,9 +5,14 @@ import {
   DeleteTableCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
-import { createPrincipalFactory } from "../src/auth/index.mts";
+import {
+  createPrincipalFactory,
+  createSystemPrincipal,
+} from "../src/auth/index.mts";
 import { createDynamoDataAccess } from "../src/data/index.mts";
-import { recordKey } from "../src/data/records.mts";
+import { type GuildRecord, recordKey } from "../src/data/records.mts";
+import { createRetentionStorage } from "../src/data/retention.mts";
+import { createRecruiting } from "../src/recruiting/core.mts";
 
 const endpoint = process.env.DYNAMODB_LOCAL_ENDPOINT;
 test(
@@ -90,6 +95,117 @@ test(
         assert.deepEqual(
           await member.batch([candidate, publicItem, publicItem]),
           [publicItem],
+        );
+        const intakes = data.forSystem(
+          createSystemPrincipal(["recruitingIntake"]),
+        );
+        const intake: Extract<GuildRecord, { kind: "recruitingIntake" }> = {
+          ...recordKey("recruitingIntake", "guild", "a".repeat(64)),
+          kind: "recruitingIntake",
+          ownerId: "guild",
+          state: "pending",
+          attemptId: "first",
+          ref: "a".repeat(64),
+          startedAt: "2030-01-01T00:00:00Z",
+          payload: {
+            name: "Synthetic",
+            source: "Officer lead",
+            actorId: "officer",
+            changedAt: "2030-01-01T00:00:00Z",
+            nextActionAt: "2030-01-02T00:00:00Z",
+            content: "Synthetic",
+            submission: "{}",
+          },
+        };
+        await assert.rejects(officer.insert(intake), /WRITE_DENIED/);
+        const attempts = await Promise.allSettled([
+          intakes.insert(intake),
+          intakes.insert(intake),
+        ]);
+        assert.equal(
+          attempts.filter((result) => result.status === "fulfilled").length,
+          1,
+        );
+        assert.equal(
+          (
+            attempts.find(
+              (result) => result.status === "rejected",
+            ) as PromiseRejectedResult
+          ).reason.message,
+          "WRITE_CONFLICT",
+        );
+        const uncertain = { ...intake, state: "uncertain" as const };
+        await intakes.transitionIntake(uncertain, {
+          state: "pending",
+          attemptId: "first",
+        });
+        await assert.rejects(
+          intakes.transitionIntake(intake, {
+            state: "pending",
+            attemptId: "first",
+          }),
+          /WRITE_CONFLICT/,
+        );
+        await assert.rejects(intakes.deleteIntake(intake), /WRITE_CONFLICT/);
+        await intakes.deleteIntake(uncertain);
+        assert.deepEqual(await intakes.get(intake), []);
+        console.log(
+          "DynamoDB Local: concurrent intake insert=1 winner, stale transition/delete rejected, conditional delete passed",
+        );
+        let created = 0;
+        const core = createRecruiting(
+          data,
+          createSystemPrincipal([
+            "candidate",
+            "officerNote",
+            "recruitingIntake",
+          ]),
+          "guild",
+          {
+            tags: async () =>
+              ["New", "Declined", "Officer lead"].map((name) => ({
+                id: name,
+                name,
+              })),
+            create: async () => `thread-${++created}`,
+            post: async () => {},
+            tagsFor: async () => [],
+            setTags: async () => {},
+          },
+        );
+        const input = {
+          name: "Synthetic",
+          source: "Officer lead" as const,
+          actorId: "officer",
+        };
+        const first = await core.create(input);
+        const firstThreadId = first.recruiting?.threadId;
+        assert.ok(firstThreadId);
+        const [completed] = await intakes.query(intake.pk);
+        const declined = await core.setStage(
+          firstThreadId,
+          "Declined",
+          "officer",
+          "declined",
+        );
+        const retention = createRetentionStorage({
+          tableName,
+          region: "us-east-1",
+          guildId: "guild",
+          endpoint,
+          localCredentials: true,
+        });
+        await retention.purge(declined);
+        assert.deepEqual(await intakes.get(completed), []);
+        const fresh = await core.create(input);
+        assert.notEqual(fresh.sk, first.sk);
+        assert.equal(
+          (await core.candidate(firstThreadId))?.recruiting,
+          undefined,
+        );
+        assert.equal(created, 2);
+        console.log(
+          "DynamoDB Local: completed intake purged, identical reapplication created a fresh thread",
         );
         console.log(
           "DynamoDB Local: member candidate=0, officer candidate=1, public batch=1, GSI boundary passed",

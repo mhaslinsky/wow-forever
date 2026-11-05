@@ -29,6 +29,13 @@ import {
 } from "../src/recruiting/discord.mts";
 
 const threadId = "THREAD_ID";
+function deferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((ready) => {
+    resolve = ready;
+  });
+  return { promise, resolve };
+}
 
 async function seed(
   setup: ReturnType<typeof fixture>,
@@ -50,9 +57,25 @@ function fixture(
     removeNote: async (item) => {
       items.delete(`${item.pk}/${item.sk}`);
     },
-    put: async (item) => {
+    put: async (item, condition) => {
       if (failWrites === item.kind) throw new Error("storage unavailable");
+      const previous = items.get(`${item.pk}/${item.sk}`);
+      if (
+        (condition?.absent && previous) ||
+        (condition?.intake &&
+          (previous?.kind !== "recruitingIntake" ||
+            previous.state !== condition.intake.state ||
+            previous.attemptId !== condition.intake.attemptId ||
+            (condition.intake.noticeSent !== undefined &&
+              previous.noticeSent !== condition.intake.noticeSent)))
+      )
+        throw Object.assign(new Error("condition failed"), {
+          name: "ConditionalCheckFailedException",
+        });
       items.set(`${item.pk}/${item.sk}`, item);
+    },
+    removeIntake: async (item) => {
+      items.delete(`${item.pk}/${item.sk}`);
     },
   });
   const tags = [...STAGES, ...SOURCES].map((name) => ({
@@ -62,6 +85,7 @@ function fixture(
   let applied: string[] = [];
   let created = 0;
   const posts: string[] = [];
+  const notices: string[] = [];
   const port: ForumPort = {
     tags: async () => tags,
     create: async (input) => {
@@ -86,7 +110,11 @@ function fixture(
     guild_id: "guild",
     member: { user: { id: "officer" }, roles: ["officer"] },
   });
-  const principal = createSystemPrincipal(["candidate", "officerNote"]);
+  const principal = createSystemPrincipal([
+    "candidate",
+    "officerNote",
+    "recruitingIntake",
+  ]);
   const core = createRecruiting(
     data,
     principal,
@@ -94,12 +122,15 @@ function fixture(
     port,
     (failure) => failures.push(failure),
     accepted,
+    async (content) => {
+      notices.push(content);
+    },
   );
   return {
     core,
     actor,
     failures,
-    failWrites: (kind: GuildRecord["kind"]) => {
+    failWrites: (kind?: GuildRecord["kind"]) => {
       failWrites = kind;
     },
     data,
@@ -110,6 +141,7 @@ function fixture(
     applied: () => applied,
     created: () => created,
     posts,
+    notices,
   };
 }
 
@@ -118,6 +150,150 @@ test("new candidate creates one thread with the New tag", async () => {
   await seed(setup, "Officer lead");
   assert.equal(setup.created(), 1);
   assert.deepEqual(setup.applied(), ["TAG_NEW_ID", "TAG_OFFICER LEAD_ID"]);
+});
+
+test("candidate or note write failure resumes one thread before dedupe", async () => {
+  for (const kind of ["candidate", "officerNote"] as const) {
+    const setup = fixture();
+    setup.failWrites(kind);
+    await assert.rejects(seed(setup), /CANDIDATE_SAVE_FAILED/);
+    setup.failWrites();
+    const record = await seed(setup);
+    assert.equal((await seed(setup)).sk, record.sk);
+    assert.equal(setup.created(), 1);
+    assert.deepEqual(setup.posts, []);
+    assert.equal(
+      [...setup.items.values()].filter((item) => item.kind === "officerNote")
+        .length,
+      1,
+    );
+    const intake = [...setup.items.values()].find(
+      (item) => item.kind === "recruitingIntake",
+    );
+    assert.equal(intake?.state, "done");
+    assert.equal(intake?.payload, undefined);
+  }
+});
+
+test("concurrent intake insert has one creator and a retryable loser", async () => {
+  const setup = fixture();
+  const entered = deferred();
+  const release = deferred();
+  const create = setup.port.create;
+  setup.port.create = async (input) => {
+    entered.resolve();
+    await release.promise;
+    return create(input);
+  };
+  const first = seed(setup);
+  await entered.promise;
+  await assert.rejects(seed(setup), /CANDIDATE_INTAKE_IN_PROGRESS/);
+  release.resolve();
+  await first;
+  assert.equal(setup.created(), 1);
+});
+
+test("expired pending blocks once without another forum create", async (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now: 1_900_000_000_000 });
+  const setup = fixture();
+  const entered = deferred();
+  const release = deferred();
+  setup.port.create = async () => {
+    entered.resolve();
+    await release.promise;
+    return threadId;
+  };
+  const first = seed(setup);
+  await entered.promise;
+  context.mock.timers.tick(360_000);
+  await assert.rejects(seed(setup), /CANDIDATE_INTAKE_BLOCKED/);
+  release.resolve();
+  await assert.rejects(first, /CANDIDATE_INTAKE_BLOCKED/);
+  await assert.rejects(seed(setup), /CANDIDATE_INTAKE_BLOCKED/);
+  assert.equal(setup.notices.length, 1);
+  assert.equal(setup.created(), 0);
+  assert.match(
+    setup.notices[0],
+    /Recruiting intake for Synthetic \(Apply form\) is on hold, ref [a-f0-9]{64}\. Check #recruiting for a thread with that ref before re-adding them\./,
+  );
+});
+
+test("4xx releases the intake; unknown outcomes block and retry unsent notices", async () => {
+  for (const status of [400, 500, undefined]) {
+    const setup = fixture();
+    const create = setup.port.create;
+    setup.port.create = async () => {
+      throw Object.assign(new Error("Discord failed"), { status });
+    };
+    await assert.rejects(seed(setup), /Discord failed/);
+    setup.port.create = create;
+    if (status === 400) {
+      await seed(setup);
+      assert.equal(setup.created(), 1);
+    } else {
+      const failing = createRecruiting(
+        setup.data,
+        setup.principal,
+        "guild",
+        setup.port,
+        () => {},
+        undefined,
+        async () => {
+          throw new Error("alert unavailable");
+        },
+      );
+      await assert.rejects(
+        failing.create({
+          name: "Synthetic",
+          source: "Apply form",
+          actorId: "officer",
+        }),
+        /alert unavailable/,
+      );
+      await assert.rejects(seed(setup), /CANDIDATE_INTAKE_BLOCKED/);
+      await assert.rejects(seed(setup), /CANDIDATE_INTAKE_BLOCKED/);
+      assert.equal(setup.notices.length, 1);
+      assert.equal(setup.created(), 0);
+    }
+  }
+});
+
+test("intake reservation failure makes no forum call", async () => {
+  const setup = fixture();
+  setup.failWrites("recruitingIntake");
+  await assert.rejects(seed(setup), /DATA_UNAVAILABLE/);
+  assert.equal(setup.created(), 0);
+});
+
+test("created replay preserves officer edits and retention", async () => {
+  for (const retained of [false, true]) {
+    const setup = fixture();
+    setup.failWrites("candidate");
+    await assert.rejects(seed(setup), /CANDIDATE_SAVE_FAILED/);
+    setup.failWrites();
+    const record: Candidate = {
+      pk: "CANDIDATE#guild",
+      sk: `CANDIDATE#${threadId}`,
+      kind: "candidate",
+      ownerId: "guild",
+      name: "Officer edit",
+      ...(retained
+        ? {
+            retention: {
+              outcome: "Declined",
+              threadId,
+              archived: true,
+            } as const,
+          }
+        : {}),
+    };
+    setup.items.set(`${record.pk}/${record.sk}`, record);
+    if (retained) await assert.rejects(seed(setup), /CANDIDATE_SAVE_FAILED/);
+    else assert.equal((await seed(setup)).name, "Officer edit");
+    assert.deepEqual(await setup.core.candidate(threadId), record);
+    assert.equal(setup.created(), 1);
+    assert.deepEqual(setup.posts, []);
+  }
 });
 
 test("officer tag change updates the stored stage with actor", async (context) => {
