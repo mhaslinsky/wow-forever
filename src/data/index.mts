@@ -32,6 +32,7 @@ export type QueryCursor = Readonly<Record<string, string>> & {
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
+  preserveMeasuredAttendance?: true;
   candidateThreadId?: string;
   absent?: true;
   forgetAt?: number;
@@ -68,24 +69,27 @@ function canSee(principal: Principal, item: GuildRecord): boolean {
     : actor.roles.includes(required);
 }
 
+export function reportInvalidDataItem(count = 1): void {
+  console.error(
+    JSON.stringify({
+      _aws: {
+        Timestamp: Date.now(),
+        CloudWatchMetrics: [
+          {
+            Namespace: "WowForever",
+            Dimensions: [[]],
+            Metrics: [{ Name: "InvalidDataItem", Unit: "Count" }],
+          },
+        ],
+      },
+      InvalidDataItem: count,
+    }),
+  );
+}
+
 export function createDataAccess(
   storage: StoragePort,
-  invalidItem: () => void = () =>
-    console.error(
-      JSON.stringify({
-        _aws: {
-          Timestamp: Date.now(),
-          CloudWatchMetrics: [
-            {
-              Namespace: "WowForever",
-              Dimensions: [[]],
-              Metrics: [{ Name: "InvalidDataItem", Unit: "Count" }],
-            },
-          ],
-        },
-        InvalidDataItem: 1,
-      }),
-    ),
+  invalidItem: () => void = reportInvalidDataItem,
 ) {
   function bind<Mode extends "user" | "system">(
     principal: Principal<Mode>,
@@ -309,7 +313,14 @@ export function createDataAccess(
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
         if (item.kind === "fact" && condition?.memoryCutoff === undefined)
           throw new Error("MEMORY_CONDITION_REQUIRED");
-        await stored(() => storage.put(item, condition));
+        await stored(() =>
+          storage.put(
+            item,
+            item.kind === "attendance" && item.source === "voice"
+              ? { ...condition, preserveMeasuredAttendance: true }
+              : condition,
+          ),
+        );
       },
     };
   }
@@ -634,10 +645,19 @@ function createDynamoStorage(config: {
             "(attribute_not_exists(pk) OR (kind = :kind AND ownerId = :owner))" +
             (item.kind === "candidate"
               ? " AND attribute_not_exists(retention)"
+              : "") +
+            (condition?.preserveMeasuredAttendance
+              ? " AND (attribute_not_exists(#source) OR #source <> :measured)"
               : ""),
+          ...(condition?.preserveMeasuredAttendance
+            ? { ExpressionAttributeNames: { "#source": "source" } }
+            : {}),
           ExpressionAttributeValues: {
             ":kind": item.kind,
             ":owner": item.ownerId,
+            ...(condition?.preserveMeasuredAttendance
+              ? { ":measured": "guildos" }
+              : {}),
           },
         }),
       );

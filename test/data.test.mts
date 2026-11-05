@@ -112,7 +112,7 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
     member: ["name"],
     character: ["name"],
     raid: ["date"],
-    attendance: ["raidId"],
+    attendance: ["raidId", "source", "attendees"],
     lootAward: ["item", "winner", "raidId", "date"],
     wishlist: ["item"],
     fact: ["text"],
@@ -161,6 +161,9 @@ test("adversarial raw items never leak across Get, multi-page Query, GSI and Bat
           ...Object.fromEntries(
             fields[record.kind].map((field) => [field, "synthetic"]),
           ),
+          ...(record.kind === "attendance"
+            ? { source: "voice", attendees: "[]" }
+            : {}),
           ...(record.defect === "unknown" ? { kind: "future" } : {}),
           ...(record.defect === "prefix" ? { pk: `MEMBER#disguised` } : {}),
           ...(record.defect === "skPrefix"
