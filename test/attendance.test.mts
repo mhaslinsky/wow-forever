@@ -108,18 +108,6 @@ function reporterFixture() {
     current,
   };
 }
-test("measured attendance survives fallback and is posted", async () => {
-  const { post, current, messages } = reporterFixture();
-  await post(raid);
-  current.value = undefined;
-  const winner = await post(raid);
-  equal(winner.source, "guildos");
-  deepEqual(
-    winner.attendance.map((entry) => entry.memberId),
-    snapshot.memberIds,
-  );
-  equal(messages[1], messages[0]);
-});
 test("bad voice records are skipped, counted and reported with a metric", async () => {
   const setup = reporterFixture();
   setup.current.value = undefined;
@@ -143,4 +131,22 @@ test("bad voice records are skipped, counted and reported with a metric", async 
   deepEqual(report.attendance, [{ memberId: "voice", source: "voice" }]);
   deepEqual(setup.metrics, [3]);
   ok(setup.messages[0].includes("Skipped 3 bad voice records"));
+});
+test("a losing voice attempt keeps its metric out of the measured report", async () => {
+  const setup = reporterFixture();
+  await setup.post(raid);
+  setup.current.value = undefined;
+  setup.records.set("VOICE_PRESENCE#bad", {
+    ...recordKey("voicePresence", "guild", "bad"),
+    kind: "voicePresence",
+    ownerId: "guild",
+    guildId: "guild",
+    ...voice(),
+    joinedAt: "invalid",
+  });
+  const winner = await setup.post(raid);
+  equal(winner.source, "guildos");
+  equal(winner.skippedBadVoiceRecords, 0);
+  deepEqual(setup.metrics, [1]);
+  equal(setup.messages[1], setup.messages[0]);
 });

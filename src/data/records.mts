@@ -113,7 +113,9 @@ export type GuildRecord = {
                       raidTeam?: string;
                       active?: boolean;
                     }
-                  : Record<never, never>);
+                  : Current extends "attendance"
+                    ? { attemptId?: string }
+                    : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -261,6 +263,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
     output.mappedThreadId = item.mappedThreadId;
   }
   if (kind === "attendance") {
+    if (item.attemptId !== undefined) {
+      if (typeof item.attemptId !== "string" || !item.attemptId) return;
+      output.attemptId = item.attemptId;
+    }
     if (item.source !== "guildos" && item.source !== "voice") return;
     try {
       const attendees: unknown = JSON.parse(item.attendees as string);

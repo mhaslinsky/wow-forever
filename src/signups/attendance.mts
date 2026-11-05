@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createSystemPrincipal } from "../auth/index.mts";
 import {
   type createDataAccess,
@@ -202,6 +203,7 @@ export function createPostRaidReporter(config: {
       console.error(JSON.stringify({ event: "ATTENDANCE_METRIC_FAILED" }));
     }
     const key = recordKey("attendance", config.guildId, raid.raidId);
+    const attemptId = randomUUID();
     try {
       await data.write({
         ...key,
@@ -210,6 +212,7 @@ export function createPostRaidReporter(config: {
         raidId: raid.raidId,
         source: report.source,
         attendees: JSON.stringify(report.attendance),
+        attemptId,
       });
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "WRITE_CONFLICT")
@@ -223,7 +226,7 @@ export function createPostRaidReporter(config: {
       persisted.source as AttendanceSource,
       members.map((entry) => entry.memberId),
       signedUp,
-      report.skippedBadVoiceRecords,
+      persisted.attemptId === attemptId ? report.skippedBadVoiceRecords : 0,
     );
     for (const content of attendanceMessages(raid.raidId, winner))
       await config.post(content);
