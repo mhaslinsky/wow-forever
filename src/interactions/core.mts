@@ -6,6 +6,7 @@ import { needsContextForInteraction } from "../needs/runtime.mts";
 import { createFollowUpRoutes } from "../recruiting/followup.mts";
 import { createRecruitingRoutes } from "../recruiting/interactions.mts";
 import { recruitingContextForInteraction } from "../recruiting/runtime.mts";
+import { departureRoutes } from "../roster/departure-interactions.mts";
 import { createRegisterRoutes } from "../roster/interactions.mts";
 
 import { createWishlistRoutes } from "../wishlist/interactions.mts";
@@ -104,6 +105,7 @@ export type Route = RouteDefinition &
     | { mode: "slow"; cooldownSeconds?: number }
   );
 export const registry: readonly Route[] = [
+  ...departureRoutes,
   ...createAskRoutes(assistantAnswer),
   ...createWishlistRoutes(wishlistContextForInteraction),
   ...createRecruitingRoutes(recruitingContextForInteraction),

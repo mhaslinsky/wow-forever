@@ -32,6 +32,10 @@ export type QueryCursor = Readonly<Record<string, string>> & {
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
+  departureSnapshotId?: string | null;
+  departure?:
+    | { claim: true; expiredBefore: number }
+    | { requestId: string; state: string };
   preserveMeasuredAttendance?: true;
   candidateThreadId?: string;
   absent?: true;
@@ -46,6 +50,12 @@ export type StoragePort = SnapshotWrites & {
   ): Promise<{ items: unknown[]; cursor?: QueryCursor }>;
   batch(keys: readonly Key[]): Promise<unknown[]>;
   put(item: GuildRecord, condition?: WriteCondition): Promise<void>;
+  releaseDeparture?(
+    item: Extract<GuildRecord, { kind: "departure" }>,
+  ): Promise<void>;
+  confirmDeparture?(
+    item: Extract<GuildRecord, { kind: "departure" }>,
+  ): Promise<void>;
   removeIntake?(
     item: Extract<GuildRecord, { kind: "recruitingIntake" }>,
   ): Promise<void>;
@@ -153,6 +163,46 @@ export function createDataAccess(
       }
     }
     return {
+      async releaseDeparture(
+        input: Extract<GuildRecord, { kind: "departure" }>,
+      ) {
+        systemWrite(input);
+        if (!decode(input)) throw new Error("INVALID_RECORD");
+        const release = storage.releaseDeparture;
+        if (!release) throw new Error("DEPARTURE_RELEASE_UNAVAILABLE");
+        await stored(() => release(input));
+      },
+      async confirmDeparture(
+        input: Extract<GuildRecord, { kind: "departure" }>,
+      ) {
+        systemWrite(input);
+        const actor = authority(principal);
+        if (actor.mode !== "system" || !actor.writableKinds.includes("member"))
+          throw new Error("WRITE_DENIED");
+        if (!decode(input) || input.state !== "confirmed")
+          throw new Error("INVALID_RECORD");
+        const confirm = storage.confirmDeparture;
+        if (!confirm) throw new Error("DEPARTURE_CONFIRM_UNAVAILABLE");
+        await stored(() => confirm(input));
+      },
+      async transitionDeparture(
+        input: Extract<GuildRecord, { kind: "departure" }>,
+        expected: NonNullable<WriteCondition["departure"]>,
+      ) {
+        systemWrite(input);
+        if (!decode(input)) throw new Error("INVALID_RECORD");
+        await stored(() => storage.put(input, { departure: expected }));
+      },
+      async advanceDepartureCheck(
+        input: Extract<GuildRecord, { kind: "departureCheck" }>,
+        previousSnapshotId: string | null,
+      ) {
+        systemWrite(input);
+        if (!decode(input)) throw new Error("INVALID_RECORD");
+        await stored(() =>
+          storage.put(input, { departureSnapshotId: previousSnapshotId }),
+        );
+      },
       async ingestSnapshot(input: Parameters<typeof ingestSnapshot>[1]) {
         const actor = authority(principal);
         if (
@@ -173,7 +223,9 @@ export function createDataAccess(
       async insert(input: GuildRecord, candidateThreadId?: string) {
         if (
           input.kind === "guildSnapshot" ||
-          input.kind === "guildSnapshotLatest"
+          input.kind === "guildSnapshotLatest" ||
+          input.kind === "departureCheck" ||
+          input.kind === "departure"
         )
           throw new Error("WRITE_DENIED");
         systemWrite(input);
@@ -237,7 +289,9 @@ export function createDataAccess(
         const actor = authority(principal);
         if (
           input.kind === "guildSnapshot" ||
-          input.kind === "guildSnapshotLatest"
+          input.kind === "guildSnapshotLatest" ||
+          input.kind === "departureCheck" ||
+          input.kind === "departure"
         )
           throw new Error("WRITE_DENIED");
         let raw: RecordInput = input;
@@ -443,28 +497,120 @@ function createDynamoStorage(config: {
         }),
       );
     },
+    async releaseDeparture(item) {
+      await client.send(
+        new DeleteCommand({
+          TableName: config.tableName,
+          Key: { pk: item.pk, sk: item.sk },
+          ConditionExpression:
+            "requestId = :request AND #state = :pending AND attribute_not_exists(messageId)",
+          ExpressionAttributeNames: { "#state": "state" },
+          ExpressionAttributeValues: {
+            ":request": item.requestId,
+            ":pending": "pending",
+          },
+        }),
+      );
+    },
+    async confirmDeparture(item) {
+      await client.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: config.tableName,
+                Item: {
+                  ...item,
+                  gsi1pk: "DEPARTURE#ALL",
+                  gsi1sk: `${item.pk}#${item.sk}`,
+                },
+                ConditionExpression:
+                  "requestId = :request AND #state = :pending",
+                ExpressionAttributeNames: { "#state": "state" },
+                ExpressionAttributeValues: {
+                  ":request": item.requestId,
+                  ":pending": "pending",
+                },
+              },
+            },
+            {
+              Update: {
+                TableName: config.tableName,
+                Key: {
+                  pk: `MEMBER#${item.memberId}`,
+                  sk: `MEMBER#${item.ownerId}`,
+                },
+                UpdateExpression: "SET active = :inactive",
+                ConditionExpression: "#kind = :member AND ownerId = :owner",
+                ExpressionAttributeNames: { "#kind": "kind" },
+                ExpressionAttributeValues: {
+                  ":inactive": false,
+                  ":member": "member",
+                  ":owner": item.memberId,
+                },
+              },
+            },
+          ],
+        }),
+      );
+    },
     async put(item, condition) {
-      const conditional = condition?.absent
-        ? {
-            ConditionExpression: "attribute_not_exists(pk)",
-          }
-        : condition?.intake
+      const departure = condition?.departure;
+      const departureCondition =
+        departure &&
+        ("claim" in departure
           ? {
               ConditionExpression:
-                "#state = :state AND attemptId = :attemptId" +
-                (condition.intake.noticeSent === undefined
-                  ? ""
-                  : " AND noticeSent = :noticeSent"),
+                "attribute_not_exists(pk) OR (#state IN (:kept, :confirmed) AND evidence <> :evidence) OR (#state = :pending AND attribute_not_exists(messageId) AND claimedAt < :expiredBefore)",
               ExpressionAttributeNames: { "#state": "state" },
               ExpressionAttributeValues: {
-                ":state": condition.intake.state,
-                ":attemptId": condition.intake.attemptId,
-                ...(condition.intake.noticeSent === undefined
-                  ? {}
-                  : { ":noticeSent": condition.intake.noticeSent }),
+                ":pending": "pending",
+                ":expiredBefore": departure.expiredBefore,
+                ":kept": "kept",
+                ":confirmed": "confirmed",
+                ":evidence": item.kind === "departure" ? item.evidence : "",
               },
             }
-          : undefined;
+          : {
+              ConditionExpression: "requestId = :request AND #state = :state",
+              ExpressionAttributeNames: { "#state": "state" },
+              ExpressionAttributeValues: {
+                ":request": departure.requestId,
+                ":state": departure.state,
+              },
+            });
+      const conditional =
+        departureCondition ??
+        (condition?.departureSnapshotId !== undefined
+          ? condition.departureSnapshotId === null
+            ? { ConditionExpression: "attribute_not_exists(pk)" }
+            : {
+                ConditionExpression: "snapshotId = :previous",
+                ExpressionAttributeValues: {
+                  ":previous": condition.departureSnapshotId,
+                },
+              }
+          : condition?.absent
+            ? {
+                ConditionExpression: "attribute_not_exists(pk)",
+              }
+            : condition?.intake
+              ? {
+                  ConditionExpression:
+                    "#state = :state AND attemptId = :attemptId" +
+                    (condition.intake.noticeSent === undefined
+                      ? ""
+                      : " AND noticeSent = :noticeSent"),
+                  ExpressionAttributeNames: { "#state": "state" },
+                  ExpressionAttributeValues: {
+                    ":state": condition.intake.state,
+                    ":attemptId": condition.intake.attemptId,
+                    ...(condition.intake.noticeSent === undefined
+                      ? {}
+                      : { ":noticeSent": condition.intake.noticeSent }),
+                  },
+                }
+              : undefined);
       const put = {
         TableName: config.tableName,
         Item: {

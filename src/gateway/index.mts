@@ -3,14 +3,16 @@ import {
   PutMetricDataCommand,
 } from "@aws-sdk/client-cloudwatch";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { createSystemPrincipal } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { refreshNeedsBoard } from "../needs/discord.mts";
+import { discordAlertMessage } from "../recruiting/alerts.mts";
 import {
   checkRecruitingAuditAccess,
   recruitingHandlers,
 } from "../recruiting/discord.mts";
+import { createDepartures } from "../roster/departures.mts";
 import {
   attachGateway,
   handlers,
@@ -45,6 +47,7 @@ async function main() {
   if (!instance || !/^i-[a-f0-9]+$/.test(instance))
     throw new Error("INSTANCE_NOT_CONFIGURED");
   const client = new Client({
+    partials: [Partials.GuildMember],
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildModeration,
@@ -61,6 +64,11 @@ async function main() {
     tableName: "wow-forever",
     region,
   });
+  const departures = createDepartures(
+    needsData,
+    guildId,
+    discordAlertMessage(client.rest, guildId),
+  );
   let needsPending = false;
   async function refreshNeeds() {
     if (needsPending || !client.isReady()) return;
@@ -102,6 +110,7 @@ async function main() {
       ),
       messageCreate: mentionForwarder(client, guildId),
       voiceStateUpdate: voicePresence,
+      guildMemberRemove: departures.memberRemoved,
       clientReady: async (readyClient) => {
         const guild = readyClient.guilds.cache.get(guildId);
         if (!guild) throw new Error("GUILD_NOT_AVAILABLE");

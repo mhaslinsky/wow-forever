@@ -73,8 +73,20 @@ test("production claims policy allows claims and atomic spend accounting", () =>
   const actions = statements.flatMap((statement) => statement.actions);
   assert.equal(
     actions.sort().join(","),
-    "bedrock:InvokeModel,dynamodb:ConditionCheckItem,dynamodb:DeleteItem,dynamodb:GetItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,dynamodb:Query,dynamodb:UpdateItem,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
+    "bedrock:InvokeModel,dynamodb:ConditionCheckItem,dynamodb:DeleteItem,dynamodb:GetItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,dynamodb:Query,dynamodb:UpdateItem,dynamodb:UpdateItem,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
   );
+  assert.deepEqual(statements[0], {
+    actions: ["dynamodb:UpdateItem"],
+    resources: [`\${aws_dynamodb_table.guild.arn}`],
+    condition: [
+      {
+        test: "ForAllValues:StringLike",
+        variable: "dynamodb:LeadingKeys",
+        values: ["MEMBER#*"],
+      },
+      { test: "Null", variable: "dynamodb:LeadingKeys", values: ["false"] },
+    ],
+  });
   const claims = statements.filter((statement) =>
     statement.resources.includes(`\${aws_dynamodb_table.claims.arn}`),
   );

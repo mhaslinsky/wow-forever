@@ -13,7 +13,10 @@ export type RecruitingFailure =
         | "SUBMISSION_NOTE_CLEANUP_FAILED";
       threadId: string;
     }
-  | { code: "RECRUITING_AUDIT_UNAVAILABLE"; guildId: string };
+  | {
+      code: "RECRUITING_AUDIT_UNAVAILABLE" | "DEPARTURE_CLAIM_RELEASE_FAILED";
+      guildId: string;
+    };
 
 export function reportRecruitingFailure(failure: RecruitingFailure): void {
   console.error(

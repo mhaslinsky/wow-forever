@@ -10,6 +10,8 @@ import {
 } from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
+  departureCheck: "Officer",
+  departure: "Officer",
   guildSnapshot: "Officer",
   guildSnapshotLatest: "Officer",
   needsBoard: "Officer",
@@ -33,6 +35,14 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  departureCheck: {
+    prefix: "DEPARTURE_CHECK",
+    fields: ["snapshotId", "counts"],
+  },
+  departure: {
+    prefix: "DEPARTURE",
+    fields: ["memberId", "evidence", "state", "requestId"],
+  },
   guildSnapshot: { prefix: "SNAPSHOT", fields: ["snapshotId", "addonVersion"] },
   guildSnapshotLatest: { prefix: "SNAPSHOT_LATEST", fields: ["snapshotId"] },
   needsBoard: { prefix: "NEEDS_BOARD", fields: ["channelId", "messageId"] },
@@ -77,45 +87,47 @@ export type GuildRecord = {
       Fields<Current>,
       string
     > &
-    (Current extends "guildSnapshot"
-      ? {
-          exportedAt: number;
-          receivedAt: number;
-          writtenAt: number;
-          snapshotVersion: 1;
-          snapshot: Snapshot;
-        }
-      : Current extends "guildSnapshotLatest"
-        ? { exportedAt: number }
-        : Current extends "recruitingIntake"
-          ? IntakeFields
-          : Current extends "voicePresence"
-            ? { leftAt?: string; endUnknown?: boolean }
-            : Current extends "candidate"
-              ? {
-                  recruiting?: RecruitingState;
-                  retention?: {
-                    outcome: "Declined" | "Withdrawn";
-                    threadId: string;
-                    archived: boolean;
-                  };
-                  application?: Application;
-                  discordUserId?: string;
-                  characters?: CharacterDeclaration[];
-                }
-              : Current extends "gowApplication"
-                ? { mappedThreadId?: string }
-                : Current extends "member"
-                  ? {
-                      roster?: (CharacterDeclaration & {
-                        confirmed: boolean;
-                      })[];
-                      raidTeam?: string;
-                      active?: boolean;
-                    }
-                  : Current extends "attendance"
-                    ? { attemptId?: string }
-                    : Record<never, never>);
+    (Current extends "departure"
+      ? { claimedAt: number; messageId?: string }
+      : Current extends "guildSnapshot"
+        ? {
+            exportedAt: number;
+            receivedAt: number;
+            writtenAt: number;
+            snapshotVersion: 1;
+            snapshot: Snapshot;
+          }
+        : Current extends "guildSnapshotLatest"
+          ? { exportedAt: number }
+          : Current extends "recruitingIntake"
+            ? IntakeFields
+            : Current extends "voicePresence"
+              ? { leftAt?: string; endUnknown?: boolean }
+              : Current extends "candidate"
+                ? {
+                    recruiting?: RecruitingState;
+                    retention?: {
+                      outcome: "Declined" | "Withdrawn";
+                      threadId: string;
+                      archived: boolean;
+                    };
+                    application?: Application;
+                    discordUserId?: string;
+                    characters?: CharacterDeclaration[];
+                  }
+                : Current extends "gowApplication"
+                  ? { mappedThreadId?: string }
+                  : Current extends "member"
+                    ? {
+                        roster?: (CharacterDeclaration & {
+                          confirmed: boolean;
+                        })[];
+                        raidTeam?: string;
+                        active?: boolean;
+                      }
+                    : Current extends "attendance"
+                      ? { attemptId?: string }
+                      : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -154,6 +166,43 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "departureCheck") {
+    try {
+      const counts = JSON.parse(String(item.counts));
+      if (
+        !counts ||
+        typeof counts !== "object" ||
+        Array.isArray(counts) ||
+        !Object.values(counts).every((entry) => {
+          if (!entry || typeof entry !== "object") return false;
+          const count = entry as Record<string, unknown>;
+          return (
+            [0, 1, 2].includes(Number(count.misses)) &&
+            typeof count.misses === "number" &&
+            typeof count.evidence === "string" &&
+            count.evidence.length > 0 &&
+            typeof count.rosterSignature === "string"
+          );
+        })
+      )
+        return;
+    } catch {
+      return;
+    }
+  }
+  if (kind === "departure") {
+    if (
+      !["pending", "kept", "confirmed"].includes(String(item.state)) ||
+      !Number.isFinite(item.claimedAt) ||
+      Number(item.claimedAt) < 0
+    )
+      return;
+    output.claimedAt = item.claimedAt;
+    if (item.messageId !== undefined) {
+      if (typeof item.messageId !== "string" || !item.messageId) return;
+      output.messageId = item.messageId;
+    }
   }
   if (kind === "guildSnapshot" || kind === "guildSnapshotLatest") {
     if (
