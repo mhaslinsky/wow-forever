@@ -39,7 +39,7 @@
 
 - [x] 4.1 Roster model, `/register` for mains and alts, Accepted stage grants Member and creates the roster entry (depends on: 1.3, 1.4, 3.1) (complexity: standard) (gate: none)
   Done in PR #33 (PER-318). Accepted grants Member; candidates without a Discord account alarm for a manual grant.
-- [ ] 4.2 Departure flags from member-leave events and two-snapshot absence, with Confirm and Keep buttons for officers (depends on: 4.1, 5.3) (complexity: standard) (gate: none)
+- [x] 4.2 Departure flags from member-leave events and two-snapshot absence, with Confirm and Keep buttons for officers (depends on: 4.1, 5.3) (complexity: standard) (gate: none)
 - [x] 4.3 Raid targets per team, pinned needs board, `/needs message` recruiting text (depends on: 4.1) (complexity: standard) (gate: none)
 
 ## 5. Guild data reader
@@ -49,7 +49,7 @@
 - [x] 5.2 SavedVariables parser and normalizer to a versioned snapshot, rejecting unknown shapes by name (depends on: 1.1, 5.1) (complexity: standard) (gate: none)
   Snapshot v1 keeps the envelope, members and loot; other sections come with their consumer tasks (6.3 and 7.3).
 - [x] 5.3 Snapshot ingest endpoint: authenticated, idempotent, newer snapshots win (depends on: 1.3, 1.4, 5.2) (complexity: judgment) (gate: none)
-- [ ] 5.4 Windows reader app: file watcher, upload with backoff, start at login on jetragon (depends on: 5.2, 5.3) (complexity: standard) (gate: none)
+- [x] 5.4 Windows reader app: file watcher, upload with backoff, start at login on jetragon (depends on: 5.2, 5.3) (complexity: standard) (gate: none)
 
 ## 6. Raid attendance
 
@@ -57,7 +57,7 @@
   Done in PR #30 (PER-308). Schedule and live smoke wait on the Raid-Helper API key.
 - [x] 6.2 Raid voice presence recording in the gateway client (depends on: 1.5) (complexity: standard) (gate: none)
   Done in PR #28 (PER-309), deployed Nov 3. Restart closes open intervals with endUnknown.
-- [ ] 6.3 Attendance resolution (snapshot first, voice fallback, source recorded) and the post-raid said-yes-versus-came report (depends on: 5.3, 6.1, 6.2) (complexity: standard) (gate: none)
+- [x] 6.3 Attendance resolution (snapshot first, voice fallback, source recorded) and the post-raid said-yes-versus-came report (depends on: 5.3, 6.1, 6.2) (complexity: standard) (gate: none)
 
 ## 7. Loot council
 
@@ -68,7 +68,7 @@
 ## 8. Member assistant
 
 - [x] 8.1 `/ask` and @-mention: members-only gate, Bedrock Sonnet worker grounded on guild records with web search, per-user cooldown (depends on: 1.3, 1.4, 1.5, 4.1) (complexity: judgment) (gate: none)
-- [ ] 8.2 Consented memory and `/forget` (depends on: 8.1) (complexity: standard) (gate: none)
+- [x] 8.2 Consented memory and `/forget` (depends on: 8.1) (complexity: standard) (gate: none)
 - [x] 8.3 Monthly assistant spend circuit breaker with officer notice (depends on: 8.1) (complexity: standard) (gate: none)
 
 ## 9. Retirement
