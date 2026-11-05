@@ -4,6 +4,8 @@ import {
   createForgetRoutes,
 } from "../assistant/interactions.mts";
 import { assistantAnswer, assistantForget } from "../assistant/runtime.mts";
+import { createLootCouncilRoutes } from "../loot-council/interactions.mts";
+import { lootCouncilContext } from "../loot-council/runtime.mts";
 import { createNeedsRoutes } from "../needs/interactions.mts";
 import { needsContextForInteraction } from "../needs/runtime.mts";
 import { createFollowUpRoutes } from "../recruiting/followup.mts";
@@ -109,6 +111,7 @@ export type Route = RouteDefinition &
   );
 export const registry: readonly Route[] = [
   ...departureRoutes,
+  ...createLootCouncilRoutes(lootCouncilContext),
   ...createAskRoutes(assistantAnswer),
   ...createForgetRoutes(assistantForget),
   ...createWishlistRoutes(wishlistContextForInteraction),

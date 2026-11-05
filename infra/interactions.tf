@@ -150,7 +150,7 @@ resource "aws_lambda_function" "interactions" {
       GUILD_ID              = var.guild_id
       GUARD_EXTRA_TERMS     = var.guard_extra_terms
       WISHLIST_LOCK_MINUTES = tostring(var.wishlist_lock_minutes)
-    })
+    }, var.guildos_guild_key == null ? {} : { GUILDOS_GUILD_KEY = var.guildos_guild_key })
   }
   depends_on = [aws_cloudwatch_log_group.interactions, aws_iam_role_policy.interactions]
 }
