@@ -23,7 +23,9 @@ export function errorName(error: unknown): string {
     cause?: { code?: string };
   };
   return (
-    (value.name && value.name !== "Error" ? value.name : undefined) ??
+    (value.name && !["Error", "TypeError"].includes(value.name)
+      ? value.name
+      : undefined) ??
     value.code ??
     value.cause?.code ??
     "UnknownError"
