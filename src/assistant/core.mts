@@ -36,12 +36,14 @@ export function createSearch(ports: {
   clock: Clock;
   secret(signal: AbortSignal): Promise<string>;
   http: typeof fetch;
+  prepareRequest?(signal: AbortSignal): Promise<() => Promise<void>>;
 }) {
   return async (
     question: string,
     parent: AbortSignal,
   ): Promise<SearchResult> => {
     let reason = "credential";
+    let account: (() => Promise<void>) | undefined;
     try {
       return await bounded(ports.clock, 8000, parent, async (signal) => {
         const key = await ports.secret(signal);
@@ -51,6 +53,9 @@ export function createSearch(ports: {
           .trim()
           .slice(0, 200);
         if (!query) return { status: "empty" };
+        const prepared = await ports.prepareRequest?.(signal);
+        signal.throwIfAborted();
+        account = prepared;
         reason = "transport";
         const response = await ports.http("https://api.parallel.ai/v1/search", {
           method: "POST",
@@ -117,6 +122,9 @@ export function createSearch(ports: {
             ? "timeout"
             : reason,
       };
+    } finally {
+      // Charge sent requests even when the search deadline interrupts their response.
+      await account?.();
     }
   };
 }

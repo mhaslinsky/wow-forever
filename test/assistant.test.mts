@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
+import type {
+  ConverseCommandInput,
+  ConverseCommandOutput,
+} from "@aws-sdk/client-bedrock-runtime";
 import { PermissionFlagsBits as flags } from "discord.js";
 import {
   createChannelContext,
@@ -108,6 +111,7 @@ function setup(
   const search = createSearch({
     clock,
     secret: async () => "synthetic-key",
+    prepareRequest: spend?.request,
     http: async (_url, options) => {
       searches.push(JSON.parse(String(options?.body)));
       return Response.json({
@@ -183,7 +187,7 @@ function setup(
       checkSpend: spend?.check ?? (async () => {}),
       data,
       guildId: "guild",
-      search: spend ? spend.search(search) : search,
+      search,
       converse,
       route,
       privateTerms: async () => ["Server sentinel", "Extra private sentinel"],
@@ -815,121 +819,93 @@ test("history fetch failure gives an answer without context", async () => {
 });
 
 function spendState(limitUsd: number | undefined) {
-  let now = Date.UTC(2026, 10, 30, 23, 59);
-  const rows = new Map<string, Record<string, { N: string }>>();
+  const rows = new Map<string, number>();
+  const claims = new Set<string>();
+  const markers = new Set<string>();
   const errors: string[] = [];
   const totals: number[] = [];
-  let notices = 0;
-  let failure = "";
+  const state = {
+    now: Date.UTC(2026, 10, 30, 23, 59),
+    notices: 0,
+    markerWrites: 0,
+    failure: "",
+    rows,
+    errors,
+    totals,
+  };
   const spend = createSpend({
-    table: "claims",
     guildId: "guild",
     limitUsd,
     inputPerMillionUsd: 3,
     outputPerMillionUsd: 15,
     searchUsd: 0.001,
-    now: () => now,
+    now: () => state.now,
     report: (reason) => errors.push(reason),
     total: (usd) => totals.push(usd),
     notify: async () => {
-      notices++;
+      state.notices++;
+      if (state.failure === "delivery") throw new Error("Discord unavailable");
     },
-    send: async (command) => {
-      const input = command.input;
-      if (
-        "UpdateExpression" in input &&
-        input.UpdateExpression?.includes("ADD")
-      ) {
-        if (failure === "write") throw new Error("Unavailable");
-        assert.equal(input.ReturnValues, "ALL_NEW");
-        const pk = input.Key?.pk.S ?? assert.fail("Missing key");
-        const row = rows.get(pk) ?? {};
-        row.costUnits = {
-          N: String(
-            Number(row.costUnits?.N ?? 0) +
-              Number(input.ExpressionAttributeValues?.[":cost"].N),
-          ),
-        };
-        row.expiresAt = {
-          N: input.ExpressionAttributeValues?.[":ttl"].N ?? "",
-        };
-        rows.set(pk, row);
-        return { Attributes: row };
-      }
-      if ("UpdateExpression" in input) {
-        const pk = input.Key?.pk.S ?? assert.fail("Missing key");
-        const row = rows.get(pk) ?? {};
-        if (Number(row.noticeUntilMs?.N ?? 0) > now)
-          throw Object.assign(new Error("Claimed"), {
-            name: "ConditionalCheckFailedException",
-          });
-        row.noticeUntilMs = {
-          N: input.ExpressionAttributeValues?.[":lease"].N ?? "",
-        };
-        rows.set(pk, row);
-        return {};
-      }
-      if ("Item" in input) {
-        const pk = input.Item?.pk.S ?? assert.fail("Missing marker");
-        assert.equal(input.ConditionExpression, "attribute_not_exists(pk)");
-        rows.set(pk, {});
-        return {};
-      }
-      assert.ok(
-        "Key" in input && "ConsistentRead" in input && input.ConsistentRead,
-      );
-      if (failure === "read") throw new Error("Unavailable");
-      return { Item: rows.get(input.Key?.pk.S ?? "") };
+    store: {
+      async read(period) {
+        if (state.failure === "read") throw new Error("Unavailable");
+        return rows.get(period.pk) ?? 0;
+      },
+      async add(period, amount) {
+        if (state.failure === "write") throw new Error("Unavailable");
+        const total = (rows.get(period.pk) ?? 0) + amount;
+        rows.set(period.pk, total);
+        return total;
+      },
+      async notified(period) {
+        return markers.has(period.pk);
+      },
+      async claimNotice(period) {
+        if (claims.has(period.pk)) return false;
+        claims.add(period.pk);
+        return true;
+      },
+      async markNotified(period) {
+        state.markerWrites++;
+        if (
+          state.failure === "marker" ||
+          (state.failure === "marker_once" && state.markerWrites === 1)
+        )
+          throw new Error("Unavailable");
+        markers.add(period.pk);
+      },
+      async releaseNotice(period) {
+        claims.delete(period.pk);
+      },
     },
   });
-  return {
-    spend,
-    errors,
-    totals,
-    rows,
-    notices: () => notices,
-    fail: (value: string) => {
-      failure = value;
-    },
-    nextMonth: () => {
-      now = Date.UTC(2026, 11, 1);
-    },
-  };
+  return Object.assign(state, { spend });
 }
 
 test("monthly cap pauses concurrent asks before cooldown, router, search or answer and notifies once", async () => {
   const state = spendState(0.001);
   const assistant = setup(undefined, state.spend);
-  state.rows.set("assistant-spend#guild#2026-11", {
-    costUnits: { N: "1000000" },
-  });
+  state.rows.set("assistant-spend#guild#2026-11", 1000000);
   const replies = await Promise.all([
     assistant.ask(actor("member"), "Question", signal),
     assistant.ask(actor("member"), "Question", signal),
   ]);
   assert.deepEqual(replies, [PAUSED, PAUSED]);
-  assert.equal(state.notices(), 1);
+  assert.equal(state.notices, 1);
   assert.equal(
     assistant.routingRequests.length +
       assistant.requests.length +
       assistant.searches.length,
     0,
   );
-  state.nextMonth();
+  state.now = Date.UTC(2026, 11, 1);
   assert.match(
     await assistant.ask(actor("member"), "Question", signal),
     /Character sentinel/,
   );
   assert.equal(assistant.requests.length, 1);
-  assert.equal(
-    state.rows.get("assistant-spend#guild#2026-12")?.costUnits.N,
-    "36000",
-  );
+  assert.equal(state.rows.get("assistant-spend#guild#2026-12"), 36000);
   assert.deepEqual(state.totals, [0.000018, 0.000036]);
-  assert.equal(
-    state.rows.get("assistant-spend#guild#2026-12")?.expiresAt.N,
-    String(Date.UTC(2027, 0, 8) / 1000),
-  );
 });
 
 test("the router, Parallel and answer are metered and recheck the cap between calls", async () => {
@@ -950,17 +926,15 @@ test("the router, Parallel and answer are metered and recheck the cap between ca
 
 test("an unset limit still meters and answers above the former threshold", async () => {
   const state = spendState(undefined);
-  state.rows.set("assistant-spend#guild#2026-11", {
-    costUnits: { N: "21000000000" },
-  });
+  state.rows.set("assistant-spend#guild#2026-11", 21000000000);
   const assistant = setup(undefined, state.spend);
   assert.match(
     await assistant.ask(actor("member"), "Question", signal),
     /Character sentinel/,
   );
-  assert.equal(state.notices(), 0);
+  assert.equal(state.notices, 0);
   assert.deepEqual(state.totals, [21.000018, 21.000036]);
-  state.fail("write");
+  state.failure = "write";
   assistant.advance(15000);
   assert.match(
     await assistant.ask(actor("member"), "Question", signal),
@@ -969,10 +943,10 @@ test("an unset limit still meters and answers above the former threshold", async
   assert.deepEqual(state.errors, ["write", "write"]);
 });
 
-test("enforced counter and model usage failures refuse and emit errors", async () => {
+test("enforced counter read and write failures refuse and emit errors", async () => {
   for (const mode of ["read", "write"]) {
     const state = spendState(0.001);
-    state.fail(mode);
+    state.failure = mode;
     const assistant = setup(undefined, state.spend);
     assert.equal(
       await assistant.ask(actor("member"), "Question", signal),
@@ -981,12 +955,88 @@ test("enforced counter and model usage failures refuse and emit errors", async (
     assert.equal(assistant.requests.length, 0);
     assert.deepEqual(state.errors, [mode]);
   }
-  const state = spendState(0.001);
-  const route = createRouting(
-    state.spend.bedrock(async () => {
-      throw new Error("Model unavailable");
-    }),
-  );
-  await assert.rejects(route("Question", signal), SpendError);
-  assert.deepEqual(state.errors, ["model_usage"]);
+});
+
+test("Parallel charges HTTP attempts only", async () => {
+  for (const mode of ["secret", "empty", "ok", "error", "timeout"]) {
+    const state = spendState(undefined);
+    let attempts = 0;
+    let expire = () => {};
+    const search = createSearch({
+      prepareRequest: state.spend.request,
+      clock: {
+        now: () => 0,
+        schedule: (_duration, callback) => {
+          expire = callback;
+          return () => {};
+        },
+      },
+      secret: async () => {
+        if (mode === "secret") throw new Error("No key");
+        return "synthetic";
+      },
+      http: async () => {
+        attempts++;
+        if (mode === "error") throw new Error("Transport failed");
+        if (mode === "timeout") {
+          expire();
+          return new Promise(() => {});
+        }
+        return Response.json({ results: [] });
+      },
+    });
+    await search(mode === "empty" ? "<@123>" : "WoW Mage", signal);
+    const expected = ["secret", "empty"].includes(mode) ? 0 : 1;
+    assert.equal(attempts, expected, mode);
+    assert.deepEqual(state.totals, expected ? [0.001] : [], mode);
+  }
+});
+
+test("notice delivery and marker failures do not repost a delivered notice", async () => {
+  for (const mode of ["delivery", "marker_once", "marker"]) {
+    const state = spendState(0);
+    state.now -= 3600000;
+    state.failure = mode;
+    await assert.rejects(state.spend.check(signal), SpendError);
+    assert.equal(state.markerWrites, mode === "delivery" ? 0 : 2, mode);
+    assert.ok(state.errors.length > 0, mode);
+    state.failure = "";
+    state.now += 180000;
+    await assert.rejects(state.spend.check(signal), SpendError);
+    assert.equal(state.notices, mode === "delivery" ? 2 : 1, mode);
+  }
+});
+
+test("Bedrock errors preserve routing fallback; successful responses require usage", async () => {
+  for (const mode of ["router_error", "answer_error", "missing_usage"]) {
+    const state = spendState(0.001);
+    const failure = new Error("Model unavailable");
+    const metered = state.spend.bedrock(async () => {
+      if (mode !== "missing_usage") throw failure;
+      return { $metadata: {} } as ConverseCommandOutput;
+    });
+    if (mode === "router_error") {
+      assert.deepEqual(await createRouting(metered)("Question", signal), {
+        needsGuild: true,
+        needsWeb: false,
+        searchQuery: "",
+      });
+    } else if (mode === "answer_error") {
+      await assert.rejects(
+        metered({} as Parameters<typeof metered>[0], { abortSignal: signal }),
+        (error) => error === failure,
+      );
+    } else {
+      await assert.rejects(
+        createRouting(metered)("Question", signal),
+        SpendError,
+      );
+    }
+    assert.deepEqual(
+      state.errors,
+      mode === "missing_usage" ? ["usage"] : [],
+      mode,
+    );
+    assert.deepEqual(state.totals, [], mode);
+  }
 });

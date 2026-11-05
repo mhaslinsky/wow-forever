@@ -2,6 +2,7 @@ import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { REST } from "discord.js";
 import { createPrincipalFactory } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
+import { createSpendStore } from "../data/spend.mts";
 import { clock, type Interaction } from "../interactions/core.mts";
 import { discordAlerts } from "../recruiting/alerts.mts";
 import { createChannelContext, interactionHistoryChannel } from "./context.mts";
@@ -106,7 +107,7 @@ export async function runtimeAssistant(
     "../interactions/index.mts"
   );
   const spend = createSpend({
-    table: process.env.CLAIMS_TABLE ?? "",
+    store: createSpendStore(process.env.CLAIMS_TABLE ?? ""),
     guildId,
     limitUsd:
       process.env.ASSISTANT_MONTHLY_LIMIT_USD === undefined
@@ -144,14 +145,13 @@ export async function runtimeAssistant(
       region: "us-east-1",
     }),
     claim: (asker, abortSignal) => claimAssistant(guildId, asker, abortSignal),
-    search: spend.search(
-      createSearch({
-        clock,
-        secret: (abortSignal) =>
-          readSecret("/wow-forever/parallel_api_key", abortSignal),
-        http: fetch,
-      }),
-    ),
+    search: createSearch({
+      prepareRequest: spend.request,
+      clock,
+      secret: (abortSignal) =>
+        readSecret("/wow-forever/parallel_api_key", abortSignal),
+      http: fetch,
+    }),
     converse: createConverse(metered),
     route: createRouting(metered),
     privateTerms: async () => {
