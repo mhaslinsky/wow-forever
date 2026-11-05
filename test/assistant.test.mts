@@ -346,6 +346,15 @@ test("bracketed names link to Wowhead pages from evidence or a search", async ()
     ),
     `Do [Old Ironforge Incursion](<${quest}>) and [Thom's Heirlooms](<https://www.wowhead.com/forever/search?q=Thom's%20Heirlooms>)\nSources: <https://example.com/q>`,
   );
+  assert.equal(
+    (
+      await ask(
+        "[[Deadmines\\]] ht[[ ]]tps://evil.example HTTPS://evil.example run --help",
+      )
+    ).split("\n")[0],
+    "[Deadmines](<https://www.wowhead.com/forever/search?q=Deadmines>)   run --help",
+  );
+  await assert.rejects(ask("[[ ]] [[***]]"), /ASSISTANT_GENERATION_FAILED/);
   const long = await ask("[[Old Ironforge Incursion]] ".repeat(60));
   assert.ok(
     !long.includes("](<") && long.startsWith("Old Ironforge Incursion Old"),

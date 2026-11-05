@@ -233,7 +233,8 @@ async function rosterNames(
 }
 
 const WOWHEAD_PAGE =
-  /https:\/\/www\.wowhead\.com\/forever\/(?:quest|item|npc|spell|zone|object)=\d+\/([a-z0-9-]+)/g;
+  /https:\/\/www\.wowhead\.com\/forever\/(?:quest|item|npc|spell|zone|object)=\d+\/([a-z0-9-]+)(?![\w%])/g;
+const MODEL_URL = /https?:\/\/[^\s<>]+/gi;
 const slug = (name: string) =>
   name
     .toLowerCase()
@@ -242,6 +243,7 @@ const slug = (name: string) =>
     .replace(/^-|-$/g, "");
 
 // Link targets come only from web evidence or a search URL built here, never from the model.
+// Links are held out as placeholders while model URLs are stripped from the rest of the text.
 function linkNames(text: string, evidence: Evidence[], plain: boolean) {
   const pages = new Map<string, string>();
   for (const source of evidence)
@@ -249,15 +251,21 @@ function linkNames(text: string, evidence: Evidence[], plain: boolean) {
       .join(" ")
       .matchAll(WOWHEAD_PAGE))
       if (!pages.has(match[1])) pages.set(match[1], match[0]);
-  let count = 0;
-  return text.replace(/\[\[([^[\]\n]{1,80})\]\]/g, (_, raw: string) => {
-    const name = raw.replace(/[[\]()<>*_`|~]/g, "").trim();
-    if (plain || !name || ++count > 10) return name;
-    const url =
-      pages.get(slug(name)) ??
-      `https://www.wowhead.com/forever/search?q=${encodeURIComponent(name)}`;
-    return `[${name}](<${url}>)`;
-  });
+  const links: string[] = [];
+  return text
+    .replace(/\uE000/g, "")
+    .replace(/\[\[([^[\]\r\n\u2028\u2029]{1,80})\]\]/g, (_, raw: string) => {
+      const name = raw.replace(/[[\]()<>*_`|~\\:/]/g, "").trim();
+      if (plain || !name || links.length >= 10) return name;
+      const url =
+        pages.get(slug(name)) ??
+        `https://www.wowhead.com/forever/search?q=${encodeURIComponent(name)}`;
+      links.push(`[${name}](<${url}>)`);
+      return `\uE000${links.length - 1}\uE000`;
+    })
+    .replace(MODEL_URL, "")
+    .replace(/\uE000(\d+)\uE000/g, (_, index: string) => links[Number(index)])
+    .trim();
 }
 
 export function createConverse(
@@ -353,10 +361,11 @@ export function createConverse(
     if (result.stopReason !== "end_turn" || !text)
       throw new Error("ASSISTANT_GENERATION_FAILED");
     const answerText = text
-      .replace(/\s*(?:\u2014|\s--)\s*/g, ", ")
-      .replace(/https?:\/\/[^\s<>]+/g, "")
+      .replace(/\s*(?:\u2014|\s--(?=\s))\s*/g, ", ")
+      .replace(MODEL_URL, "")
       .trim();
-    if (!answerText) throw new Error("ASSISTANT_GENERATION_FAILED");
+    if (!linkNames(answerText, evidence, true))
+      throw new Error("ASSISTANT_GENERATION_FAILED");
     const compose = (plain: boolean) =>
       [
         linkNames(answerText, evidence, plain),
