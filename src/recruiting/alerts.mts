@@ -65,7 +65,14 @@ export function discordAlerts(
       if (member) apply(BigInt(member.deny), BigInt(member.allow));
       return permissions.has(PermissionFlagsBits.ViewChannel);
     };
-    if (roles.some((role) => !privileged(role) && canView([role])))
+    if (
+      roles.some(
+        (role) =>
+          !(role.managed === true && role.tags?.bot_id) &&
+          !privileged(role) &&
+          canView([role]),
+      )
+    )
       throw new Error("ALERTS_CHANNEL_PUBLIC");
     const bot = (await rest.get(Routes.user())) as APIUser;
     for (const entry of overwrites) {
