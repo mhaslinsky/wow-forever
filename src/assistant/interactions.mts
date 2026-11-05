@@ -55,7 +55,7 @@ export function createForgetRoutes(
     {
       type: 2,
       name: "forget",
-      description: "Delete your remembered facts",
+      description: "Forget everything you asked AutoGM to remember",
       mode: "slow",
       visibility: "ephemeral",
       async handler(interaction, signal) {

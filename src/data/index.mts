@@ -34,6 +34,7 @@ type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
   candidateThreadId?: string;
   absent?: true;
+  forgetAt?: number;
   intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
 };
 export type StoragePort = SnapshotWrites & {
@@ -210,7 +211,7 @@ export function createDataAccess(
         if (!remove) throw new Error("INTAKE_REMOVAL_UNAVAILABLE");
         await stored(() => remove(item));
       },
-      async forgetFacts() {
+      async forgetFacts(forgetAt = Date.now()) {
         const actor = authority(principal);
         if (
           actor.mode !== "user" ||
@@ -220,10 +221,25 @@ export function createDataAccess(
           throw new Error("WRITE_DENIED");
         const remove = storage.removeFact;
         if (!remove) throw new Error("FACT_REMOVAL_UNAVAILABLE");
+        const marker = {
+          pk: `FACT#${actor.userId}`,
+          sk: "FACT#forget",
+          kind: "fact" as const,
+          ownerId: actor.userId,
+          text: "Forget cutoff",
+          forgetAt,
+        };
+        try {
+          await stored(() => storage.put(marker, { forgetAt }));
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "WRITE_CONFLICT")
+            throw error;
+        }
         const items = await query(`FACT#${actor.userId}`, false);
         for (const item of items) {
           if (item.kind !== "fact") throw new Error("INVALID_RECORD");
-          await stored(() => remove(item));
+          if (item.forgetAt === undefined && (item.createdAt ?? 0) <= forgetAt)
+            await stored(() => remove(item));
         }
       },
       async removeOfficerNote(input: OfficerNote): Promise<void> {
@@ -465,6 +481,18 @@ function createDynamoStorage(config: {
       );
     },
     async put(item, condition) {
+      if (condition?.forgetAt !== undefined) {
+        await client.send(
+          new PutCommand({
+            TableName: config.tableName,
+            Item: item,
+            ConditionExpression:
+              "attribute_not_exists(forgetAt) OR forgetAt < :cutoff",
+            ExpressionAttributeValues: { ":cutoff": condition.forgetAt },
+          }),
+        );
+        return;
+      }
       const conditional = condition?.absent
         ? {
             ConditionExpression: "attribute_not_exists(pk)",

@@ -13,7 +13,12 @@ import {
 import type { createDataAccess } from "../data/index.mts";
 import { decode, type GuildRecord, recordKey } from "../data/records.mts";
 import { bounded, type Clock } from "../interactions/core.mts";
-import type { ChannelContext, ChannelMessage } from "./context.mts";
+import {
+  type ChannelContext,
+  type ChannelMessage,
+  filterForgottenContext,
+  rememberRequest,
+} from "./context.mts";
 import { PAUSED, SpendError, SpendPaused } from "./spend.mts";
 
 export const NOT_VERIFIED =
@@ -424,6 +429,7 @@ export function createConverse(
 export function createAssistant(ports: {
   data: ReturnType<typeof createDataAccess>;
   guildId: string;
+  now?: () => number;
   checkSpend(signal: AbortSignal): Promise<unknown>;
   claim(userId: string, signal: AbortSignal): Promise<boolean>;
   search: ReturnType<typeof createSearch>;
@@ -443,13 +449,25 @@ export function createAssistant(ports: {
       return REFUSAL;
     if (!question.trim()) return "You forgot the question.";
     if (question.length > 2000) return "Keep it under 2,000 characters.";
+    const startedAt = (ports.now ?? Date.now)();
+    const cutoffs = new Map<string, number>();
+    const readCutoff = async (userId: string) => {
+      const rows = await ports.data
+        .forSystem(createSystemPrincipal([]))
+        .get(recordKey("fact", userId, "forget"));
+      const marker = rows[0];
+      return marker?.kind === "fact" ? (marker.forgetAt ?? 0) : 0;
+    };
+    const initialCutoff = async (userId: string) => {
+      if (!cutoffs.has(userId)) cutoffs.set(userId, await readCutoff(userId));
+      return cutoffs.get(userId) as number;
+    };
     try {
-      const remember =
-        /^(?:please\s+)?remember(?:\s+that)?[\s:]+([\s\S]+)$/iu.exec(
-          question.trim(),
-        );
+      const forgetAt = await initialCutoff(identity.userId);
+      const remember = rememberRequest(question);
       if (remember) {
         const text = remember[1].trim();
+        if (startedAt <= forgetAt) return COOLDOWN;
         if (!text) return "Tell me what to remember.";
         signal.throwIfAborted();
         const existing = await ports.data
@@ -457,16 +475,24 @@ export function createAssistant(ports: {
           .query(`FACT#${identity.userId}`);
         if (
           JSON.stringify([
-            ...existing.map((fact) => (fact.kind === "fact" ? fact.text : "")),
+            ...existing.flatMap((fact) =>
+              fact.kind === "fact" &&
+              fact.forgetAt === undefined &&
+              (!forgetAt || (fact.createdAt ?? 0) > forgetAt)
+                ? [fact.text]
+                : [],
+            ),
             text,
           ]).length > 10000
         )
-          return "Clear saved facts with /forget first.";
+          return "Memory's full, run /forget first.";
         await ports.data.forUser(actor).write({
           ...recordKey("fact", identity.userId, randomUUID()),
           kind: "fact",
           text,
+          createdAt: startedAt,
         });
+        if ((await readCutoff(identity.userId)) > forgetAt) return COOLDOWN;
         return "Remembered.";
       }
       await ports.checkSpend(signal);
@@ -475,6 +501,9 @@ export function createAssistant(ports: {
         ? await audience()
         : { guildRecords: true, history: true };
       let messages = access.history && context ? await context(signal) : [];
+      messages = (await filterForgottenContext(messages, initialCutoff)).map(
+        ({ author, content }) => ({ author, content }),
+      );
       signal.throwIfAborted();
       const emptyRecords = [] as unknown as UserResult<GuildRecord>;
       let records = access.guildRecords
@@ -486,6 +515,12 @@ export function createAssistant(ports: {
       let facts = access.guildRecords
         ? await ports.data.forUser(actor).query(`FACT#${identity.userId}`)
         : emptyRecords;
+      facts = facts.filter(
+        (fact) =>
+          fact.kind === "fact" &&
+          fact.forgetAt === undefined &&
+          (!forgetAt || (fact.createdAt ?? 0) > forgetAt),
+      ) as unknown as UserResult<GuildRecord>;
       const routing = await ports.route(question, signal);
       signal.throwIfAborted();
       let evidence: SearchResult = { status: "skipped" };
@@ -513,8 +548,12 @@ export function createAssistant(ports: {
           },
           signal,
         );
-        if (!audience) return answer;
-        const current = await audience();
+        const current = audience ? await audience() : undefined;
+        for (const [userId, cutoff] of cutoffs) {
+          const latest = await readCutoff(userId);
+          if (latest > cutoff || latest > startedAt) return COOLDOWN;
+        }
+        if (!current) return answer;
         const dropRecords =
           (records.length > 0 || facts.length > 0) && !current.guildRecords;
         const dropHistory = messages.length > 0 && !current.history;

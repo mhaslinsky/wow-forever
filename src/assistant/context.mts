@@ -5,7 +5,39 @@ import {
   type Interaction,
 } from "../interactions/core.mts";
 
-export type ChannelMessage = { author: string; content: string };
+export type ChannelMessage = {
+  author: string;
+  content: string;
+  authorId?: string;
+  timestamp?: number;
+  bot?: boolean;
+  replyToAuthorId?: string;
+};
+
+export function rememberRequest(question: string) {
+  return /^(?:please\s+)?remember(?:\s+that)?[\s:]+([\s\S]+)$/iu.exec(
+    question.trim(),
+  );
+}
+
+export async function filterForgottenContext(
+  messages: ChannelMessage[],
+  cutoff: (userId: string) => Promise<number>,
+) {
+  const kept: ChannelMessage[] = [];
+  for (const entry of messages) {
+    if (entry.bot && !entry.replyToAuthorId) continue;
+    const userId = entry.bot ? entry.replyToAuthorId : entry.authorId;
+    if (
+      userId &&
+      entry.timestamp !== undefined &&
+      entry.timestamp <= (await cutoff(userId))
+    )
+      continue;
+    kept.push(entry);
+  }
+  return kept;
+}
 export type ChannelContext = (signal: AbortSignal) => Promise<ChannelMessage[]>;
 type ContextReason =
   | "used"
@@ -81,6 +113,28 @@ export function createChannelContext(
           if (!Array.isArray(body) || body.length > 20)
             throw new Error("INVALID_HISTORY");
           const now = ports.clock.now();
+          const referencedAuthor = (
+            raw: Record<string, unknown>,
+          ): string | undefined => {
+            const reference = raw.referenced_message as
+              | { author?: { id?: unknown } }
+              | undefined;
+            const interaction = raw.interaction_metadata as
+              | { user?: { id?: unknown } }
+              | undefined;
+            const messageId = (
+              raw.message_reference as { message_id?: unknown } | undefined
+            )?.message_id;
+            const original =
+              typeof messageId === "string"
+                ? body.find((message) => message?.id === messageId)
+                : undefined;
+            const authorId =
+              reference?.author?.id ??
+              interaction?.user?.id ??
+              original?.author?.id;
+            return typeof authorId === "string" ? authorId : undefined;
+          };
           return body
             .map((raw: unknown) => {
               if (
@@ -111,6 +165,11 @@ export function createChannelContext(
                 throw new Error("INVALID_HISTORY");
               return {
                 timestamp,
+                authorId: typeof author.id === "string" ? author.id : undefined,
+                bot: author.bot === true,
+                replyToAuthorId: referencedAuthor(
+                  raw as Record<string, unknown>,
+                ),
                 author: name.slice(0, 100),
                 content: raw.content.trim().slice(0, 500),
               };
@@ -118,11 +177,30 @@ export function createChannelContext(
             .filter(
               (entry) =>
                 entry.content &&
+                !rememberRequest(
+                  entry.content.replace(/<@!?\d+>/gu, "").trim(),
+                ) &&
+                !(entry.bot && entry.content === "Remembered.") &&
                 entry.timestamp >= now - 43200000 &&
                 entry.timestamp <= now,
             )
             .sort((left, right) => left.timestamp - right.timestamp)
-            .map(({ author, content }) => ({ author, content }));
+            .map(
+              ({
+                author,
+                content,
+                authorId,
+                timestamp,
+                bot,
+                replyToAuthorId,
+              }) => ({
+                author,
+                content,
+                ...(authorId
+                  ? { authorId, timestamp, bot, replyToAuthorId }
+                  : {}),
+              }),
+            );
         },
       );
       parent.throwIfAborted();

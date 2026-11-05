@@ -126,7 +126,7 @@ export async function assistantForget(
   })
     .forUser(actor)
     .forgetFacts();
-  return "Forgot your saved facts.";
+  return "Forgot everything you asked me to remember.";
 }
 
 export async function runtimeAssistant(

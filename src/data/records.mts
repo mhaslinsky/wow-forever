@@ -110,7 +110,9 @@ export type GuildRecord = {
                       raidTeam?: string;
                       active?: boolean;
                     }
-                  : Record<never, never>);
+                  : Current extends "fact"
+                    ? { createdAt?: number; forgetAt?: number }
+                    : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -149,6 +151,16 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "fact") {
+    for (const field of ["createdAt", "forgetAt"] as const) {
+      if (item[field] !== undefined) {
+        if (!Number.isSafeInteger(item[field]) || Number(item[field]) < 0)
+          return;
+        output[field] = item[field];
+      }
+    }
+    if (item.forgetAt !== undefined && item.sk !== "FACT#forget") return;
   }
   if (kind === "guildSnapshot" || kind === "guildSnapshotLatest") {
     if (

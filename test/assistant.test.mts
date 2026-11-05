@@ -80,6 +80,7 @@ function setup(
   const data = createDataAccess(
     {
       get: async (key) => {
+        if (key.sk === "FACT#forget") return undefined;
         assert.deepEqual(key, recordKey("member", "asker", "guild"));
         return stored;
       },
