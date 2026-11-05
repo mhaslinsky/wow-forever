@@ -165,7 +165,7 @@ test("in-flight acceptance cannot overwrite a retention redaction", async (conte
   );
   const core = createRecruiting(
     createDynamoDataAccess({ tableName: "synthetic", region: "us-east-1" }),
-    createSystemPrincipal(["candidate", "officerNote"]),
+    createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
     "guild",
     {
       tags: async () =>
@@ -198,6 +198,7 @@ function intakeFixture(context: TestContext, reapply = false) {
     retention: { outcome: "Declined", threadId: "Declined", archived: true },
   };
   let stored = reapply ? redacted : original;
+  const intakes = new Map<string, unknown>();
   const notes: unknown[] = [];
   let created = 0;
   let posted = 0;
@@ -206,8 +207,21 @@ function intakeFixture(context: TestContext, reapply = false) {
     "send",
     async (command: unknown) => {
       if (command instanceof QueryCommand) return { Items: [stored] };
-      if (command instanceof GetCommand) return {};
+      if (command instanceof GetCommand)
+        return {
+          Item:
+            command.input.Key?.pk === "RECRUITING_INTAKE#guild"
+              ? intakes.get(command.input.Key?.sk)
+              : command.input.Key?.sk === stored.sk &&
+                  stored.sk === "CANDIDATE#fresh"
+                ? stored
+                : undefined,
+        };
       if (command instanceof PutCommand) {
+        if (command.input.Item?.kind === "recruitingIntake") {
+          intakes.set(command.input.Item.sk, command.input.Item);
+          return {};
+        }
         if (command.input.Item?.kind === "officerNote")
           notes.push(command.input.Item);
         else if (command.input.Item?.sk === "CANDIDATE#fresh")
@@ -217,12 +231,14 @@ function intakeFixture(context: TestContext, reapply = false) {
       }
       if (command instanceof TransactWriteCommand) {
         const check = command.input.TransactItems?.[0]?.ConditionCheck;
-        if (check && stored.retention)
+        if (check?.Key?.sk === stored.sk && stored.retention)
           throw Object.assign(new Error("fenced"), {
             name: "TransactionCanceledException",
             CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
           });
-        notes.push(command.input.TransactItems?.[1]?.Put?.Item);
+        const item = command.input.TransactItems?.[1]?.Put?.Item;
+        if (item?.kind === "recruitingIntake") intakes.set(item.sk, item);
+        else notes.push(item);
         return {};
       }
       assert.fail("Unexpected storage command");
@@ -230,7 +246,7 @@ function intakeFixture(context: TestContext, reapply = false) {
   );
   const core = createRecruiting(
     createDynamoDataAccess({ tableName: "synthetic", region: "us-east-1" }),
-    createSystemPrincipal(["candidate", "officerNote"]),
+    createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
     "guild",
     {
       tags: async () =>
@@ -326,7 +342,7 @@ test("Applied then Trial both succeed and both audit notes exist", async (contex
   );
   core = createRecruiting(
     createDynamoDataAccess({ tableName: "synthetic", region: "us-east-1" }),
-    createSystemPrincipal(["candidate", "officerNote"]),
+    createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
     "guild",
     {
       tags: async () =>

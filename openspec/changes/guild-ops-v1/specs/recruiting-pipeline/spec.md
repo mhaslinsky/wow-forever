@@ -18,6 +18,10 @@ The system SHALL create candidates from Guilds of WoW applications polled from i
 - **WHEN** an officer runs `/lead` with a character name, class and where they were found
 - **THEN** a New candidate thread is created with that officer as owner
 
+#### Scenario: Intake held after uncertain thread creation
+- **WHEN** the bot cannot tell whether an applicant's thread was created
+- **THEN** it holds the intake, creates no second thread, and posts one officer notice with a reference
+
 ### Requirement: Deduplication
 Candidates SHALL be merged when they share a Discord account or a character name and realm-free Forever name.
 

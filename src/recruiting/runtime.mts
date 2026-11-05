@@ -45,7 +45,7 @@ export const recruitingContextForInteraction: ResolveRecruitingContext = async (
   const core = await recruitingForGuild(
     guild,
     createDynamoDataAccess({ tableName: "wow-forever", region: "us-east-1" }),
-    createSystemPrincipal(["candidate", "officerNote"]),
+    createSystemPrincipal(["candidate", "officerNote", "recruitingIntake"]),
   );
   signal.throwIfAborted();
   return { core, actor };

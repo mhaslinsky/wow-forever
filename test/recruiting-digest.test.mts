@@ -21,7 +21,11 @@ function fixture() {
       items.set(item.sk, item);
     },
   });
-  const principal = createSystemPrincipal(["candidate", "officerNote"]);
+  const principal = createSystemPrincipal([
+    "candidate",
+    "officerNote",
+    "recruitingIntake",
+  ]);
   const actor = createPrincipalFactory({
     guildId: "guild",
     memberRoleId: "member",

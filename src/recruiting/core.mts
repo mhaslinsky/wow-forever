@@ -12,6 +12,7 @@ import {
 } from "../data/recruiting.mts";
 import { createRoster } from "../roster/core.mts";
 import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
+import { createIntake } from "./intake.mts";
 
 export type Candidate = Extract<GuildRecord, { kind: "candidate" }>;
 export type CreateCandidateInput = {
@@ -34,6 +35,7 @@ export type ForumPort = {
     name: string;
     content: string;
     tags: string[];
+    ref?: string;
   }): Promise<string>;
   post(threadId: string, content: string): Promise<void>;
   tagsFor(threadId: string): Promise<readonly string[]>;
@@ -68,6 +70,9 @@ export function createRecruiting(
   forum: ForumPort,
   report: (failure: RecruitingFailure) => void = reportRecruitingFailure,
   accepted?: (candidate: Candidate) => Promise<void>,
+  notify: (content: string) => Promise<void> = async () => {
+    throw new Error("INTAKE_ALERTS_UNAVAILABLE");
+  },
 ) {
   const records = data.forSystem(principal);
   async function candidate(threadId: string): Promise<Candidate | undefined> {
@@ -76,6 +81,14 @@ export function createRecruiting(
     );
     return record?.kind === "candidate" ? record : undefined;
   }
+  const intake = createIntake({
+    records,
+    guildId,
+    forum,
+    candidate,
+    notify,
+    saving,
+  });
   async function saving<Result>(threadId: string, work: () => Promise<Result>) {
     try {
       return await work();
@@ -213,6 +226,8 @@ export function createRecruiting(
             : submission,
         )
         .digest("hex");
+      const replay = await intake.replay(submissionId);
+      if (replay) return replay;
       const candidates = await records.query(
         recordKey("candidate", guildId, "unused").pk,
       );
@@ -296,36 +311,25 @@ export function createRecruiting(
       }
       const tags = await forum.tags();
       const applied = [tagId(tags, "New"), tagId(tags, input.source)];
-      const threadId = await forum.create({
-        name: input.name,
-        content: input.content || input.name,
-        tags: applied,
-      });
-      const record: Candidate = {
-        ...recordKey("candidate", guildId, threadId),
-        kind: "candidate",
-        ownerId: guildId,
-        name: input.name,
-        ...(input.discordUserId ? { discordUserId: input.discordUserId } : {}),
-        ...(input.characters ? { characters: input.characters } : {}),
-        ...(input.application ? { application: input.application } : {}),
-        recruiting: {
-          threadId,
+      return intake.create(
+        submissionId,
+        {
+          name: input.name,
+          content: input.content || input.name,
+          submission,
           source: input.source,
-          stage: "New",
-          changedBy: input.actorId,
+          actorId: input.actorId,
           changedAt: createdAt.toISOString(),
-          ...(owner ? { owner } : {}),
           nextActionAt,
+          ...(owner ? { owner } : {}),
+          ...(input.discordUserId
+            ? { discordUserId: input.discordUserId }
+            : {}),
+          ...(input.characters ? { characters: input.characters } : {}),
+          ...(input.application ? { application: input.application } : {}),
         },
-      };
-      await saving(threadId, async () => {
-        await records.write(record);
-        await records.write(note(threadId), {
-          candidateThreadId: threadId,
-        });
-      });
-      return record;
+        applied,
+      );
     },
     async setFollowUp(
       threadId: string,

@@ -14,6 +14,7 @@ import {
   type SystemResult,
   type UserResult,
 } from "../auth/index.mts";
+import type { IntakeState } from "./intake.mts";
 import {
   decode,
   type GuildRecord,
@@ -27,7 +28,11 @@ export type QueryCursor = Readonly<Record<string, string>> & {
   readonly [cursorBrand]: true;
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
-export type WriteCondition = { candidateThreadId: string };
+export type WriteCondition = {
+  candidateThreadId?: string;
+  absent?: true;
+  intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
+};
 export type StoragePort = {
   get(key: Key): Promise<unknown>;
   query(
@@ -37,6 +42,9 @@ export type StoragePort = {
   ): Promise<{ items: unknown[]; cursor?: QueryCursor }>;
   batch(keys: readonly Key[]): Promise<unknown[]>;
   put(item: GuildRecord, condition?: WriteCondition): Promise<void>;
+  removeIntake?(
+    item: Extract<GuildRecord, { kind: "recruitingIntake" }>,
+  ): Promise<void>;
   removeNote?(item: OfficerNote): Promise<void>;
 };
 type Result<Mode extends "user" | "system"> = Mode extends "user"
@@ -113,11 +121,73 @@ export function createDataAccess(
         return items;
       });
     }
+    function systemWrite(item: GuildRecord) {
+      const actor = authority(principal);
+      if (actor.mode !== "system" || !actor.writableKinds.includes(item.kind))
+        throw new Error("WRITE_DENIED");
+    }
+    async function stored(work: () => Promise<void>) {
+      try {
+        await work();
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === "ConditionalCheckFailedException" ||
+            (error.name === "TransactionCanceledException" &&
+              "CancellationReasons" in error &&
+              Array.isArray(error.CancellationReasons) &&
+              error.CancellationReasons.some(
+                (reason: { Code?: string }) =>
+                  reason.Code === "ConditionalCheckFailed",
+              )))
+        )
+          throw new Error("WRITE_CONFLICT");
+        throw new Error("DATA_UNAVAILABLE");
+      }
+    }
     return {
       get: (key: Key) => read(async () => [await storage.get(key)]),
       query: (partition: string) => query(partition, false),
       lookup: (partition: string) => query(partition, true),
       batch: (keys: readonly Key[]) => read(() => storage.batch(keys)),
+      async insert(input: GuildRecord, candidateThreadId?: string) {
+        systemWrite(input);
+        const item = decode(input);
+        if (!item) throw new Error("INVALID_RECORD");
+        if (
+          item.kind === "officerNote" &&
+          (!candidateThreadId ||
+            !item.sk.startsWith(`OFFICER_NOTE#${candidateThreadId}#`))
+        )
+          throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
+        await stored(() =>
+          storage.put(item, { absent: true, candidateThreadId }),
+        );
+      },
+      async transitionIntake(
+        input: Extract<GuildRecord, { kind: "recruitingIntake" }>,
+        expected: NonNullable<WriteCondition["intake"]>,
+      ) {
+        systemWrite(input);
+        const item = decode(input);
+        if (!item || item.kind !== "recruitingIntake")
+          throw new Error("INVALID_RECORD");
+        await stored(() =>
+          storage.put(item, {
+            intake: expected,
+            candidateThreadId: item.threadId,
+          }),
+        );
+      },
+      async deleteIntake(
+        item: Extract<GuildRecord, { kind: "recruitingIntake" }>,
+      ) {
+        systemWrite(item);
+        if (!decode(item)) throw new Error("INVALID_RECORD");
+        const remove = storage.removeIntake;
+        if (!remove) throw new Error("INTAKE_REMOVAL_UNAVAILABLE");
+        await stored(() => remove(item));
+      },
       async removeOfficerNote(input: OfficerNote): Promise<void> {
         const item = decode(input);
         if (!item || item.kind !== "officerNote")
@@ -151,6 +221,12 @@ export function createDataAccess(
         }
         const item = decode(raw);
         if (!item) throw new Error("INVALID_RECORD");
+        if (
+          item.kind === "recruitingIntake" ||
+          condition?.absent ||
+          condition?.intake
+        )
+          throw new Error("INTAKE_CONDITIONAL_OPERATION_REQUIRED");
         const self = ["member", "character", "wishlist", "fact"].includes(
           item.kind,
         );
@@ -167,23 +243,7 @@ export function createDataAccess(
             !item.sk.startsWith(`OFFICER_NOTE#${condition.candidateThreadId}#`))
         )
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
-        try {
-          await storage.put(item, condition);
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            (error.name === "ConditionalCheckFailedException" ||
-              (error.name === "TransactionCanceledException" &&
-                "CancellationReasons" in error &&
-                Array.isArray(error.CancellationReasons) &&
-                error.CancellationReasons.some(
-                  (reason: { Code?: string }) =>
-                    reason.Code === "ConditionalCheckFailed",
-                )))
-          )
-            throw new Error("WRITE_CONFLICT");
-          throw new Error("DATA_UNAVAILABLE");
-        }
+        await stored(() => storage.put(item, condition));
       },
     };
   }
@@ -279,7 +339,75 @@ export function createDynamoDataAccess(config: {
         }),
       );
     },
+    async removeIntake(item) {
+      await client.send(
+        new DeleteCommand({
+          TableName: config.tableName,
+          Key: { pk: item.pk, sk: item.sk },
+          ConditionExpression: "#state = :state AND attemptId = :attemptId",
+          ExpressionAttributeNames: { "#state": "state" },
+          ExpressionAttributeValues: {
+            ":state": item.state,
+            ":attemptId": item.attemptId,
+          },
+        }),
+      );
+    },
     async put(item, condition) {
+      const conditional = condition?.absent
+        ? {
+            ConditionExpression: "attribute_not_exists(pk)",
+          }
+        : condition?.intake
+          ? {
+              ConditionExpression:
+                "#state = :state AND attemptId = :attemptId" +
+                (condition.intake.noticeSent === undefined
+                  ? ""
+                  : " AND noticeSent = :noticeSent"),
+              ExpressionAttributeNames: { "#state": "state" },
+              ExpressionAttributeValues: {
+                ":state": condition.intake.state,
+                ":attemptId": condition.intake.attemptId,
+                ...(condition.intake.noticeSent === undefined
+                  ? {}
+                  : { ":noticeSent": condition.intake.noticeSent }),
+              },
+            }
+          : undefined;
+      const put = {
+        TableName: config.tableName,
+        Item: {
+          ...item,
+          gsi1pk: `${item.pk.split("#")[0]}#ALL`,
+          gsi1sk: `${item.pk}#${item.sk}`,
+        },
+        ...conditional,
+      };
+      if (item.kind === "recruitingIntake" && !conditional)
+        throw new Error("INTAKE_CONDITIONAL_OPERATION_REQUIRED");
+      if (conditional && item.kind !== "officerNote") {
+        if (item.kind === "recruitingIntake" && condition?.candidateThreadId) {
+          await client.send(
+            new TransactWriteCommand({
+              TransactItems: [
+                {
+                  ConditionCheck: {
+                    TableName: config.tableName,
+                    Key: {
+                      pk: `CANDIDATE#${item.ownerId}`,
+                      sk: `CANDIDATE#${condition.candidateThreadId}`,
+                    },
+                    ConditionExpression: "attribute_not_exists(retention)",
+                  },
+                },
+                { Put: put },
+              ],
+            }),
+          );
+        } else await client.send(new PutCommand(put));
+        return;
+      }
       if (item.kind === "officerNote") {
         if (!condition?.candidateThreadId)
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
@@ -304,6 +432,7 @@ export function createDynamoDataAccess(config: {
                     gsi1pk: "OFFICER_NOTE#ALL",
                     gsi1sk: `${item.pk}#${item.sk}`,
                   },
+                  ...conditional,
                 },
               },
             ],
