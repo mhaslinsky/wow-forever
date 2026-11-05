@@ -150,7 +150,6 @@ export function normalize(payload: unknown): Snapshot {
     addonVersion: stringField(fields, "addonVersion", "payload"),
     v: 14,
     members,
-    loot:
-      fields.loot === undefined ? [] : list(fields.loot, "loot").map(lootEntry),
+    loot: list(fields.loot, "loot").map(lootEntry),
   };
 }

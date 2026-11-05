@@ -1,6 +1,9 @@
 import { inflateRawSync } from "node:zlib";
 import { SavedVariablesError } from "./saved-variables.mts";
 
+export const MAX_COMPANION_ENCODED_CHARACTERS = 1_000_000;
+export const MAX_COMPANION_JSON_BYTES = 8 * 1024 * 1024;
+
 const ALPHABET =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()";
 
@@ -20,8 +23,10 @@ function decodeForPrint(text: string): Buffer {
   )
     end--;
   const encoded = text.slice(start, end);
-  if (encoded.length === 1) throw new Error("Invalid EncodeForPrint length");
-  const bytes: number[] = [];
+  if (encoded.length % 4 === 1)
+    throw new Error("Invalid EncodeForPrint length");
+  const bytes = Buffer.alloc(Math.floor((encoded.length * 6) / 8));
+  let offset = 0;
   let cache = 0;
   let bits = 0;
   for (const character of encoded) {
@@ -30,12 +35,12 @@ function decodeForPrint(text: string): Buffer {
     cache += value * 2 ** bits;
     bits += 6;
     while (bits >= 8) {
-      bytes.push(cache % 256);
+      bytes[offset++] = cache % 256;
       cache = Math.floor(cache / 256);
       bits -= 8;
     }
   }
-  return Buffer.from(bytes);
+  return bytes;
 }
 
 export function decodeCompanion(database: unknown): unknown {
@@ -61,11 +66,13 @@ export function decodeCompanion(database: unknown): unknown {
     );
   }
   try {
-    return JSON.parse(
-      inflateRawSync(decodeForPrint(fields.__companion.slice(9))).toString(
-        "utf8",
-      ),
-    );
+    if (fields.__companion.length > MAX_COMPANION_ENCODED_CHARACTERS) {
+      throw new Error("Companion export exceeds encoded length limit");
+    }
+    const json = inflateRawSync(decodeForPrint(fields.__companion.slice(9)), {
+      maxOutputLength: MAX_COMPANION_JSON_BYTES,
+    });
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(json));
   } catch (error) {
     throw new SavedVariablesError(
       "InvalidCompanionError",

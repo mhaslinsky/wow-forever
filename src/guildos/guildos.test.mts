@@ -12,12 +12,15 @@ const sample = decodeCompanion(
 ) as Record<string, unknown>;
 const forever: Record<string, unknown> = { ...sample, game: "FOREVER" };
 function encode(payload: unknown): string {
+  return encodeBytes(Buffer.from(JSON.stringify(payload)));
+}
+function encodeBytes(bytes: Buffer): string {
   const alphabet =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()";
   let cache = 0,
     bits = 0,
     output = "GOSCOMP1:";
-  for (const byte of deflateRawSync(JSON.stringify(payload))) {
+  for (const byte of deflateRawSync(bytes)) {
     cache += byte * 2 ** bits;
     bits += 8;
     while (bits >= 6) {
@@ -43,7 +46,25 @@ test("genuine addon bytes decode and kept sections normalize", () => {
 });
 
 test("unsupported files and payload shapes fail by name", () => {
+  const wire = encode({});
+  const invalidLength = wire.padEnd(
+    wire.length + ((1 - ((wire.length - 9) % 4) + 4) % 4),
+    "a",
+  );
   const cases: [() => unknown, string][] = [
+    [
+      () => parseSavedVariables(" ".repeat(64 * 1024 * 1024 + 1)),
+      "SavedVariablesTooLargeError",
+    ],
+    ...[
+      wire.padEnd(1_000_001, "a"),
+      invalidLength,
+      encodeBytes(Buffer.from([34, 255, 34])),
+      encode(" ".repeat(8 * 1024 * 1024)),
+    ].map((__companion): [() => unknown, string] => [
+      () => decodeCompanion({ __companion }),
+      "InvalidCompanionError",
+    ]),
     ...["", " \n\t"].map((text): [() => unknown, string] => [
       () => parseSavedVariables(text),
       "EmptySavedVariablesError",
@@ -72,12 +93,15 @@ test("unsupported files and payload shapes fail by name", () => {
     [() => normalize({ ...forever, fmt: "other" }), "UnsupportedFormatError"],
     [() => normalize({ ...forever, v: 15 }), "UnsupportedPayloadVersionError"],
     [() => normalize({ ...forever, count: 0 }), "MemberCountMismatchError"],
-    ...[null, { ...forever, members: {} }, { ...forever, loot: {} }].map(
-      (payload): [() => unknown, string] => [
-        () => normalize(payload),
-        "InvalidPayloadShapeError",
-      ],
-    ),
+    ...[
+      null,
+      { ...forever, members: {} },
+      { ...forever, loot: {} },
+      { ...forever, loot: undefined },
+    ].map((payload): [() => unknown, string] => [
+      () => normalize(payload),
+      "InvalidPayloadShapeError",
+    ]),
   ];
   for (const section of ["members", "loot"] as const) {
     const entries = forever[section] as Record<string, unknown>[];

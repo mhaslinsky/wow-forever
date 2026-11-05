@@ -1,5 +1,7 @@
 import { type Expression, parse } from "luaparse";
 
+export const MAX_SAVED_VARIABLES_BYTES = 64 * 1024 * 1024;
+
 export class SavedVariablesError extends Error {
   constructor(name: string, message: string, options?: ErrorOptions) {
     super(message, options);
@@ -65,6 +67,12 @@ function literal(expression: Expression): LuaData {
 }
 
 export function parseSavedVariables(text: string): Record<string, LuaData> {
+  if (Buffer.byteLength(text, "utf8") > MAX_SAVED_VARIABLES_BYTES) {
+    throw new SavedVariablesError(
+      "SavedVariablesTooLargeError",
+      "SavedVariables file exceeds size limit",
+    );
+  }
   if (!text.trim())
     throw new SavedVariablesError(
       "EmptySavedVariablesError",
