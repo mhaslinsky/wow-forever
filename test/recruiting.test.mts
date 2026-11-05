@@ -705,6 +705,7 @@ test("a release generation has one create winner and rejects stale payload write
   };
   setup.port.create = async () => {
     creates++;
+    if (creates > 1) return "duplicate";
     entered.resolve();
     await finish.promise;
     return "fresh";
