@@ -4,37 +4,56 @@ import test from "node:test";
 import { createPrincipalFactory } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
-
+import { ingestSnapshot } from "../src/data/snapshots.mts";
 import { createDepartures } from "../src/roster/departures.mts";
+import { parseCharacters } from "../src/roster/interactions.mts";
 
-function fixture(failPosts = 0) {
+function fixture(failPosts = 0, failMemberWrite = false) {
   const member: GuildRecord = {
     ...recordKey("member", "user", "guild"),
     kind: "member",
     ownerId: "user",
     name: "Example",
-    roster: [
-      {
-        name: "eXaMpLe-Firemaw",
-        class: "Mage",
-        spec: "Fire",
-        raidRole: "Damage",
-        main: true,
-        confirmed: true,
-      },
-    ],
+    roster: parseCharacters(
+      "eXaMpLe-Firemaw,Mage,Fire,DPS",
+      "AbsentAlt-Firemaw,Mage,Fire,DPS",
+    ).map((character) => ({ ...character, confirmed: true })),
   };
-  member.roster?.push({
-    ...member.roster[0],
-    name: "AbsentAlt-Firemaw",
-    main: false,
-  });
   const items = new Map<string, GuildRecord>([[member.sk + member.pk, member]]);
+  const conflict = () =>
+    Object.assign(new Error("conflict"), {
+      name: "ConditionalCheckFailedException",
+    });
+  const getFlag = () =>
+    [...items.values()].find((item) => item.kind === "departure");
   const posts: { content: string; components: unknown[] }[] = [];
   const data = createDataAccess({
     get: async (key) => items.get(key.sk + key.pk),
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
+    releaseDeparture: async (flag) => {
+      const previous = items.get(flag.sk + flag.pk);
+      if (
+        previous?.kind !== "departure" ||
+        previous.requestId !== flag.requestId
+      )
+        throw new Error("STALE");
+      items.delete(flag.sk + flag.pk);
+    },
+    confirmDeparture: async (flag) => {
+      const previous = items.get(flag.sk + flag.pk);
+      const member = items.get(`MEMBER#${flag.ownerId}MEMBER#${flag.memberId}`);
+      if (
+        previous?.kind !== "departure" ||
+        previous.requestId !== flag.requestId ||
+        previous.state !== "pending"
+      )
+        throw conflict();
+      if (failMemberWrite || member?.kind !== "member")
+        throw new Error("MEMBER_WRITE_FAILED");
+      items.set(member.sk + member.pk, { ...member, active: false });
+      items.set(flag.sk + flag.pk, flag);
+    },
     put: async (item, condition) => {
       const previous = items.get(item.sk + item.pk);
       const expected = condition?.departure;
@@ -43,18 +62,16 @@ function fixture(failPosts = 0) {
         ("claim" in expected
           ? previous !== undefined &&
             (previous.kind !== "departure" ||
-              previous.state === "pending" ||
+              (previous.state === "pending" &&
+                (previous.messageId !== undefined ||
+                  previous.claimedAt >= expected.expiredBefore)) ||
               (item.kind === "departure" &&
-                previous.evidence === item.evidence))
+                previous.evidence === item.evidence &&
+                previous.state !== "pending"))
           : previous?.kind !== "departure" ||
             previous.requestId !== expected.requestId ||
-            previous.state !== expected.state ||
-            (expected.delivery !== undefined &&
-              previous.delivery !== expected.delivery));
-      if (rejected)
-        throw Object.assign(new Error("conflict"), {
-          name: "ConditionalCheckFailedException",
-        });
+            previous.state !== expected.state);
+      if (rejected) throw conflict();
       if (
         condition?.departureSnapshotId !== undefined &&
         (condition.departureSnapshotId === null
@@ -62,15 +79,14 @@ function fixture(failPosts = 0) {
           : previous?.kind !== "departureCheck" ||
             previous.snapshotId !== condition.departureSnapshotId)
       )
-        throw Object.assign(new Error("conflict"), {
-          name: "ConditionalCheckFailedException",
-        });
+        throw conflict();
       items.set(item.sk + item.pk, item);
     },
   });
   const core = createDepartures(data, "guild", async (content, components) => {
     if (failPosts-- > 0) throw new Error("POST_FAILED");
     posts.push({ content, components });
+    return String(posts.length);
   });
   const actor = createPrincipalFactory({
     guildId: "guild",
@@ -89,38 +105,26 @@ function fixture(failPosts = 0) {
   );
   const snapshot = async (exportedAt: number, present: boolean) => {
     const snapshotId = String(exportedAt).padStart(64, "0");
-    const pointer: GuildRecord = {
-      ...recordKey("guildSnapshotLatest", "game-guild", "latest"),
-      kind: "guildSnapshotLatest",
-      ownerId: "game-guild",
-      snapshotId,
-      exportedAt,
+    const save = async (item: GuildRecord) => {
+      items.set(item.sk + item.pk, item);
     };
-    const history: GuildRecord = {
-      ...recordKey(
-        "guildSnapshot",
-        "game-guild",
-        `${String(exportedAt).padStart(16, "0")}#${snapshotId}`,
-      ),
-      kind: "guildSnapshot",
-      ownerId: "game-guild",
-      snapshotId,
-      exportedAt,
-      receivedAt: 0,
-      writtenAt: 0,
-      addonVersion: base.addonVersion,
-      snapshotVersion: 1,
-      snapshot: {
-        ...base,
-        guildKey: "game-guild",
-        exportedAt,
-        members: present ? [{ ...base.members[0], name: "Example" }] : [],
+    await ingestSnapshot(
+      { insertSnapshot: save, advanceSnapshot: save },
+      {
+        snapshotId,
+        receivedAt: 0,
+        writtenAt: 0,
+        snapshot: {
+          ...base,
+          guildKey: "game-guild",
+          exportedAt,
+          members: present ? [{ ...base.members[0], name: "Example" }] : [],
+        },
       },
-    };
-    for (const item of [pointer, history]) items.set(item.sk + item.pk, item);
+    );
     await core.checkSnapshot("game-guild");
   };
-  return { core, posts, items, actor, snapshot };
+  return { core, posts, items, actor, snapshot, getFlag };
 }
 test("member removal posts an officer confirmation request", async () => {
   const { core, posts } = fixture();
@@ -156,27 +160,29 @@ test("two consecutive missing snapshots flag once", async () => {
   );
   assert.ok(check?.kind === "departureCheck");
   assert.equal(check.snapshotId, "2".padStart(64, "0"));
+  assert.equal(
+    [...retry.items.values()].some((item) => item.kind === "departure"),
+    false,
+  );
   await retry.core.checkSnapshot("game-guild");
   assert.equal(retry.posts.length, 1);
 });
 test("Keep clears the flag", async () => {
-  const { core, items, actor } = fixture();
-  await core.memberRemoved({ id: "user", guild: { id: "guild" } });
-  const pending = [...items.values()].find((item) => item.kind === "departure");
-  assert.ok(pending?.kind === "departure");
-  await core.resolve(actor, "user", "keep", pending.requestId);
-  assert.equal(
-    [...items.values()].find((item) => item.kind === "departure")?.state,
-    "kept",
-  );
+  const failure = fixture(0, true);
+  await failure.core.memberRemoved({ id: "user", guild: { id: "guild" } });
+  const request = failure.getFlag();
+  assert.ok(request?.kind === "departure");
+  await Promise.allSettled([
+    failure.core.resolve(failure.actor, "user", "confirm", request.requestId),
+  ]);
+  assert.equal(failure.getFlag()?.state, "pending");
   for (const order of [
     ["confirm", "keep"],
     ["keep", "confirm"],
   ]) {
+    const { core, items, actor, getFlag } = fixture();
     await core.memberRemoved({ id: "user", guild: { id: "guild" } });
-    const request = [...items.values()].find(
-      (item) => item.kind === "departure",
-    );
+    const request = getFlag();
     assert.ok(request?.kind === "departure");
     const results = await Promise.all(
       order.map((action) =>
@@ -187,6 +193,9 @@ test("Keep clears the flag", async () => {
     const member = [...items.values()].find((item) => item.kind === "member");
     assert.ok(member?.kind === "member");
     assert.equal(member.active, order[0] === "confirm" ? false : undefined);
-    items.set(member.sk + member.pk, { ...member, active: undefined });
+    assert.equal(
+      getFlag()?.state,
+      order[0] === "confirm" ? "confirmed" : "kept",
+    );
   }
 });
