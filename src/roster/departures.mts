@@ -6,8 +6,8 @@ import {
 } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
-
 import { reportRecruitingFailure } from "../recruiting/alarm.mts";
+import { characterIdentity } from "./identity.mts";
 
 type Member = Extract<GuildRecord, { kind: "member" }>;
 export function createDepartures(
@@ -109,10 +109,8 @@ export function createDepartures(
     )[0];
     if (snapshot?.kind !== "guildSnapshot")
       throw new Error("LATEST_SNAPSHOT_MISSING");
-    const identity = (name: string) => {
-      const [character, ...realm] = name.trim().toLowerCase().split("-");
-      return `${character}-${(realm.join("-") || snapshot.snapshot.realm).toLowerCase().replaceAll(" ", "")}`;
-    };
+    const identity = (name: string) =>
+      characterIdentity(name, snapshot.snapshot.realm);
     const oldCounts: Record<
       string,
       { misses: number; evidence: string; rosterSignature: string }

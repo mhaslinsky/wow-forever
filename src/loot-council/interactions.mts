@@ -40,6 +40,7 @@ export function createLootCouncilRoutes(
           Array.isArray(selected) && typeof selected[0] === "string"
             ? selected[0]
             : "",
+          interaction.id,
         );
         return message("Vote saved");
       }

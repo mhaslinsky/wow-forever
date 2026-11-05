@@ -1,6 +1,8 @@
 import { authority, type Principal } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { recordKey } from "../data/records.mts";
+import type { Snapshot } from "../guildos/index.mts";
+import { characterIdentity } from "../roster/identity.mts";
 import { createWishlist } from "../wishlist/core.mts";
 
 export function createLootCouncil(
@@ -62,12 +64,26 @@ export function createLootCouncil(
       const attendance = (
         await store.query(`ATTENDANCE#${config.guildId}`)
       ).filter((entry) => entry.kind === "attendance");
-      const snapshots = config.guildKey
-        ? (await store.query(`SNAPSHOT#${config.guildKey}`))
-            .filter((entry) => entry.kind === "guildSnapshot")
-            .sort((left, right) => right.exportedAt - left.exportedAt)
-        : [];
-      const snapshot = snapshots[0]?.snapshot;
+      let snapshot: Snapshot | undefined;
+      if (config.guildKey) {
+        const [latest] = await store.get(
+          recordKey("guildSnapshotLatest", config.guildKey, "latest"),
+        );
+        if (latest) {
+          if (latest.kind !== "guildSnapshotLatest")
+            throw new Error("INVALID_SNAPSHOT_POINTER");
+          const [history] = await store.get(
+            recordKey(
+              "guildSnapshot",
+              config.guildKey,
+              `${String(latest.exportedAt).padStart(16, "0")}#${latest.snapshotId}`,
+            ),
+          );
+          if (history?.kind !== "guildSnapshot")
+            throw new Error("LATEST_SNAPSHOT_MISSING");
+          snapshot = history.snapshot;
+        }
+      }
       const contenders: {
         id: string;
         name: string;
@@ -91,14 +107,17 @@ export function createLootCouncil(
         ).length;
         const main = member?.roster?.find((entry) => entry.main);
         const names = new Set(
-          member?.roster?.map((entry) => entry.name.toLowerCase()) ?? [
-            ...(member ? [member.name.toLowerCase()] : []),
-          ],
+          (member?.roster?.length
+            ? member.roster.map((entry) => entry.name)
+            : member
+              ? [member.name]
+              : []
+          ).map((name) => characterIdentity(name, snapshot?.realm ?? "")),
         );
         const loot = snapshot?.loot
           .filter(
             (entry) =>
-              names.has(entry.player.toLowerCase()) &&
+              names.has(characterIdentity(entry.playerKey, snapshot.realm)) &&
               entry.timestamp * 1000 >= now() - 30 * 86_400_000,
           )
           .sort((left, right) => right.timestamp - left.timestamp)
@@ -158,7 +177,15 @@ export function createLootCouncil(
         ],
       };
     },
-    async vote(actor: Principal<"user">, voteId: string, contenderId: string) {
+    async vote(
+      actor: Principal<"user">,
+      voteId: string,
+      contenderId: string,
+      interactionId: string,
+    ) {
+      if (!/^[0-9]{1,20}$/.test(interactionId))
+        throw new Error("INVALID_INTERACTION_ID");
+      const selectionId = interactionId.padStart(20, "0");
       const officerId = officer(actor);
       const store = data.forUser(actor);
       const [vote] = await store.get(
@@ -171,12 +198,25 @@ export function createLootCouncil(
         )
       )
         throw new Error("VOTE_NOT_FOUND");
-      await store.write({
-        ...recordKey("lootBallot", `${config.guildId}:${voteId}`, officerId),
-        kind: "lootBallot",
-        ownerId: `${config.guildId}:${voteId}`,
-        contenderId,
-      });
+      try {
+        await store.write(
+          {
+            ...recordKey(
+              "lootBallot",
+              `${config.guildId}:${voteId}`,
+              officerId,
+            ),
+            kind: "lootBallot",
+            ownerId: `${config.guildId}:${voteId}`,
+            contenderId,
+            selectionId,
+          },
+          { ballotSelectionId: selectionId },
+        );
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "WRITE_CONFLICT")
+          throw error;
+      }
     },
   };
 }

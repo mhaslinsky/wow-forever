@@ -98,6 +98,19 @@ function fixture(evidence = true) {
       },
     );
   }
+  const accepted = records.find((entry) => entry.kind === "guildSnapshot");
+  if (accepted?.kind === "guildSnapshot") {
+    records.unshift({
+      ...accepted,
+      snapshotId: "b".repeat(64),
+      sk: accepted.sk.replace("a".repeat(64), "b".repeat(64)),
+      snapshot: { ...accepted.snapshot, loot: [] },
+    });
+    add("guildSnapshotLatest", accepted.ownerId, "latest", {
+      snapshotId: accepted.snapshotId,
+      exportedAt: accepted.exportedAt,
+    });
+  }
   const data = createDataAccess({
     get: async (key) =>
       records.find((entry) => entry.pk === key.pk && entry.sk === key.sk),
@@ -109,10 +122,20 @@ function fixture(evidence = true) {
           : entry.pk === partition,
       ),
     }),
-    put: async (record) => {
+    put: async (record, condition) => {
       const previous = records.findIndex(
         (entry) => entry.pk === record.pk && entry.sk === record.sk,
       );
+      const stored = records[previous];
+      if (
+        condition?.ballotSelectionId &&
+        stored?.kind === "lootBallot" &&
+        stored.selectionId >= condition.ballotSelectionId
+      ) {
+        const conflict = new Error("stale");
+        conflict.name = "ConditionalCheckFailedException";
+        throw conflict;
+      }
       if (previous >= 0) records[previous] = record;
       else records.push(record);
     },
@@ -152,6 +175,43 @@ test("vote posts both contenders with locked rank, attendance source, recent loo
     post.embeds[0].fields[1].value,
     /<@second>\nWishlist: 2\nAttendance: 0% \(voice\)\nRecent loot: no data/,
   );
+  for (const [roster, playerKey, expected] of [
+    [[], "FIRST-Example", "Old Ring"],
+    [
+      [
+        {
+          name: "First-Other Realm",
+          class: "Priest",
+          spec: "Holy",
+          raidRole: "Healer",
+          main: true,
+          confirmed: true,
+        },
+      ],
+      "first-otherrealm",
+      "Old Ring",
+    ],
+    [[], "first-otherrealm", "no data"],
+  ] as const) {
+    const member = setup.records.find(
+      (entry) => entry.kind === "member" && entry.ownerId === "first",
+    );
+    const history = setup.records.find(
+      (entry) =>
+        entry.kind === "guildSnapshot" && entry.snapshotId === "a".repeat(64),
+    );
+    assert.ok(member?.kind === "member" && history?.kind === "guildSnapshot");
+    member.roster = roster.map((character) => ({ ...character }));
+    history.snapshot.loot[0].playerKey = playerKey;
+    const result = await setup.core.start(
+      setup.actor("officer"),
+      "identity",
+      "Sword",
+    );
+    assert.ok(
+      result.embeds[0].fields[0].value.includes(`Recent loot: ${expected}`),
+    );
+  }
   const sparse = fixture(false);
   sparse.records.splice(
     sparse.records.findIndex(
@@ -193,8 +253,8 @@ test("vote posts both contenders with locked rank, attendance source, recent loo
 test("each officer has one persistent changeable ballot and members cannot start or vote", async () => {
   const { core, records, actor } = fixture(false);
   await core.start(actor("officer"), "vote", "Sword");
-  await core.vote(actor("officer"), "vote", "first");
-  await core.vote(actor("other"), "vote", "first");
+  await core.vote(actor("officer"), "vote", "first", "100");
+  await core.vote(actor("other"), "vote", "first", "100");
   const [, select] = createLootCouncilRoutes(async () => ({
     actor: actor("officer"),
     core,
@@ -202,7 +262,7 @@ test("each officer has one persistent changeable ballot and members cannot start
   }));
   await select.handler(
     {
-      id: "change",
+      id: "102",
       application_id: "app",
       token: "synthetic",
       type: 3,
@@ -210,6 +270,7 @@ test("each officer has one persistent changeable ballot and members cannot start
     },
     new AbortController().signal,
   );
+  await core.vote(actor("officer"), "vote", "first", "101");
   assert.deepEqual(
     records
       .filter((entry) => entry.kind === "lootBallot")
@@ -220,7 +281,7 @@ test("each officer has one persistent changeable ballot and members cannot start
     ],
   );
   await assert.rejects(
-    core.vote(actor("member", "member"), "vote", "first"),
+    core.vote(actor("member", "member"), "vote", "first", "103"),
     /OFFICER_REQUIRED/,
   );
   await assert.rejects(

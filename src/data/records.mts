@@ -85,7 +85,7 @@ const CODECS = Object.freeze({
     prefix: "LOOT_VOTE",
     fields: ["item", "contenders", "raidStart"],
   },
-  lootBallot: { prefix: "LOOT_BALLOT", fields: ["contenderId"] },
+  lootBallot: { prefix: "LOOT_BALLOT", fields: ["contenderId", "selectionId"] },
   wishlist: { prefix: "WISHLIST", fields: ["item"] },
   fact: { prefix: "FACT", fields: ["text"] },
   memoryReply: { prefix: "MEMORY_REPLY", fields: ["messageId"] },
