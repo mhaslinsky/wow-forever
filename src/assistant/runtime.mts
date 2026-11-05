@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { REST } from "discord.js";
-import { createPrincipalFactory } from "../auth/index.mts";
+import { authority, createPrincipalFactory } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { createSpendStore } from "../data/spend.mts";
 import { clock, type Interaction } from "../interactions/core.mts";
@@ -13,6 +13,7 @@ import {
   createSearch,
   REFUSAL,
 } from "./core.mts";
+import { runtimeMemoryReplies } from "./memory-replies.mts";
 import { createSpend, spendMetric, spendTotalMetric } from "./spend.mts";
 
 export function assistantRoleIds(roles: unknown) {
@@ -88,15 +89,48 @@ export async function assistantAnswer(
     return response.json();
   };
   const actor = await assistantPrincipal(guildId, userId, get);
+  const memory = runtimeMemoryReplies();
   return (await runtimeAssistant(guildId, get))(
     actor,
     question,
     signal,
     createChannelContext(
-      { clock, get },
+      { clock, get, hiddenMessage: memory.hidden },
       interactionHistoryChannel(interaction),
     ),
+    undefined,
+    () => memory.mark(userId, interaction.id, 60000),
   );
+}
+
+export async function assistantForget(
+  interaction: Interaction,
+  signal: AbortSignal,
+) {
+  const guildId = process.env.GUILD_ID;
+  const userId = interaction.member?.user?.id;
+  if (!guildId || interaction.guild_id !== guildId || !userId) return REFUSAL;
+  const { readSecret } = await import("../interactions/index.mts");
+  const token = await readSecret("/wow-forever/discord_bot_token", signal);
+  const actor = await assistantPrincipal(guildId, userId, async (path) => {
+    const response = await fetch(`https://discord.com/api/v10${path}`, {
+      headers: { authorization: `Bot ${token}` },
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error("ASSISTANT_IDENTITY_UNAVAILABLE");
+    }
+    return response.json();
+  });
+  if (!authority(actor).roles.includes("Member")) return REFUSAL;
+  await createDynamoDataAccess({
+    tableName: process.env.GUILD_TABLE ?? "wow-forever",
+    region: "us-east-1",
+  })
+    .forUser(actor)
+    .forgetFacts();
+  return "Forgot everything you asked me to remember.";
 }
 
 export async function runtimeAssistant(

@@ -5,6 +5,11 @@ resource "aws_dynamodb_table" "guild" {
   range_key                   = "sk"
   deletion_protection_enabled = true
 
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
   attribute {
     name = "pk"
     type = "S"

@@ -294,7 +294,7 @@ test("write policy enforces officer recording, self ownership, fact stamping and
     kind: "fact",
     text: "Synthetic",
   } as const;
-  await data.forUser(member).write(fact);
+  await data.forUser(member).write(fact, { memoryCutoff: 0 });
   assert.equal(writes[0].ownerId, "asker");
   await assert.rejects(
     data.forUser(member).write({ ...fact, ownerId: "other" }),

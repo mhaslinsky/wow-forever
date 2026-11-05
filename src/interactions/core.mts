@@ -1,6 +1,9 @@
 import { createPublicKey, verify } from "node:crypto";
-import { createAskRoutes } from "../assistant/interactions.mts";
-import { assistantAnswer } from "../assistant/runtime.mts";
+import {
+  createAskRoutes,
+  createForgetRoutes,
+} from "../assistant/interactions.mts";
+import { assistantAnswer, assistantForget } from "../assistant/runtime.mts";
 import { createNeedsRoutes } from "../needs/interactions.mts";
 import { needsContextForInteraction } from "../needs/runtime.mts";
 import { createFollowUpRoutes } from "../recruiting/followup.mts";
@@ -107,6 +110,7 @@ export type Route = RouteDefinition &
 export const registry: readonly Route[] = [
   ...departureRoutes,
   ...createAskRoutes(assistantAnswer),
+  ...createForgetRoutes(assistantForget),
   ...createWishlistRoutes(wishlistContextForInteraction),
   ...createRecruitingRoutes(recruitingContextForInteraction),
   ...createRegisterRoutes(recruitingContextForInteraction),

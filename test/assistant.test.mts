@@ -80,10 +80,12 @@ function setup(
   const data = createDataAccess(
     {
       get: async (key) => {
+        if (key.sk === "FACT#forget") return undefined;
         assert.deepEqual(key, recordKey("member", "asker", "guild"));
         return stored;
       },
       query: async (partition) => {
+        if (partition === "FACT#asker") return { items: [] };
         assert.ok(["MEMBER#ALL", "CHARACTER#ALL"].includes(partition));
         return {
           items:

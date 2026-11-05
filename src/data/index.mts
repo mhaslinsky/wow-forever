@@ -39,6 +39,8 @@ export type WriteCondition = {
   preserveMeasuredAttendance?: true;
   candidateThreadId?: string;
   absent?: true;
+  forgetAt?: number;
+  memoryCutoff?: number;
   intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
 };
 export type StoragePort = SnapshotWrites & {
@@ -59,6 +61,7 @@ export type StoragePort = SnapshotWrites & {
   removeIntake?(
     item: Extract<GuildRecord, { kind: "recruitingIntake" }>,
   ): Promise<void>;
+  removeFact?(item: Extract<GuildRecord, { kind: "fact" }>): Promise<void>;
   removeNote?(item: OfficerNote): Promise<void>;
 };
 type Result<Mode extends "user" | "system"> = Mode extends "user"
@@ -265,6 +268,37 @@ export function createDataAccess(
         if (!remove) throw new Error("INTAKE_REMOVAL_UNAVAILABLE");
         await stored(() => remove(item));
       },
+      async forgetFacts(forgetAt = Date.now()) {
+        const actor = authority(principal);
+        if (
+          actor.mode !== "user" ||
+          !actor.roles.includes("Member") ||
+          !actor.userId
+        )
+          throw new Error("WRITE_DENIED");
+        const remove = storage.removeFact;
+        if (!remove) throw new Error("FACT_REMOVAL_UNAVAILABLE");
+        const marker = {
+          pk: `FACT#${actor.userId}`,
+          sk: "FACT#forget",
+          kind: "fact" as const,
+          ownerId: actor.userId,
+          text: "Forget cutoff",
+          forgetAt,
+        };
+        try {
+          await stored(() => storage.put(marker, { forgetAt }));
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "WRITE_CONFLICT")
+            throw error;
+        }
+        const items = await query(`FACT#${actor.userId}`, false);
+        for (const item of items) {
+          if (item.kind !== "fact") throw new Error("INVALID_RECORD");
+          if (item.forgetAt === undefined && (item.createdAt ?? 0) <= forgetAt)
+            await stored(() => remove(item));
+        }
+      },
       async removeOfficerNote(input: OfficerNote): Promise<void> {
         const item = decode(input);
         if (!item || item.kind !== "officerNote")
@@ -311,9 +345,13 @@ export function createDataAccess(
           condition?.intake
         )
           throw new Error("INTAKE_CONDITIONAL_OPERATION_REQUIRED");
-        const self = ["member", "character", "wishlist", "fact"].includes(
-          item.kind,
-        );
+        const self = [
+          "member",
+          "character",
+          "wishlist",
+          "fact",
+          "memoryReply",
+        ].includes(item.kind);
         const allowed =
           actor.mode === "system"
             ? actor.writableKinds.includes(item.kind)
@@ -327,6 +365,8 @@ export function createDataAccess(
             !item.sk.startsWith(`OFFICER_NOTE#${condition.candidateThreadId}#`))
         )
           throw new Error("NOTE_CANDIDATE_CONDITION_REQUIRED");
+        if (item.kind === "fact" && condition?.memoryCutoff === undefined)
+          throw new Error("MEMORY_CONDITION_REQUIRED");
         await stored(() =>
           storage.put(
             item,
@@ -469,6 +509,21 @@ function createDynamoStorage(config: {
       }
       return items;
     },
+    async removeFact(item) {
+      await client.send(
+        new DeleteCommand({
+          TableName: config.tableName,
+          Key: { pk: item.pk, sk: item.sk },
+          ConditionExpression:
+            "attribute_not_exists(pk) OR (#kind = :kind AND ownerId = :owner)",
+          ExpressionAttributeNames: { "#kind": "kind" },
+          ExpressionAttributeValues: {
+            ":kind": "fact",
+            ":owner": item.ownerId,
+          },
+        }),
+      );
+    },
     async removeNote(item) {
       await client.send(
         new DeleteCommand({
@@ -555,6 +610,54 @@ function createDynamoStorage(config: {
       );
     },
     async put(item, condition) {
+      if (condition?.memoryCutoff !== undefined) {
+        if (item.kind !== "fact" || item.forgetAt !== undefined)
+          throw new Error("INVALID_MEMORY_WRITE");
+        const cutoff = condition.memoryCutoff;
+        await client.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                ConditionCheck: {
+                  TableName: config.tableName,
+                  Key: { pk: item.pk, sk: "FACT#forget" },
+                  ConditionExpression:
+                    cutoff === 0
+                      ? "attribute_not_exists(pk)"
+                      : "forgetAt = :cutoff",
+                  ...(cutoff === 0
+                    ? {}
+                    : { ExpressionAttributeValues: { ":cutoff": cutoff } }),
+                },
+              },
+              {
+                Put: {
+                  TableName: config.tableName,
+                  Item: {
+                    ...item,
+                    gsi1pk: "FACT#ALL",
+                    gsi1sk: `${item.pk}#${item.sk}`,
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if (condition?.forgetAt !== undefined) {
+        await client.send(
+          new PutCommand({
+            TableName: config.tableName,
+            Item: item,
+            ConditionExpression:
+              "attribute_not_exists(forgetAt) OR forgetAt < :cutoff",
+            ExpressionAttributeValues: { ":cutoff": condition.forgetAt },
+          }),
+        );
+        return;
+      }
       const departure = condition?.departure;
       const departureCondition =
         departure &&

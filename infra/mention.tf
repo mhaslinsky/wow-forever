@@ -13,6 +13,16 @@ resource "aws_iam_role" "mention" {
 
 data "aws_iam_policy_document" "mention" {
   statement {
+    actions   = ["dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringLike"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["FACT#*", "MEMORY_REPLY#*"]
+    }
+  }
+
+  statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.mention.arn}:*"]
   }
