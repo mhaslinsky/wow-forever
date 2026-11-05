@@ -69,7 +69,7 @@ export function createSnapshotHttp(ports: {
         Array.isArray(request) ||
         Object.keys(request).length !== 2 ||
         typeof request.wire !== "string" ||
-        !Number.isFinite(request.writtenAt)
+        !Object.hasOwn(request, "writtenAt")
       )
         throw new Error("Invalid request");
     } catch {
@@ -77,7 +77,18 @@ export function createSnapshotHttp(ports: {
     }
     let snapshot: ReturnType<typeof normalize>;
     try {
+      // Reject permanent input errors here so readers do not retry them.
+      if (!Number.isSafeInteger(request.writtenAt) || request.writtenAt < 0)
+        throw new SavedVariablesError(
+          "InvalidPayloadShapeError",
+          "Invalid writtenAt",
+        );
       snapshot = normalize(decodeCompanion({ __companion: request.wire }));
+      if (!snapshot.addonVersion)
+        throw new SavedVariablesError(
+          "InvalidPayloadShapeError",
+          "Missing addonVersion",
+        );
       if (!Number.isSafeInteger(snapshot.exportedAt) || snapshot.exportedAt < 0)
         throw new SavedVariablesError(
           "InvalidPayloadShapeError",

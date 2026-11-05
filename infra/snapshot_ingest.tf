@@ -23,7 +23,7 @@ data "aws_iam_policy_document" "snapshot_ingest" {
   }
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = ["arn:aws:ssm:us-east-1:${var.aws_account_id}:parameter/wow-forever/reader_token"]
+    resources = [aws_ssm_parameter.secrets["reader_token"].arn]
   }
   statement {
     actions   = ["kms:Decrypt"]
@@ -36,12 +36,17 @@ data "aws_iam_policy_document" "snapshot_ingest" {
     condition {
       test     = "StringEquals"
       variable = "kms:EncryptionContext:PARAMETER_ARN"
-      values   = ["arn:aws:ssm:us-east-1:${var.aws_account_id}:parameter/wow-forever/reader_token"]
+      values   = [aws_ssm_parameter.secrets["reader_token"].arn]
     }
   }
   statement {
-    actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"]
+    actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringLike"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["SNAPSHOT#*", "SNAPSHOT_LATEST#*"]
+    }
   }
 }
 
@@ -112,4 +117,20 @@ resource "aws_cloudwatch_metric_alarm" "snapshot_ingest_errors" {
 
 output "snapshot_ingest_url" {
   value = aws_lambda_function_url.snapshot_ingest.function_url
+}
+
+resource "aws_cloudwatch_metric_alarm" "snapshot_ingest_service_errors" {
+  alarm_name          = "wow-forever-snapshot-ingest-service-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Uploads"
+  namespace           = "WowForever/SnapshotIngest"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    outcome = "serviceError"
+  }
+  alarm_actions = [aws_sns_topic.alerts.arn]
 }

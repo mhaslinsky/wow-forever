@@ -223,7 +223,7 @@ export function createDynamoDataAccess(config: {
   return createDataAccess(createDynamoStorage(config));
 }
 
-export function createDynamoStorage(config: {
+function createDynamoStorage(config: {
   tableName: string;
   region: string;
   endpoint?: string;
