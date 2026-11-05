@@ -7,7 +7,9 @@ import {
   PutCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {
   authority,
   type Principal,
@@ -22,6 +24,7 @@ import {
   KIND_POLICY,
   type RecordInput,
 } from "./records.mts";
+import { ingestSnapshot, type SnapshotWrites } from "./snapshots.mts";
 
 declare const cursorBrand: unique symbol;
 export type QueryCursor = Readonly<Record<string, string>> & {
@@ -33,7 +36,7 @@ export type WriteCondition = {
   absent?: true;
   intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
 };
-export type StoragePort = {
+export type StoragePort = SnapshotWrites & {
   get(key: Key): Promise<unknown>;
   query(
     partition: string,
@@ -146,11 +149,29 @@ export function createDataAccess(
       }
     }
     return {
+      async ingestSnapshot(input: Parameters<typeof ingestSnapshot>[1]) {
+        const actor = authority(principal);
+        if (
+          actor.mode !== "system" ||
+          !["guildSnapshot", "guildSnapshotLatest"].every((kind) =>
+            actor.writableKinds.includes(
+              kind as "guildSnapshot" | "guildSnapshotLatest",
+            ),
+          )
+        )
+          throw new Error("WRITE_DENIED");
+        return ingestSnapshot(storage, input);
+      },
       get: (key: Key) => read(async () => [await storage.get(key)]),
       query: (partition: string) => query(partition, false),
       lookup: (partition: string) => query(partition, true),
       batch: (keys: readonly Key[]) => read(() => storage.batch(keys)),
       async insert(input: GuildRecord, candidateThreadId?: string) {
+        if (
+          input.kind === "guildSnapshot" ||
+          input.kind === "guildSnapshotLatest"
+        )
+          throw new Error("WRITE_DENIED");
         systemWrite(input);
         const item = decode(input);
         if (!item) throw new Error("INVALID_RECORD");
@@ -210,6 +231,11 @@ export function createDataAccess(
         condition?: WriteCondition,
       ): Promise<void> {
         const actor = authority(principal);
+        if (
+          input.kind === "guildSnapshot" ||
+          input.kind === "guildSnapshotLatest"
+        )
+          throw new Error("WRITE_DENIED");
         let raw: RecordInput = input;
         if (input.kind === "fact") {
           if (
@@ -259,6 +285,15 @@ export function createDynamoDataAccess(config: {
   endpoint?: string;
   localCredentials?: boolean;
 }) {
+  return createDataAccess(createDynamoStorage(config));
+}
+
+function createDynamoStorage(config: {
+  tableName: string;
+  region: string;
+  endpoint?: string;
+  localCredentials?: boolean;
+}): StoragePort {
   const client = DynamoDBDocumentClient.from(
     new DynamoDBClient({
       region: config.region,
@@ -269,6 +304,50 @@ export function createDynamoDataAccess(config: {
     }),
   );
   const storage: StoragePort = {
+    async insertSnapshot(item) {
+      await client.send(
+        new PutCommand({
+          TableName: config.tableName,
+          Item: item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+    },
+    async advanceSnapshot(item) {
+      try {
+        await client.send(
+          new UpdateCommand({
+            TableName: config.tableName,
+            Key: { pk: item.pk, sk: item.sk },
+            UpdateExpression:
+              "SET #kind = :kind, ownerId = :owner, snapshotId = :id, exportedAt = :exportedAt",
+            ConditionExpression:
+              "attribute_not_exists(pk) OR exportedAt < :exportedAt",
+            ExpressionAttributeNames: { "#kind": "kind" },
+            ExpressionAttributeValues: {
+              ":kind": item.kind,
+              ":owner": item.ownerId,
+              ":id": item.snapshotId,
+              ":exportedAt": item.exportedAt,
+            },
+            ReturnValuesOnConditionCheckFailure: "ALL_OLD",
+          }),
+        );
+      } catch (error) {
+        // DocumentClient leaves failed-condition images in DynamoDB's wire format.
+        if (
+          error instanceof Error &&
+          error.name === "ConditionalCheckFailedException" &&
+          "Item" in error &&
+          error.Item
+        ) {
+          error.Item = unmarshall(
+            error.Item as Parameters<typeof unmarshall>[0],
+          );
+        }
+        throw error;
+      }
+    },
     async get(key) {
       const result = await client.send(
         new GetCommand({
@@ -461,5 +540,5 @@ export function createDynamoDataAccess(config: {
       );
     },
   };
-  return createDataAccess(storage);
+  return storage;
 }

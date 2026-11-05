@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { deflateRawSync } from "node:zlib";
 import fc from "fast-check";
+import { encode, encodeBytes } from "./fixtures/encode.mts";
 import { decodeCompanion, normalize, parseSavedVariables } from "./index.mts";
 
 const fixture = (name: string) =>
@@ -11,27 +11,6 @@ const sample = decodeCompanion(
   parseSavedVariables(fixture("guild.lua")),
 ) as Record<string, unknown>;
 const forever: Record<string, unknown> = { ...sample, game: "FOREVER" };
-function encode(payload: unknown): string {
-  return encodeBytes(Buffer.from(JSON.stringify(payload)));
-}
-function encodeBytes(bytes: Buffer): string {
-  const alphabet =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()";
-  let cache = 0,
-    bits = 0,
-    output = "GOSCOMP1:";
-  for (const byte of deflateRawSync(bytes)) {
-    cache += byte * 2 ** bits;
-    bits += 8;
-    while (bits >= 6) {
-      output += alphabet[cache % 64];
-      cache = Math.floor(cache / 64);
-      bits -= 6;
-    }
-  }
-  if (bits) output += alphabet[cache];
-  return output;
-}
 
 test("genuine addon bytes decode and kept sections normalize", () => {
   assert.equal(sample.game, "ANNIVERSARY");

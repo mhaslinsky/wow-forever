@@ -1,5 +1,5 @@
 resource "aws_ssm_parameter" "secrets" {
-  for_each         = toset(["discord_bot_token", "discord_app_public_key", "alarm_webhook_url"])
+  for_each         = toset(["discord_bot_token", "discord_app_public_key", "alarm_webhook_url", "reader_token"])
   name             = "/wow-forever/${each.key}"
   type             = "SecureString"
   value_wo         = "None"
