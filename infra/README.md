@@ -2,7 +2,7 @@
 
 Uses the personal AWS account in us-east-1 with profile `aidb-personal`.
 
-Run `npm ci` and `npm run build:alarm-forwarder` at the repository root before planning the main stack. esbuild bundles the handler and its SDK dependencies into `build/alarm-forwarder/index.mjs`; Terraform archives that directory for the Node 22 Lambda. A `createRequire` shim supports the bundled SDK's Node built-in imports. The artifact includes `@aws-sdk/client-ssm`; it does not rely on runtime module lookup.
+Run `npm ci` and `npm run build` at the repository root before planning the main stack. esbuild bundles the handler and its SDK dependencies into `build/alarm-forwarder/index.mjs`; Terraform archives that directory for the Node 22 Lambda. A `createRequire` shim supports the bundled SDK's Node built-in imports. The artifact includes `@aws-sdk/client-ssm`; it does not rely on runtime module lookup.
 
 Bootstrap in `infra/bootstrap/` creates the encrypted, versioned state bucket with public access blocked. Use this two-step procedure:
 

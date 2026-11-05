@@ -123,7 +123,11 @@ test("unauthenticated uploads fail closed and token rotation expires within five
   assert.equal(outcome(await env.handler(request())), "stored");
   env.state.token = "rotated-synthetic-token";
   env.state.now += 299_999;
-  assert.equal(await env.status(request()), 200);
+  for (const headers of [
+    request().headers,
+    { authorization: "bearer synthetic-reader-token" },
+  ])
+    assert.equal(await env.status({ ...request(), headers }), 200);
   env.state.now++;
   assert.equal(await env.status(request()), 401);
   assert.equal(

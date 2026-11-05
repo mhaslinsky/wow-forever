@@ -35,7 +35,10 @@ export function createSnapshotHttp(ports: {
     const authorization = Object.entries(event.headers ?? {}).find(
       ([name]) => name.toLowerCase() === "authorization",
     )?.[1];
-    if (!authorization?.startsWith("Bearer ") || !authorization.slice(7))
+    if (
+      authorization?.slice(0, 7).toLowerCase() !== "bearer " ||
+      !authorization.slice(7)
+    )
       return finish(401, "unauthorized", "UnauthorizedError");
     try {
       if (!cached || ports.now() >= cached.until) {
