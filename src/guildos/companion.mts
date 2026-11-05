@@ -3,6 +3,8 @@ import { SavedVariablesError } from "./saved-variables.mts";
 
 export const MAX_COMPANION_ENCODED_CHARACTERS = 1_000_000;
 export const MAX_COMPANION_JSON_BYTES = 8 * 1024 * 1024;
+export const MAX_COMPANION_JSON_DEPTH = 64;
+export const MAX_COMPANION_JSON_CONTAINERS = 100_000;
 
 const ALPHABET =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()";
@@ -43,6 +45,33 @@ function decodeForPrint(text: string): Buffer {
   return bytes;
 }
 
+function checkJsonBounds(text: string): void {
+  let depth = 0;
+  let containers = 0;
+  let inString = false;
+  let escaped = false;
+  for (const character of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+    } else if (character === '"') {
+      inString = true;
+    } else if (character === "[" || character === "{") {
+      depth++;
+      containers++;
+      if (
+        depth > MAX_COMPANION_JSON_DEPTH ||
+        containers > MAX_COMPANION_JSON_CONTAINERS
+      ) {
+        throw new Error("Companion JSON exceeds container limits");
+      }
+    } else if (character === "]" || character === "}") {
+      depth--;
+    }
+  }
+}
+
 export function decodeCompanion(database: unknown): unknown {
   if (!database || typeof database !== "object" || Array.isArray(database)) {
     throw new SavedVariablesError(
@@ -72,7 +101,9 @@ export function decodeCompanion(database: unknown): unknown {
     const json = inflateRawSync(decodeForPrint(fields.__companion.slice(9)), {
       maxOutputLength: MAX_COMPANION_JSON_BYTES,
     });
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(json));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(json);
+    checkJsonBounds(text);
+    return JSON.parse(text);
   } catch (error) {
     throw new SavedVariablesError(
       "InvalidCompanionError",

@@ -61,6 +61,11 @@ test("unsupported files and payload shapes fail by name", () => {
       invalidLength,
       encodeBytes(Buffer.from([34, 255, 34])),
       encode(" ".repeat(8 * 1024 * 1024)),
+      encodeBytes(
+        Buffer.from(
+          `${JSON.stringify(forever).slice(0, -1)},"junk":${"[".repeat(65)}0${"]".repeat(65)}}`,
+        ),
+      ),
     ].map((__companion): [() => unknown, string] => [
       () => decodeCompanion({ __companion }),
       "InvalidCompanionError",
