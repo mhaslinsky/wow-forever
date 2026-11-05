@@ -114,9 +114,13 @@ resource "aws_iam_role_policy" "departure_snapshot_scheduler" {
   role   = aws_iam_role.departure_snapshot_scheduler.id
   policy = data.aws_iam_policy_document.departure_snapshot_scheduler.json
 }
+resource "aws_scheduler_schedule_group" "departure_snapshot" {
+  name = "wow-forever-departure-snapshot"
+}
 resource "aws_scheduler_schedule" "departure_snapshot" {
   name                         = "wow-forever-departure-snapshot"
-  state                        = var.guildos_guild_key == null ? "DISABLED" : "ENABLED"
+  group_name                   = aws_scheduler_schedule_group.departure_snapshot.name
+  state                        = var.guildos_guild_key == null ? "DISABLED" : (trimspace(var.guildos_guild_key) != "" ? "ENABLED" : "DISABLED")
   schedule_expression          = "rate(5 minutes)"
   schedule_expression_timezone = "America/New_York"
   flexible_time_window { mode = "OFF" }
@@ -142,5 +146,19 @@ resource "aws_cloudwatch_metric_alarm" "departure_snapshot_errors" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   dimensions          = { FunctionName = aws_lambda_function.departure_snapshot.function_name }
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "departure_snapshot_delivery_errors" {
+  alarm_name          = "wow-forever-departure-snapshot-delivery-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "TargetErrorCount"
+  namespace           = "AWS/Scheduler"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  dimensions          = { ScheduleGroup = aws_scheduler_schedule_group.departure_snapshot.name }
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
