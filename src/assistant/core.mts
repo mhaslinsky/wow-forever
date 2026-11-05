@@ -13,6 +13,7 @@ import type { createDataAccess } from "../data/index.mts";
 import { decode, type GuildRecord, recordKey } from "../data/records.mts";
 import { bounded, type Clock } from "../interactions/core.mts";
 import type { ChannelContext, ChannelMessage } from "./context.mts";
+import { PAUSED, SpendError, SpendPaused } from "./spend.mts";
 
 export const NOT_VERIFIED =
   "Heads up, I couldn't verify any game numbers here.";
@@ -35,12 +36,14 @@ export function createSearch(ports: {
   clock: Clock;
   secret(signal: AbortSignal): Promise<string>;
   http: typeof fetch;
+  prepareRequest?(signal: AbortSignal): Promise<() => Promise<void>>;
 }) {
   return async (
     question: string,
     parent: AbortSignal,
   ): Promise<SearchResult> => {
     let reason = "credential";
+    let account: (() => Promise<void>) | undefined;
     try {
       return await bounded(ports.clock, 8000, parent, async (signal) => {
         const key = await ports.secret(signal);
@@ -50,6 +53,9 @@ export function createSearch(ports: {
           .trim()
           .slice(0, 200);
         if (!query) return { status: "empty" };
+        const prepared = await ports.prepareRequest?.(signal);
+        signal.throwIfAborted();
+        account = prepared;
         reason = "transport";
         const response = await ports.http("https://api.parallel.ai/v1/search", {
           method: "POST",
@@ -107,6 +113,7 @@ export function createSearch(ports: {
           : { status: "unavailable", reason: "no_usable_evidence" };
       });
     } catch (error) {
+      if (error instanceof SpendError) throw error;
       return {
         status: "unavailable",
         reason: parent.aborted
@@ -115,6 +122,9 @@ export function createSearch(ports: {
             ? "timeout"
             : reason,
       };
+    } finally {
+      // Charge sent requests even when the search deadline interrupts their response.
+      await account?.();
     }
   };
 }
@@ -180,7 +190,8 @@ export function createRouting(
         needsWeb: value.needsWeb,
         searchQuery: value.searchQuery,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof SpendError) throw error;
       signal.throwIfAborted();
       return fallback;
     }
@@ -402,6 +413,7 @@ export function createConverse(
 export function createAssistant(ports: {
   data: ReturnType<typeof createDataAccess>;
   guildId: string;
+  checkSpend(signal: AbortSignal): Promise<unknown>;
   claim(userId: string, signal: AbortSignal): Promise<boolean>;
   search: ReturnType<typeof createSearch>;
   route: ReturnType<typeof createRouting>;
@@ -420,53 +432,60 @@ export function createAssistant(ports: {
       return REFUSAL;
     if (!question.trim()) return "You forgot the question.";
     if (question.length > 2000) return "Keep it under 2,000 characters.";
-    if (!(await ports.claim(identity.userId, signal))) return COOLDOWN;
-    const access = audience
-      ? await audience()
-      : { guildRecords: true, history: true };
-    let messages = access.history && context ? await context(signal) : [];
-    signal.throwIfAborted();
-    const emptyRecords = [] as unknown as UserResult<GuildRecord>;
-    let records = access.guildRecords
-      ? await ports.data
-          .forUser(actor)
-          .get(recordKey("member", identity.userId, ports.guildId))
-      : emptyRecords;
-    signal.throwIfAborted();
-    const routing = await ports.route(question, signal);
-    signal.throwIfAborted();
-    let evidence: SearchResult = { status: "skipped" };
-    if (routing.needsWeb) {
-      const [names, terms] = await Promise.all([
-        rosterNames(ports.data, ports.guildId),
-        ports.privateTerms(signal),
-      ]);
+    try {
+      await ports.checkSpend(signal);
+      if (!(await ports.claim(identity.userId, signal))) return COOLDOWN;
+      const access = audience
+        ? await audience()
+        : { guildRecords: true, history: true };
+      let messages = access.history && context ? await context(signal) : [];
       signal.throwIfAborted();
-      if (safeSearchQuery(routing.searchQuery, [...names, ...terms]))
-        evidence = await ports.search(routing.searchQuery, signal);
-    }
-    signal.throwIfAborted();
-    if (!routing.needsGuild) records = emptyRecords;
-    for (;;) {
-      const answer = await ports.converse(
-        {
-          actor,
-          records,
-          question,
-          evidence,
-          guildId: ports.guildId,
-          context: messages,
-        },
-        signal,
-      );
-      if (!audience) return answer;
-      const current = await audience();
-      const dropRecords = records.length > 0 && !current.guildRecords;
-      const dropHistory = messages.length > 0 && !current.history;
-      if (!dropRecords && !dropHistory) return answer;
-      // Regenerate without revoked data, keeping the original cooldown claim.
-      if (dropRecords) records = emptyRecords;
-      if (dropHistory) messages = [];
+      const emptyRecords = [] as unknown as UserResult<GuildRecord>;
+      let records = access.guildRecords
+        ? await ports.data
+            .forUser(actor)
+            .get(recordKey("member", identity.userId, ports.guildId))
+        : emptyRecords;
+      signal.throwIfAborted();
+      const routing = await ports.route(question, signal);
+      signal.throwIfAborted();
+      let evidence: SearchResult = { status: "skipped" };
+      if (routing.needsWeb) {
+        const [names, terms] = await Promise.all([
+          rosterNames(ports.data, ports.guildId),
+          ports.privateTerms(signal),
+        ]);
+        signal.throwIfAborted();
+        if (safeSearchQuery(routing.searchQuery, [...names, ...terms]))
+          evidence = await ports.search(routing.searchQuery, signal);
+      }
+      signal.throwIfAborted();
+      if (!routing.needsGuild) records = emptyRecords;
+      for (;;) {
+        const answer = await ports.converse(
+          {
+            actor,
+            records,
+            question,
+            evidence,
+            guildId: ports.guildId,
+            context: messages,
+          },
+          signal,
+        );
+        if (!audience) return answer;
+        const current = await audience();
+        const dropRecords = records.length > 0 && !current.guildRecords;
+        const dropHistory = messages.length > 0 && !current.history;
+        if (!dropRecords && !dropHistory) return answer;
+        // Regenerate without revoked data, keeping the original cooldown claim.
+        if (dropRecords) records = emptyRecords;
+        if (dropHistory) messages = [];
+      }
+    } catch (error) {
+      if (error instanceof SpendPaused) return PAUSED;
+      if (error instanceof SpendError) return FAILURE;
+      throw error;
     }
   };
 }

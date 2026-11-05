@@ -63,7 +63,7 @@ test("untrusted stale request never reports freshness verified", async () => {
     "rejected (signature or freshness, not isolated)",
   );
 });
-test("production claims policy allows PutItem only, never GetItem or UpdateItem", () => {
+test("production claims policy allows claims and atomic spend accounting", () => {
   const [parsed, error] = hcl.parseToObject(
     readFileSync("infra/interactions.tf", "utf8"),
   );
@@ -73,13 +73,17 @@ test("production claims policy allows PutItem only, never GetItem or UpdateItem"
   const actions = statements.flatMap((statement) => statement.actions);
   assert.equal(
     actions.sort().join(","),
-    "bedrock:InvokeModel,dynamodb:ConditionCheckItem,dynamodb:DeleteItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,dynamodb:Query,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
+    "bedrock:InvokeModel,dynamodb:ConditionCheckItem,dynamodb:DeleteItem,dynamodb:GetItem,dynamodb:GetItem,dynamodb:PutItem,dynamodb:PutItem,dynamodb:Query,dynamodb:Query,dynamodb:UpdateItem,kms:Decrypt,lambda:InvokeFunction,logs:CreateLogStream,logs:PutLogEvents,ssm:GetParameter",
   );
   const claims = statements.filter((statement) =>
     statement.resources.includes(`\${aws_dynamodb_table.claims.arn}`),
   );
   assert.equal(claims.length, 1);
-  assert.deepEqual(claims[0].actions, ["dynamodb:PutItem"]);
+  assert.deepEqual(claims[0].actions, [
+    "dynamodb:GetItem",
+    "dynamodb:PutItem",
+    "dynamodb:UpdateItem",
+  ]);
   assert.deepEqual(parsed.resource.aws_iam_role_policy.interactions, [
     {
       role: `\${aws_iam_role.interactions.id}`,

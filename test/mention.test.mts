@@ -157,6 +157,7 @@ function setup(role = "officer") {
     },
   );
   const ask = createAssistant({
+    checkSpend: async () => {},
     data,
     guildId: "guild",
     claim: (user, abort) => userClaim("guild", user, abort),
