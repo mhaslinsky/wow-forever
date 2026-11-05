@@ -466,7 +466,7 @@ export function createAssistant(ports: {
       const forgetAt = await initialCutoff(identity.userId);
       const remember = rememberRequest(question);
       if (remember) {
-        const text = remember[1].trim();
+        const text = (remember[1] ?? "").trim();
         if (startedAt <= forgetAt) return COOLDOWN;
         if (!text) return "Tell me what to remember.";
         signal.throwIfAborted();
@@ -486,6 +486,7 @@ export function createAssistant(ports: {
           ]).length > 10000
         )
           return "Memory's full, run /forget first.";
+        signal.throwIfAborted();
         await ports.data.forUser(actor).write({
           ...recordKey("fact", identity.userId, randomUUID()),
           kind: "fact",

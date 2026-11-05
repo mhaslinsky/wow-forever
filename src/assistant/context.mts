@@ -15,7 +15,7 @@ export type ChannelMessage = {
 };
 
 export function rememberRequest(question: string) {
-  return /^(?:please\s+)?remember(?:\s+that)?[\s:]+([\s\S]+)$/iu.exec(
+  return /^(?:please\s+)?remember(?:\s+that)?(?:[\s:]+([\s\S]*))?$/iu.exec(
     question.trim(),
   );
 }

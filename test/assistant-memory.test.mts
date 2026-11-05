@@ -56,6 +56,14 @@ test("only explicit remember requests persist; forget removes all facts from lat
     },
   });
   const signal = new AbortController().signal;
+  for (const question of ["Remember:", "Please remember", "Remember that"]) {
+    assert.equal(
+      await answer(actor, question, signal),
+      "Tell me what to remember.",
+    );
+    assert.equal(rows.size, 0);
+    assert.equal(prompts.length, 0);
+  }
   await answer(actor, "I play a healer", signal);
   await answer(actor, "Remember that I prefer healing", signal);
   await answer(actor, "Please remember: I raid on weekends", signal);
