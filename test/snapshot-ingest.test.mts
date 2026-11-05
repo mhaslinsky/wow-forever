@@ -173,6 +173,7 @@ test("duplicate upload changes no history or pointer and snapshots are system-on
       /WRITE_DENIED/,
     );
     await assert.rejects(env.data.write(item), /WRITE_DENIED/);
+    await assert.rejects(env.data.insert(item), /WRITE_DENIED/);
   }
   await assert.rejects(
     data.forUser(actor("officer")).ingestSnapshot([...env.history.values()][0]),

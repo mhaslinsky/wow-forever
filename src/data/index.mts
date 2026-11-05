@@ -167,6 +167,11 @@ export function createDataAccess(
       lookup: (partition: string) => query(partition, true),
       batch: (keys: readonly Key[]) => read(() => storage.batch(keys)),
       async insert(input: GuildRecord, candidateThreadId?: string) {
+        if (
+          input.kind === "guildSnapshot" ||
+          input.kind === "guildSnapshotLatest"
+        )
+          throw new Error("WRITE_DENIED");
         systemWrite(input);
         const item = decode(input);
         if (!item) throw new Error("INVALID_RECORD");
