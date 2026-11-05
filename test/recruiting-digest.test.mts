@@ -136,7 +136,12 @@ test("digest excludes closed candidates", async () => {
 
 test("alerts refuses access through other roles and member overwrites", async () => {
   const { discordAlerts } = await import("../src/recruiting/alerts.mts");
-  for (const type of [0, 1]) {
+  for (const [type, managed, tags, publicAudience] of [
+    [0, false, undefined, true],
+    [1, false, undefined, true],
+    [0, true, { bot_id: "bot" }, false],
+    [0, true, undefined, true],
+  ] as const) {
     let posts = 0;
     const post = discordAlerts(
       {
@@ -145,7 +150,7 @@ test("alerts refuses access through other roles and member overwrites", async ()
             return [
               { id: "guild", name: "@everyone", permissions: "0" },
               { id: "member", name: "Member", permissions: "0" },
-              { id: "other", name: "Guest", permissions: "0" },
+              { id: "other", name: "Guest", permissions: "0", managed, tags },
             ];
           if (path === "/users/@me") return { id: "bot" };
           if (path.includes("/members/")) return { roles: ["other"] };
@@ -167,7 +172,9 @@ test("alerts refuses access through other roles and member overwrites", async ()
       },
       "guild",
     );
-    await assert.rejects(post("private"), /ALERTS_CHANNEL_PUBLIC/);
-    assert.equal(posts, 0);
+    if (publicAudience)
+      await assert.rejects(post("private"), /ALERTS_CHANNEL_PUBLIC/);
+    else await post("private");
+    assert.equal(posts, publicAudience ? 0 : 1);
   }
 });
