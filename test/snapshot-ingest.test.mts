@@ -6,6 +6,7 @@ import {
   DeleteTableCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import fc from "fast-check";
 import {
   createPrincipalFactory,
@@ -13,7 +14,7 @@ import {
 } from "../src/auth/index.mts";
 import {
   createDataAccess,
-  createDynamoStorage,
+  createDynamoDataAccess,
   type StoragePort,
 } from "../src/data/index.mts";
 import { recordKey } from "../src/data/records.mts";
@@ -39,9 +40,9 @@ const wire = (exportedAt = 100, overrides = {}) =>
     exportedAt,
     ...overrides,
   });
-const request = (value = wire()) => ({
+const request = (value = wire(), writtenAt: unknown = 99) => ({
   headers: { Authorization: "Bearer synthetic-reader-token" },
-  body: JSON.stringify({ wire: value, writtenAt: 99 }),
+  body: JSON.stringify({ wire: value, writtenAt }),
 });
 const principal = createSystemPrincipal([
   "guildSnapshot",
@@ -147,7 +148,7 @@ test("unauthenticated uploads fail closed and token rotation expires within five
 
 test("duplicate upload changes no history or pointer and snapshots are system-only writes with Officer reads", async () => {
   const env = fixture();
-  assert.equal(outcome(await env.handler(request())), "stored");
+  assert.equal(outcome(await env.handler(request(wire(), 0))), "stored");
   const before = structuredClone([...env.history.values(), env.latest()]);
   assert.equal(outcome(await env.handler(request())), "duplicate");
   assert.deepEqual([...env.history.values(), env.latest()], before);
@@ -244,20 +245,25 @@ test("future skew rejects beyond fifteen minutes using server time", async () =>
 
 test("wrong guild, malformed exports and bounded bodies never write", async () => {
   const env = fixture();
-  for (const [value, error] of [
+  for (const [value, error, writtenAt = 99] of [
     [wire(100, { guildKey: "synthetic-other" }), "WrongGuildError"],
     [wire(100, { game: "ANNIVERSARY" }), "UnsupportedGameError"],
+    [wire(100, { addonVersion: "" }), "InvalidPayloadShapeError"],
     ["bad", "CompanionPrefixError"],
-  ])
-    assert.equal(
-      JSON.parse((await env.handler(request(value))).body).error,
-      error,
-    );
+    [wire(), "InvalidPayloadShapeError", -1],
+    [wire(), "InvalidPayloadShapeError", 0.5],
+    [wire(), "InvalidPayloadShapeError", Number.MAX_SAFE_INTEGER + 1],
+    [wire(), "InvalidPayloadShapeError", "99"],
+    [wire(), "InvalidPayloadShapeError", null],
+  ] as const) {
+    const reply = await env.handler(request(value, writtenAt));
+    assert.equal(reply.statusCode, 422);
+    assert.equal(JSON.parse(reply.body).error, error);
+  }
   for (const body of [
     "",
     "{}",
     "null",
-    JSON.stringify({ wire: wire(), writtenAt: "99" }),
     JSON.stringify({ wire: wire(), writtenAt: 99, extra: true }),
   ])
     assert.equal(await env.status({ ...request(), body }), 422);
@@ -355,7 +361,7 @@ const endpoint = process.env.DYNAMODB_LOCAL_ENDPOINT;
 test(
   "DynamoDB Local handler rejects no-token and repairs a failed pointer through the real SDK",
   { skip: endpoint ? false : "DYNAMODB_LOCAL_ENDPOINT is unset" },
-  async () => {
+  async (context) => {
     const tableName = `per312-smoke-${process.pid}`;
     const client = new DynamoDBClient({
       endpoint,
@@ -377,13 +383,39 @@ test(
       }),
     );
     try {
-      const storage = createDynamoStorage({
+      const from = DynamoDBDocumentClient.from;
+      const inject = context.mock.method(
+        DynamoDBDocumentClient,
+        "from",
+        (...args: Parameters<typeof from>) => {
+          const document = from(...args);
+          let failPointer = true;
+          document.middlewareStack.add(
+            (next, command) => async (args) => {
+              const key = (args.input as { Key?: { pk?: unknown } }).Key;
+              if (
+                failPointer &&
+                command.commandName === "UpdateItemCommand" &&
+                typeof key?.pk === "string" &&
+                key.pk.startsWith("SNAPSHOT_LATEST#")
+              ) {
+                failPointer = false;
+                throw new Error("injected pointer failure");
+              }
+              return next(args);
+            },
+            { step: "initialize", name: "failFirstLatestUpdate" },
+          );
+          return document;
+        },
+      );
+      const data = createDynamoDataAccess({
         tableName,
         region: "us-east-1",
         endpoint,
         localCredentials: true,
-      });
-      const data = createDataAccess(storage).forSystem(principal);
+      }).forSystem(principal);
+      inject.mock.restore();
       const env = fixture();
       const handler = createSnapshotHttp({
         ...env.options,
@@ -392,13 +424,8 @@ test(
       assert.equal((await handler({ body: "invalid" })).statusCode, 401);
       const key = recordKey("guildSnapshot", sample.guildKey, "unused");
       assert.equal((await data.query(key.pk)).length, 0);
-      const advance = storage.advanceSnapshot;
-      storage.advanceSnapshot = async () => {
-        throw new Error("injected pointer failure");
-      };
       assert.equal((await handler(request())).statusCode, 503);
       assert.equal((await data.query(key.pk)).length, 1);
-      storage.advanceSnapshot = advance;
       assert.equal(outcome(await handler(request())), "stored");
       assert.equal(outcome(await handler(request())), "duplicate");
       console.log(
