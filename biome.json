@@ -49,6 +49,7 @@
         "test/recruiting-retention.test.mts",
         "test/data-local.test.mts",
         "src/interactions/index.mts",
+        "src/assistant/spend.mts",
         "src/data/gow-applications.mts",
         "test/gow-intake.test.mts"
       ],

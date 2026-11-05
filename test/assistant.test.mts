@@ -18,6 +18,7 @@ import {
 } from "../src/assistant/core.mts";
 import { createAskRoutes } from "../src/assistant/interactions.mts";
 import { assistantPrincipal } from "../src/assistant/runtime.mts";
+import { createSpend, PAUSED } from "../src/assistant/spend.mts";
 import {
   createPrincipalFactory,
   createSystemPrincipal,
@@ -64,6 +65,7 @@ function setup(
     needsWeb: false,
     searchQuery: "",
   }),
+  spend?: ReturnType<typeof createSpend>,
 ) {
   const routingRequests: ConverseCommandInput[] = [];
   const requests: ConverseCommandInput[] = [];
@@ -119,7 +121,7 @@ function setup(
       });
     },
   });
-  const route = createRouting(async (command) => {
+  const sendRoute: Parameters<typeof createRouting>[0] = async (command) => {
     routingRequests.push(command.input);
     return {
       $metadata: {},
@@ -128,8 +130,9 @@ function setup(
       stopReason: "end_turn",
       output: { message: { role: "assistant", content: [{ text: routing }] } },
     };
-  });
-  const converse = createConverse(async (command) => {
+  };
+  const route = createRouting(spend ? spend.bedrock(sendRoute) : sendRoute);
+  const sendAnswer: Parameters<typeof createConverse>[0] = async (command) => {
     requests.push(command.input);
     return {
       $metadata: {},
@@ -138,7 +141,10 @@ function setup(
       stopReason: "end_turn",
       output: { message: { role: "assistant", content: [{ text: output }] } },
     };
-  });
+  };
+  const converse = createConverse(
+    spend ? spend.bedrock(sendAnswer) : sendAnswer,
+  );
   const claim = assistantClaim(
     "claims",
     () => now,
@@ -174,9 +180,10 @@ function setup(
       now += value;
     },
     ask: createAssistant({
+      checkSpend: spend?.check ?? (async () => {}),
       data,
       guildId: "guild",
-      search,
+      search: spend ? spend.search(search) : search,
       converse,
       route,
       privateTerms: async () => ["Server sentinel", "Extra private sentinel"],
@@ -805,4 +812,173 @@ test("history fetch failure gives an answer without context", async () => {
   await state.ask(actor("member"), "Question", signal, channelContext);
   assert.equal(state.requests.length, 1);
   assert.doesNotMatch(JSON.stringify(state.requests), /Recent messages/);
+});
+
+function spendState(limitUsd: number | undefined) {
+  let now = Date.UTC(2026, 10, 30, 23, 59);
+  const rows = new Map<string, Record<string, { N: string }>>();
+  const errors: string[] = [];
+  const totals: number[] = [];
+  let notices = 0;
+  let failure = "";
+  const spend = createSpend({
+    table: "claims",
+    guildId: "guild",
+    limitUsd,
+    inputPerMillionUsd: 3,
+    outputPerMillionUsd: 15,
+    searchUsd: 0.001,
+    now: () => now,
+    report: (reason) => errors.push(reason),
+    total: (usd) => totals.push(usd),
+    notify: async () => {
+      notices++;
+    },
+    send: async (command) => {
+      const input = command.input;
+      if (
+        "UpdateExpression" in input &&
+        input.UpdateExpression?.includes("ADD")
+      ) {
+        if (failure === "write") throw new Error("Unavailable");
+        assert.equal(input.ReturnValues, "ALL_NEW");
+        const pk = input.Key?.pk.S ?? assert.fail("Missing key");
+        const row = rows.get(pk) ?? {};
+        row.costUnits = {
+          N: String(
+            Number(row.costUnits?.N ?? 0) +
+              Number(input.ExpressionAttributeValues?.[":cost"].N),
+          ),
+        };
+        row.expiresAt = {
+          N: input.ExpressionAttributeValues?.[":ttl"].N ?? "",
+        };
+        rows.set(pk, row);
+        return { Attributes: row };
+      }
+      if ("UpdateExpression" in input) {
+        const pk = input.Key?.pk.S ?? assert.fail("Missing key");
+        const row = rows.get(pk) ?? {};
+        if (Number(row.noticeUntilMs?.N ?? 0) > now)
+          throw Object.assign(new Error("Claimed"), {
+            name: "ConditionalCheckFailedException",
+          });
+        row.noticeUntilMs = {
+          N: input.ExpressionAttributeValues?.[":lease"].N ?? "",
+        };
+        rows.set(pk, row);
+        return {};
+      }
+      if ("Item" in input) {
+        const pk = input.Item?.pk.S ?? assert.fail("Missing marker");
+        assert.equal(input.ConditionExpression, "attribute_not_exists(pk)");
+        rows.set(pk, {});
+        return {};
+      }
+      assert.ok(
+        "Key" in input && "ConsistentRead" in input && input.ConsistentRead,
+      );
+      if (failure === "read") throw new Error("Unavailable");
+      return { Item: rows.get(input.Key?.pk.S ?? "") };
+    },
+  });
+  return {
+    spend,
+    errors,
+    totals,
+    rows,
+    notices: () => notices,
+    fail: (value: string) => {
+      failure = value;
+    },
+    nextMonth: () => {
+      now = Date.UTC(2026, 11, 1);
+    },
+  };
+}
+
+test("monthly cap pauses concurrent asks before cooldown, router, search or answer and notifies once", async () => {
+  const state = spendState(0.001);
+  const assistant = setup(undefined, state.spend);
+  state.rows.set("assistant-spend#guild#2026-11", {
+    costUnits: { N: "1000000" },
+  });
+  const replies = await Promise.all([
+    assistant.ask(actor("member"), "Question", signal),
+    assistant.ask(actor("member"), "Question", signal),
+  ]);
+  assert.deepEqual(replies, [PAUSED, PAUSED]);
+  assert.equal(state.notices(), 1);
+  assert.equal(
+    assistant.routingRequests.length +
+      assistant.requests.length +
+      assistant.searches.length,
+    0,
+  );
+  state.nextMonth();
+  assert.match(
+    await assistant.ask(actor("member"), "Question", signal),
+    /Character sentinel/,
+  );
+  assert.equal(assistant.requests.length, 1);
+  assert.equal(
+    state.rows.get("assistant-spend#guild#2026-12")?.costUnits.N,
+    "36000",
+  );
+  assert.deepEqual(state.totals, [0.000018, 0.000036]);
+  assert.equal(
+    state.rows.get("assistant-spend#guild#2026-12")?.expiresAt.N,
+    String(Date.UTC(2027, 0, 8) / 1000),
+  );
+});
+
+test("the router, Parallel and answer are metered and recheck the cap between calls", async () => {
+  const state = spendState(0.001);
+  const assistant = setup(
+    '{"needsGuild":false,"needsWeb":true,"searchQuery":"WoW Mage specs"}',
+    state.spend,
+  );
+  assert.equal(
+    await assistant.ask(actor("member"), "Mage specs?", signal),
+    PAUSED,
+  );
+  assert.equal(assistant.routingRequests.length, 1);
+  assert.equal(assistant.searches.length, 1);
+  assert.equal(assistant.requests.length, 0);
+  assert.deepEqual(state.totals, [0.000018, 0.001018]);
+});
+
+test("an unset limit still meters and answers above the former threshold", async () => {
+  const state = spendState(undefined);
+  state.rows.set("assistant-spend#guild#2026-11", {
+    costUnits: { N: "21000000000" },
+  });
+  const assistant = setup(undefined, state.spend);
+  assert.match(
+    await assistant.ask(actor("member"), "Question", signal),
+    /Character sentinel/,
+  );
+  assert.equal(state.notices(), 0);
+  assert.deepEqual(state.totals, [21.000018, 21.000036]);
+  state.fail("write");
+  assistant.advance(15000);
+  assert.match(
+    await assistant.ask(actor("member"), "Question", signal),
+    /Character sentinel/,
+  );
+  assert.deepEqual(state.errors, ["write", "write"]);
+});
+
+test("enforced counter read and write failures refuse and emit errors", async () => {
+  for (const mode of ["read", "write"]) {
+    const state = spendState(0.001);
+    state.fail(mode);
+    const assistant = setup(undefined, state.spend);
+    assert.equal(
+      await assistant.ask(actor("member"), "Question", signal),
+      "Couldn't come up with an answer, try again in a bit.",
+    );
+    assert.equal(assistant.requests.length, 0);
+    assert.deepEqual(state.errors, [mode]);
+  }
 });

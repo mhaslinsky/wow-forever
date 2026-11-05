@@ -50,7 +50,7 @@ data "aws_iam_policy_document" "mention" {
     resources = ["${aws_dynamodb_table.guild.arn}/index/gsi1"]
   }
   statement {
-    actions   = ["dynamodb:PutItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.claims.arn]
   }
 }
@@ -76,12 +76,12 @@ resource "aws_lambda_function" "mention" {
   timeout          = 60
   memory_size      = 256
   environment {
-    variables = {
+    variables = merge(local.assistant_spend_environment, {
       CLAIMS_TABLE      = aws_dynamodb_table.claims.name
       GUILD_TABLE       = aws_dynamodb_table.guild.name
       GUILD_ID          = var.guild_id
       GUARD_EXTRA_TERMS = var.guard_extra_terms
-    }
+    })
   }
   depends_on = [aws_cloudwatch_log_group.mention, aws_iam_role_policy.mention]
 }

@@ -1,6 +1,9 @@
+import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
+import { REST } from "discord.js";
 import { createPrincipalFactory } from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { clock, type Interaction } from "../interactions/core.mts";
+import { discordAlerts } from "../recruiting/alerts.mts";
 import { createChannelContext, interactionHistoryChannel } from "./context.mts";
 import {
   createAssistant,
@@ -9,6 +12,7 @@ import {
   createSearch,
   REFUSAL,
 } from "./core.mts";
+import { createSpend, spendMetric, spendTotalMetric } from "./spend.mts";
 
 export function assistantRoleIds(roles: unknown) {
   if (!Array.isArray(roles)) throw new Error("INVALID_ROLES");
@@ -101,21 +105,55 @@ export async function runtimeAssistant(
   const { readSecret, claimAssistant } = await import(
     "../interactions/index.mts"
   );
+  const spend = createSpend({
+    table: process.env.CLAIMS_TABLE ?? "",
+    guildId,
+    limitUsd:
+      process.env.ASSISTANT_MONTHLY_LIMIT_USD === undefined
+        ? undefined
+        : Number(process.env.ASSISTANT_MONTHLY_LIMIT_USD),
+    inputPerMillionUsd: Number(process.env.ASSISTANT_INPUT_PER_MILLION_USD),
+    outputPerMillionUsd: Number(process.env.ASSISTANT_OUTPUT_PER_MILLION_USD),
+    searchUsd: Number(process.env.ASSISTANT_SEARCH_USD),
+    now: clock.now,
+    report: spendMetric,
+    total: spendTotalMetric,
+    notify: async (content) => {
+      const token = await readSecret(
+        "/wow-forever/discord_bot_token",
+        AbortSignal.timeout(5000),
+      );
+      await discordAlerts(
+        new REST({ version: "10", timeout: 5000, retries: 0 }).setToken(token),
+        guildId,
+      )(content);
+    },
+  });
+  const bedrock = new BedrockRuntimeClient({
+    region: "us-east-1",
+    maxAttempts: 1,
+  });
+  const metered = spend.bedrock((command, options) =>
+    bedrock.send(command, options),
+  );
   return createAssistant({
+    checkSpend: spend.check,
     guildId,
     data: createDynamoDataAccess({
       tableName: process.env.GUILD_TABLE ?? "wow-forever",
       region: "us-east-1",
     }),
     claim: (asker, abortSignal) => claimAssistant(guildId, asker, abortSignal),
-    search: createSearch({
-      clock,
-      secret: (abortSignal) =>
-        readSecret("/wow-forever/parallel_api_key", abortSignal),
-      http: fetch,
-    }),
-    converse: createConverse(),
-    route: createRouting(),
+    search: spend.search(
+      createSearch({
+        clock,
+        secret: (abortSignal) =>
+          readSecret("/wow-forever/parallel_api_key", abortSignal),
+        http: fetch,
+      }),
+    ),
+    converse: createConverse(metered),
+    route: createRouting(metered),
     privateTerms: async () => {
       const guild = await get(`/guilds/${encodeURIComponent(guildId)}`);
       if (

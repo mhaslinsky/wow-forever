@@ -89,7 +89,7 @@ data "aws_iam_policy_document" "interactions" {
     resources = ["arn:aws:lambda:us-east-1:${var.aws_account_id}:function:${local.interactions_name}"]
   }
   statement {
-    actions   = ["dynamodb:PutItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.claims.arn]
   }
   statement {
@@ -119,14 +119,14 @@ resource "aws_lambda_function" "interactions" {
   timeout          = 60
   memory_size      = 256
   environment {
-    variables = {
+    variables = merge(local.assistant_spend_environment, {
       PUBLIC_KEY_PARAM      = aws_ssm_parameter.secrets["discord_app_public_key"].name
       CLAIMS_TABLE          = aws_dynamodb_table.claims.name
       GUILD_TABLE           = aws_dynamodb_table.guild.name
       GUILD_ID              = var.guild_id
       GUARD_EXTRA_TERMS     = var.guard_extra_terms
       WISHLIST_LOCK_MINUTES = tostring(var.wishlist_lock_minutes)
-    }
+    })
   }
   depends_on = [aws_cloudwatch_log_group.interactions, aws_iam_role_policy.interactions]
 }
