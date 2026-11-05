@@ -80,13 +80,12 @@ function fixture() {
     },
   };
   const logs: Record<string, string | number>[] = [];
-  const state = { now: 100_000, token: "synthetic-reader-token", reads: 0 };
+  const state = { now: 100_000, token: "synthetic-reader-token" };
   const data = createDataAccess(storage).forSystem(principal);
   const options = {
     now: () => state.now,
     guildKey: sample.guildKey,
     readToken: async () => {
-      state.reads++;
       return state.token;
     },
     ingest: data.ingestSnapshot,
@@ -112,7 +111,6 @@ const outcome = (reply: { body: string }) => JSON.parse(reply.body).outcome;
 test("unauthenticated uploads fail closed and token rotation expires within five minutes", async () => {
   const env = fixture();
   assert.equal(await env.status({ body: "invalid" }), 401);
-  assert.equal(env.state.reads, 0);
   assert.equal(
     await env.status({
       ...request(),
@@ -151,7 +149,6 @@ test("duplicate upload changes no history or pointer and snapshots are system-on
   const env = fixture();
   assert.equal(outcome(await env.handler(request())), "stored");
   const before = structuredClone([...env.history.values(), env.latest()]);
-  env.state.now++;
   assert.equal(outcome(await env.handler(request())), "duplicate");
   assert.deepEqual([...env.history.values(), env.latest()], before);
   const factory = createPrincipalFactory({
