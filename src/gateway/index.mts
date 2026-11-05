@@ -76,7 +76,6 @@ async function main() {
       const guild = client.guilds.cache.get(guildId as string);
       if (!guild) throw new Error("GUILD_NOT_AVAILABLE");
       await refreshNeedsBoard(guild, needsData);
-      await departures.refreshSnapshots();
     } catch {
       log({ event: "needs_board_refresh_failed" });
       await cloudwatch

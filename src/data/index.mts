@@ -32,6 +32,7 @@ export type QueryCursor = Readonly<Record<string, string>> & {
 };
 type OfficerNote = Extract<GuildRecord, { kind: "officerNote" }>;
 export type WriteCondition = {
+  departureSnapshotId?: string | null;
   candidateThreadId?: string;
   absent?: true;
   intake?: { state: IntakeState; attemptId: string; noticeSent?: boolean };
@@ -149,6 +150,16 @@ export function createDataAccess(
       }
     }
     return {
+      async advanceDepartureCheck(
+        input: Extract<GuildRecord, { kind: "departureCheck" }>,
+        previousSnapshotId: string | null,
+      ) {
+        systemWrite(input);
+        if (!decode(input)) throw new Error("INVALID_RECORD");
+        await stored(() =>
+          storage.put(input, { departureSnapshotId: previousSnapshotId }),
+        );
+      },
       async ingestSnapshot(input: Parameters<typeof ingestSnapshot>[1]) {
         const actor = authority(principal);
         if (
@@ -169,7 +180,8 @@ export function createDataAccess(
       async insert(input: GuildRecord, candidateThreadId?: string) {
         if (
           input.kind === "guildSnapshot" ||
-          input.kind === "guildSnapshotLatest"
+          input.kind === "guildSnapshotLatest" ||
+          input.kind === "departureCheck"
         )
           throw new Error("WRITE_DENIED");
         systemWrite(input);
@@ -233,7 +245,8 @@ export function createDataAccess(
         const actor = authority(principal);
         if (
           input.kind === "guildSnapshot" ||
-          input.kind === "guildSnapshotLatest"
+          input.kind === "guildSnapshotLatest" ||
+          input.kind === "departureCheck"
         )
           throw new Error("WRITE_DENIED");
         let raw: RecordInput = input;
@@ -433,27 +446,37 @@ function createDynamoStorage(config: {
       );
     },
     async put(item, condition) {
-      const conditional = condition?.absent
-        ? {
-            ConditionExpression: "attribute_not_exists(pk)",
-          }
-        : condition?.intake
-          ? {
-              ConditionExpression:
-                "#state = :state AND attemptId = :attemptId" +
-                (condition.intake.noticeSent === undefined
-                  ? ""
-                  : " AND noticeSent = :noticeSent"),
-              ExpressionAttributeNames: { "#state": "state" },
-              ExpressionAttributeValues: {
-                ":state": condition.intake.state,
-                ":attemptId": condition.intake.attemptId,
-                ...(condition.intake.noticeSent === undefined
-                  ? {}
-                  : { ":noticeSent": condition.intake.noticeSent }),
-              },
-            }
-          : undefined;
+      const conditional =
+        condition?.departureSnapshotId !== undefined
+          ? condition.departureSnapshotId === null
+            ? { ConditionExpression: "attribute_not_exists(pk)" }
+            : {
+                ConditionExpression: "snapshotId = :previous",
+                ExpressionAttributeValues: {
+                  ":previous": condition.departureSnapshotId,
+                },
+              }
+          : condition?.absent
+            ? {
+                ConditionExpression: "attribute_not_exists(pk)",
+              }
+            : condition?.intake
+              ? {
+                  ConditionExpression:
+                    "#state = :state AND attemptId = :attemptId" +
+                    (condition.intake.noticeSent === undefined
+                      ? ""
+                      : " AND noticeSent = :noticeSent"),
+                  ExpressionAttributeNames: { "#state": "state" },
+                  ExpressionAttributeValues: {
+                    ":state": condition.intake.state,
+                    ":attemptId": condition.intake.attemptId,
+                    ...(condition.intake.noticeSent === undefined
+                      ? {}
+                      : { ":noticeSent": condition.intake.noticeSent }),
+                  },
+                }
+              : undefined;
       const put = {
         TableName: config.tableName,
         Item: {

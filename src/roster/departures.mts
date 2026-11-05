@@ -6,7 +6,6 @@ import {
 } from "../auth/index.mts";
 import type { createDataAccess } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
-import type { SnapshotHistory } from "../data/snapshots.mts";
 
 type Member = Extract<GuildRecord, { kind: "member" }>;
 export function createDepartures(
@@ -14,7 +13,9 @@ export function createDepartures(
   guildId: string,
   post: (content: string, components: unknown[]) => Promise<void>,
 ) {
-  const store = data.forSystem(createSystemPrincipal(["departure", "member"]));
+  const store = data.forSystem(
+    createSystemPrincipal(["departure", "departureCheck", "member"]),
+  );
   async function flag(member: Member, evidence: string) {
     if (member.active === false || member.sk !== `MEMBER#${guildId}`) return;
     const key = recordKey("departure", guildId, member.ownerId);
@@ -54,66 +55,89 @@ export function createDepartures(
       )[0];
       if (member?.kind === "member") await flag(member, randomUUID());
     },
-    async compareSnapshots(history: readonly SnapshotHistory[]) {
-      const ordered = [...history].sort(
-        (left, right) => left.exportedAt - right.exportedAt,
-      );
-      const latest = ordered.at(-1);
-      const previous = ordered.at(-2);
+    async checkSnapshot(guildKey: string) {
+      if (!guildKey.trim()) throw new Error("GUILD_KEY_REQUIRED");
+      const key = recordKey("departureCheck", guildId, guildKey);
+      const previous = (await store.get(key))[0];
+      const latest = (
+        await store.get(recordKey("guildSnapshotLatest", guildKey, "latest"))
+      )[0];
+      if (!latest) return;
+      if (latest.kind !== "guildSnapshotLatest")
+        throw new Error("INVALID_SNAPSHOT_POINTER");
       if (
-        !latest ||
-        !previous ||
-        latest.ownerId !== previous.ownerId ||
-        latest.exportedAt === previous.exportedAt
+        previous?.kind === "departureCheck" &&
+        previous.snapshotId === latest.snapshotId
       )
         return;
-      const names = (snapshot: SnapshotHistory) =>
-        new Set(
-          snapshot.snapshot.members.map((member) => member.name.toLowerCase()),
-        );
-      const currentNames = names(latest);
-      const previousNames = names(previous);
+      const snapshot = (
+        await store.get(
+          recordKey(
+            "guildSnapshot",
+            guildKey,
+            `${String(latest.exportedAt).padStart(16, "0")}#${latest.snapshotId}`,
+          ),
+        )
+      )[0];
+      if (snapshot?.kind !== "guildSnapshot")
+        throw new Error("LATEST_SNAPSHOT_MISSING");
+      const oldCounts: Record<string, { misses: number; evidence: string }> =
+        previous?.kind === "departureCheck" ? JSON.parse(previous.counts) : {};
+      const counts: typeof oldCounts = {};
+      const names = new Set(
+        snapshot.snapshot.members.map((member) => member.name.toLowerCase()),
+      );
+      const requests: { member: Member; evidence: string }[] = [];
       for (const member of await store.lookup("MEMBER#ALL")) {
-        if (member.kind !== "member" || member.sk !== `MEMBER#${guildId}`)
+        if (
+          member.kind !== "member" ||
+          member.sk !== `MEMBER#${guildId}` ||
+          member.active === false
+        )
           continue;
         for (const character of member.roster ?? []) {
           const name = character.name.toLowerCase();
-          if (currentNames.has(name) || previousNames.has(name)) continue;
-          const seen = ordered.findLastIndex((snapshot) =>
-            names(snapshot).has(name),
-          );
-          const firstMissing = ordered[seen + 1];
-          await flag(
-            member,
-            `${latest.ownerId}:${name}:${firstMissing.snapshotId}`,
-          );
-          break;
+          const characterKey = JSON.stringify([member.ownerId, name]);
+          const old = oldCounts[characterKey];
+          const misses = names.has(name)
+            ? 0
+            : Math.min(2, (old?.misses ?? 0) + 1);
+          const evidence =
+            misses === 0 || !old?.misses ? latest.snapshotId : old.evidence;
+          counts[characterKey] = { misses, evidence };
+          if (misses === 2)
+            requests.push({ member, evidence: `${characterKey}:${evidence}` });
         }
       }
-    },
-    async refreshSnapshots() {
-      const pointers = await store.lookup("SNAPSHOT_LATEST#ALL");
-      if (pointers.length === 0) return;
-      if (pointers.length !== 1 || pointers[0].kind !== "guildSnapshotLatest")
-        throw new Error("SNAPSHOT_GUILD_AMBIGUOUS");
-      const latest = pointers[0];
-      const history = (await store.query(`SNAPSHOT#${latest.ownerId}`)).filter(
-        (item): item is SnapshotHistory =>
-          item.kind === "guildSnapshot" && item.exportedAt <= latest.exportedAt,
-      );
-      const times = [...new Set(history.map((item) => item.exportedAt))]
-        .sort((left, right) => right - left)
-        .slice(0, 2);
-      if (
-        times.some(
-          (time) =>
-            history.filter((item) => item.exportedAt === time).length !== 1,
-        )
-      )
-        throw new Error("SNAPSHOT_HISTORY_AMBIGUOUS");
-      if (!history.some((item) => item.snapshotId === latest.snapshotId))
-        throw new Error("LATEST_SNAPSHOT_MISSING");
-      await this.compareSnapshots(history);
+      const check = {
+        ...key,
+        kind: "departureCheck" as const,
+        ownerId: guildId,
+        snapshotId: latest.snapshotId,
+        counts: JSON.stringify(counts),
+      };
+      try {
+        await store.advanceDepartureCheck(
+          check,
+          previous?.kind === "departureCheck" ? previous.snapshotId : null,
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === "WRITE_CONFLICT")
+          return;
+        throw error;
+      }
+      try {
+        for (const request of requests)
+          await flag(request.member, request.evidence);
+      } catch (error) {
+        await store.advanceDepartureCheck(
+          previous?.kind === "departureCheck"
+            ? previous
+            : { ...check, snapshotId: "unprocessed", counts: "{}" },
+          latest.snapshotId,
+        );
+        throw error;
+      }
     },
     async resolve(
       actor: Principal<"user">,

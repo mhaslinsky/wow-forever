@@ -4,7 +4,7 @@ import test from "node:test";
 import { createPrincipalFactory } from "../src/auth/index.mts";
 import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
-import type { SnapshotHistory } from "../src/data/snapshots.mts";
+
 import { createDepartures } from "../src/roster/departures.mts";
 
 function fixture() {
@@ -30,7 +30,18 @@ function fixture() {
     get: async (key) => items.get(key.sk + key.pk),
     query: async () => ({ items: [...items.values()] }),
     batch: async () => [],
-    put: async (item) => {
+    put: async (item, condition) => {
+      const previous = items.get(item.sk + item.pk);
+      if (
+        condition?.departureSnapshotId !== undefined &&
+        (condition.departureSnapshotId === null
+          ? previous !== undefined
+          : previous?.kind !== "departureCheck" ||
+            previous.snapshotId !== condition.departureSnapshotId)
+      )
+        throw Object.assign(new Error("conflict"), {
+          name: "ConditionalCheckFailedException",
+        });
       items.set(item.sk + item.pk, item);
     },
   });
@@ -52,18 +63,39 @@ function fixture() {
       "utf8",
     ),
   );
-  const snapshot = (exportedAt: number, present: boolean): SnapshotHistory => ({
-    ...recordKey("guildSnapshot", "game-guild", String(exportedAt)),
-    kind: "guildSnapshot",
-    ownerId: "game-guild",
-    snapshotId: String(exportedAt).padStart(64, "0"),
-    exportedAt,
-    receivedAt: 0,
-    writtenAt: 0,
-    addonVersion: "fixture",
-    snapshotVersion: 1,
-    snapshot: { ...base, members: present ? [{ name: "Example" }] : [] },
-  });
+  const snapshot = async (exportedAt: number, present: boolean) => {
+    const snapshotId = String(exportedAt).padStart(64, "0");
+    const pointer: GuildRecord = {
+      ...recordKey("guildSnapshotLatest", "game-guild", "latest"),
+      kind: "guildSnapshotLatest",
+      ownerId: "game-guild",
+      snapshotId,
+      exportedAt,
+    };
+    const history: GuildRecord = {
+      ...recordKey(
+        "guildSnapshot",
+        "game-guild",
+        `${String(exportedAt).padStart(16, "0")}#${snapshotId}`,
+      ),
+      kind: "guildSnapshot",
+      ownerId: "game-guild",
+      snapshotId,
+      exportedAt,
+      receivedAt: 0,
+      writtenAt: 0,
+      addonVersion: base.addonVersion,
+      snapshotVersion: 1,
+      snapshot: {
+        ...base,
+        guildKey: "game-guild",
+        exportedAt,
+        members: present ? [{ ...base.members[0], name: "Example" }] : [],
+      },
+    };
+    for (const item of [pointer, history]) items.set(item.sk + item.pk, item);
+    await core.checkSnapshot("game-guild");
+  };
   return { core, posts, items, actor, snapshot };
 }
 test("member removal posts an officer confirmation request", async () => {
@@ -73,15 +105,19 @@ test("member removal posts an officer confirmation request", async () => {
   assert.match(JSON.stringify(posts[0]), /Confirm.*Keep/);
 });
 test("one missing snapshot does not flag", async () => {
-  const { core, posts, snapshot } = fixture();
-  await core.compareSnapshots([snapshot(1, true), snapshot(2, false)]);
+  const { posts, snapshot } = fixture();
+  await snapshot(1, true);
+  await snapshot(2, false);
+  await snapshot(3, true);
+  await snapshot(4, false);
   assert.equal(posts.length, 0);
 });
 test("two consecutive missing snapshots flag once", async () => {
   const { core, posts, snapshot } = fixture();
-  const history = [snapshot(1, true), snapshot(2, false), snapshot(3, false)];
-  await core.compareSnapshots(history);
-  await core.compareSnapshots(history);
+  await snapshot(1, true);
+  await snapshot(2, false);
+  await Promise.all([snapshot(3, false), core.checkSnapshot("game-guild")]);
+  await core.checkSnapshot("game-guild");
   assert.equal(posts.length, 1);
 });
 test("Keep clears the flag", async () => {

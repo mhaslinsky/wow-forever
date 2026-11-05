@@ -10,6 +10,7 @@ import {
 } from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
+  departureCheck: "Officer",
   departure: "Officer",
   guildSnapshot: "Officer",
   guildSnapshotLatest: "Officer",
@@ -34,6 +35,10 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  departureCheck: {
+    prefix: "DEPARTURE_CHECK",
+    fields: ["snapshotId", "counts"],
+  },
   departure: {
     prefix: "DEPARTURE",
     fields: ["memberId", "evidence", "state", "requestId"],
@@ -154,6 +159,29 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "departureCheck") {
+    try {
+      const counts = JSON.parse(String(item.counts));
+      if (
+        !counts ||
+        typeof counts !== "object" ||
+        Array.isArray(counts) ||
+        !Object.values(counts).every((entry) => {
+          if (!entry || typeof entry !== "object") return false;
+          const count = entry as Record<string, unknown>;
+          return (
+            [0, 1, 2].includes(Number(count.misses)) &&
+            typeof count.misses === "number" &&
+            typeof count.evidence === "string" &&
+            count.evidence.length > 0
+          );
+        })
+      )
+        return;
+    } catch {
+      return;
+    }
   }
   if (
     kind === "departure" &&
