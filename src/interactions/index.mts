@@ -30,8 +30,8 @@ export function assistantClaim(
           TableName: table,
           Item: {
             pk: { S: `assistant#${guildId}#${userId}` },
-            cooldownUntilMs: { N: String(nowMs + 60000) },
-            expiresAt: { N: String(Math.ceil((nowMs + 60000) / 1000)) },
+            cooldownUntilMs: { N: String(nowMs + 15000) },
+            expiresAt: { N: String(Math.ceil((nowMs + 15000) / 1000)) },
           },
           ConditionExpression:
             "attribute_not_exists(pk) OR cooldownUntilMs <= :now",

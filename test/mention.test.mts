@@ -318,7 +318,7 @@ test("a repeated message stays claimed after the shared user cooldown expires", 
   const principal = await assistantPrincipal("guild", "asker", state.get);
   assert.equal(
     await state.ask(principal, "Question", signal),
-    "Give it a minute and try again.",
+    "Give it a few seconds and try again.",
   );
   await state.mention(event, signal);
   state.advance(60001);

@@ -560,7 +560,7 @@ test("cooldown admits one concurrent question and permits the exact expiry bound
   ]);
   assert.equal(answers.filter((answer) => answer === COOLDOWN).length, 1);
   assert.equal(state.requests.length, 1);
-  state.advance(59999);
+  state.advance(14999);
   assert.equal(await state.ask(actor("member"), "Question", signal), COOLDOWN);
   state.advance(1);
   await state.ask(actor("member"), "Question", signal);
