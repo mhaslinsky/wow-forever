@@ -48,6 +48,7 @@
         "src/data/retention.mts",
         "test/recruiting-retention.test.mts",
         "test/data-local.test.mts",
+        "test/snapshot-ingest.test.mts",
         "src/interactions/index.mts",
         "src/data/spend.mts",
         "src/data/gow-applications.mts",

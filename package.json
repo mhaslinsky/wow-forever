@@ -14,12 +14,13 @@
     "build:gateway": "esbuild src/gateway/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gateway/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:interactions": "esbuild src/interactions/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/interactions/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:mention": "esbuild src/assistant/mention-handler.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/mention/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
-    "build": "npm run build:mention && npm run build:alarm-forwarder && npm run build:interactions && npm run build:gateway && npm run build:signups && npm run build:recruiting-digest && npm run build:recruiting-retention && npm run build:class-news && npm run build:gow-intake",
+    "build": "npm run build:mention && npm run build:alarm-forwarder && npm run build:interactions && npm run build:gateway && npm run build:signups && npm run build:recruiting-digest && npm run build:recruiting-retention && npm run build:class-news && npm run build:gow-intake && npm run build:snapshot-ingest",
     "build:signups": "esbuild src/signups/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/signups/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:recruiting-digest": "esbuild src/recruiting/digest-handler.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/recruiting-digest/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:recruiting-retention": "esbuild src/recruiting/retention-handler.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/recruiting-retention/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "build:class-news": "esbuild src/class-news/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/class-news/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
-    "build:gow-intake": "esbuild src/gow-intake/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gow-intake/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
+    "build:gow-intake": "esbuild src/gow-intake/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/gow-intake/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
+    "build:snapshot-ingest": "esbuild src/snapshot-ingest/index.mts --bundle --platform=node --target=node22 --format=esm --outfile=build/snapshot-ingest/index.mjs --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.3",
@@ -38,6 +39,7 @@
     "@aws-sdk/client-lambda": "^3.1161.0",
     "@aws-sdk/client-ssm": "^3.1161.0",
     "@aws-sdk/lib-dynamodb": "^3.1161.0",
+    "@aws-sdk/util-dynamodb": "^3.996.9",
     "@discordjs/rest": "2.6.3",
     "discord.js": "^14.28.0",
     "fast-xml-parser": "^5.12.0",

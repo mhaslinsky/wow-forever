@@ -1,3 +1,4 @@
+import { normalize, type Snapshot } from "../guildos/index.mts";
 import { type Application, applicationAnswers } from "./application.mts";
 import { parseTargets } from "./needs.mts";
 import {
@@ -8,6 +9,8 @@ import {
 } from "./recruiting.mts";
 
 export const KIND_POLICY = Object.freeze({
+  guildSnapshot: "Officer",
+  guildSnapshotLatest: "Officer",
   needsBoard: "Officer",
   raidTeam: "Member",
   candidate: "Officer",
@@ -28,6 +31,8 @@ export const KIND_POLICY = Object.freeze({
 export type Kind = keyof typeof KIND_POLICY;
 export type Key = { pk: string; sk: string };
 const CODECS = Object.freeze({
+  guildSnapshot: { prefix: "SNAPSHOT", fields: ["snapshotId", "addonVersion"] },
+  guildSnapshotLatest: { prefix: "SNAPSHOT_LATEST", fields: ["snapshotId"] },
   needsBoard: { prefix: "NEEDS_BOARD", fields: ["channelId", "messageId"] },
   raidTeam: { prefix: "RAID_TEAM", fields: ["name", "targets"] },
   classNews: { prefix: "CLASS_NEWS", fields: ["guid", "className", "status"] },
@@ -63,29 +68,39 @@ export type GuildRecord = {
       Fields<Current>,
       string
     > &
-    (Current extends "voicePresence"
-      ? { leftAt?: string; endUnknown?: boolean }
-      : Current extends "candidate"
-        ? {
-            recruiting?: RecruitingState;
-            retention?: {
-              outcome: "Declined" | "Withdrawn";
-              threadId: string;
-              archived: boolean;
-            };
-            application?: Application;
-            discordUserId?: string;
-            characters?: CharacterDeclaration[];
-          }
-        : Current extends "gowApplication"
-          ? { mappedThreadId?: string }
-          : Current extends "member"
+    (Current extends "guildSnapshot"
+      ? {
+          exportedAt: number;
+          receivedAt: number;
+          writtenAt: number;
+          snapshotVersion: 1;
+          snapshot: Snapshot;
+        }
+      : Current extends "guildSnapshotLatest"
+        ? { exportedAt: number }
+        : Current extends "voicePresence"
+          ? { leftAt?: string; endUnknown?: boolean }
+          : Current extends "candidate"
             ? {
-                roster?: (CharacterDeclaration & { confirmed: boolean })[];
-                raidTeam?: string;
-                active?: boolean;
+                recruiting?: RecruitingState;
+                retention?: {
+                  outcome: "Declined" | "Withdrawn";
+                  threadId: string;
+                  archived: boolean;
+                };
+                application?: Application;
+                discordUserId?: string;
+                characters?: CharacterDeclaration[];
               }
-            : Record<never, never>);
+            : Current extends "gowApplication"
+              ? { mappedThreadId?: string }
+              : Current extends "member"
+                ? {
+                    roster?: (CharacterDeclaration & { confirmed: boolean })[];
+                    raidTeam?: string;
+                    active?: boolean;
+                  }
+                : Record<never, never>);
 }[Kind];
 export type RecordInput =
   | GuildRecord
@@ -124,6 +139,53 @@ export function decode(raw: unknown): GuildRecord | undefined {
   for (const field of codec.fields) {
     if (typeof item[field] !== "string" || !item[field]) return;
     output[field] = item[field];
+  }
+  if (kind === "guildSnapshot" || kind === "guildSnapshotLatest") {
+    if (
+      !Number.isSafeInteger(item.exportedAt) ||
+      Number(item.exportedAt) < 0 ||
+      !/^[a-f0-9]{64}$/.test(String(item.snapshotId))
+    )
+      return;
+    output.exportedAt = item.exportedAt;
+    if (kind === "guildSnapshotLatest") {
+      if (item.sk !== recordKey(kind, item.ownerId, "latest").sk) return;
+    } else {
+      if (
+        !Number.isFinite(item.receivedAt) ||
+        !Number.isFinite(item.writtenAt) ||
+        item.snapshotVersion !== 1
+      )
+        return;
+      try {
+        const snapshot = item.snapshot as Snapshot;
+        const normalized = normalize({
+          ...snapshot,
+          fmt: "GOSCOMP1",
+          count: snapshot.members.length,
+        });
+        if (
+          normalized.guildKey !== item.ownerId ||
+          normalized.exportedAt !== item.exportedAt ||
+          normalized.addonVersion !== item.addonVersion ||
+          item.sk !==
+            recordKey(
+              kind,
+              item.ownerId,
+              `${String(item.exportedAt).padStart(16, "0")}#${item.snapshotId}`,
+            ).sk
+        )
+          return;
+        Object.assign(output, {
+          snapshot: normalized,
+          snapshotVersion: 1,
+          receivedAt: item.receivedAt,
+          writtenAt: item.writtenAt,
+        });
+      } catch {
+        return;
+      }
+    }
   }
   if (kind === "gowApplication" && item.mappedThreadId !== undefined) {
     if (typeof item.mappedThreadId !== "string" || !item.mappedThreadId) return;
