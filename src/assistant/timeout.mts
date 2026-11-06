@@ -29,20 +29,21 @@ export async function timeoutReply(
     get(path: string): Promise<unknown>;
     patch?(path: string, body: unknown, signal: AbortSignal): Promise<unknown>;
     now(): number;
+    report(reason: string): void;
   },
   signal: AbortSignal,
 ): Promise<string | undefined> {
-  const request = /^(?:please\s+)?(?:timeout|time\s+out)\b\s*(.*)$/i.exec(
-    question,
-  );
-  if (!request || !authority(actor).roles.includes("Officer")) return;
-  const parsed =
-    /^(.*?)\s*(?:\s+for\s+(-?\d+(?:\.\d+)?)\s*(?:minutes?|mins?))?(?:\s+please)?[.!?]*$/i.exec(
-      request[1] ?? "",
+  const request =
+    /^[,.\s]*(?:please\s+)?(?:timeout|time\s+out)\b\s*([\s\S]*)$/i.exec(
+      question,
     );
-  const target = parsed?.[1]?.trim() ?? "";
-  const minutes = Math.max(1, Math.min(10, Number(parsed?.[2] ?? 5)));
-  const mention = /^<@!?(\d+)>$/.exec(target);
+  if (!request || !authority(actor).roles.includes("Officer")) return;
+  const input = (request[1] ?? "").replace(/\s+please[.!?]*$/i, "").trim();
+  const duration =
+    /\s+for\s+(-?\d+(?:\.\d+)?)\s*(?:minutes?|mins?)[.!?]*$/i.exec(input);
+  const target = (duration ? input.slice(0, duration.index) : input).trim();
+  const minutes = Math.max(1, Math.min(10, Number(duration?.[1] ?? 5)));
+  const mention = /^<@!?(\d+)>[.!?]*$/.exec(target);
   if (!target || (!mention && /[<>]|\b(?:for|minutes?|mins?)\b/i.test(target)))
     return "Give me an @mention.";
   const path = `/guilds/${encodeURIComponent(ports.guildId)}`;
@@ -63,7 +64,7 @@ export async function timeoutReply(
       selected = member(await ports.get(`${path}/members/${mention[1]}`));
       if (selected.user.id !== mention[1]) throw new Error("INVALID_MEMBER");
     } else {
-      const matches = new Map<string, Member>();
+      const members = new Map<string, Member>();
       let after = "";
       for (;;) {
         const page = await ports.get(
@@ -73,26 +74,30 @@ export async function timeoutReply(
           throw new Error("INVALID_MEMBERS");
         for (const value of page) {
           const candidate = member(value);
-          if (
-            [
-              candidate.nick,
-              candidate.user.global_name,
-              candidate.user.username,
-            ].some(
-              (name) =>
-                typeof name === "string" &&
-                name.toLowerCase() === target.toLowerCase(),
-            )
-          )
-            matches.set(candidate.user.id, candidate);
+          members.set(candidate.user.id, candidate);
         }
         if (page.length < 1000) break;
         const next = member(page.at(-1)).user.id;
         if (next === after) throw new Error("INVALID_PAGINATION");
         after = next;
       }
-      if (matches.size !== 1) return "Give me an @mention.";
-      selected = [...matches.values()][0] as Member;
+      function matching(name: string): Member[] {
+        const equal = (value: unknown) =>
+          typeof value === "string" &&
+          value.toLowerCase() === name.toLowerCase();
+        const candidates = [...members.values()];
+        const nicknames = candidates.filter((candidate) =>
+          equal(candidate.nick),
+        );
+        if (nicknames.length) return nicknames;
+        return candidates.filter((candidate) =>
+          [candidate.user.global_name, candidate.user.username].some(equal),
+        );
+      }
+      let matches = matching(target);
+      if (!matches.length) matches = matching(target.replace(/[.!?]+$/, ""));
+      if (matches.length !== 1) return "Give me an @mention.";
+      selected = matches[0] as Member;
     }
     if (
       selected.user.id === guild.owner_id ||
@@ -112,7 +117,8 @@ export async function timeoutReply(
       signal,
     );
     return `<@${selected.user.id}> gets ${minutes} minute${minutes === 1 ? "" : "s"} in the quiet corner.`;
-  } catch {
+  } catch (error) {
+    ports.report(error instanceof Error ? error.message : "TIMEOUT_FAILED");
     return "Couldn't land that timeout. Even my slap missed.";
   }
 }

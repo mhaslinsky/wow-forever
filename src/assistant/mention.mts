@@ -273,6 +273,7 @@ export function createMention(ports: {
           guildId: ports.guildId,
           get: ports.get,
           patch: ports.patch,
+          report: ports.report,
           now: ports.now,
         },
         signal,

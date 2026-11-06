@@ -23,6 +23,7 @@ async function run(
     reports: string[] = [];
   let models = 0;
   const target = {
+    nick: "nickname!",
     user: { id: "123", username: "synthetic", bot },
     roles: targetRoles,
   };
@@ -73,14 +74,17 @@ async function run(
       reports.push(reason);
     },
   })(event, signal);
-  assert.deepEqual(reports, []);
+  assert.deepEqual(reports, fail ? ["DISCORD_HTTP_403"] : []);
   return { patches, replies, models };
 }
 
 test("GM and officers timeout mentions before any model call; durations default and clamp", async () => {
   for (const [question, minutes] of [
+    [", timeout\n<@123>\nfor 20 minutes", 10],
     ["timeout <@123> for 2 minutes", 2],
     ["timeout synthetic", 5],
+    ["timeout nickname!", 5],
+    ["timeout synthetic.", 5],
     ["timeout <@!123> for 90 minutes please", 10],
     ["time out <@123> for 0 minutes", 1],
   ] as const) {
@@ -125,7 +129,7 @@ test("ambiguous, missing and malformed targets ask for a mention", async () => {
 
 test("officers, GM, bots and requester cannot be targeted", async () => {
   for (const [question, targetRoles, bot] of [
-    ["timeout <@123>", ["Officer"], false],
+    [". timeout\n<@123>\nfor 20 minutes", ["Officer"], false],
     ["timeout <@123>", ["GM"], false],
     ["timeout <@123>", [], true],
     ["timeout <@789>", [], false],
