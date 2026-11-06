@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMention } from "../src/assistant/mention.mts";
+import {
+  createTimeoutIntent,
+  type TimeoutIntent,
+} from "../src/assistant/timeout-intent.mts";
 
 const signal = new AbortController().signal;
 const event = {
@@ -9,7 +13,11 @@ const event = {
   messageId: "message",
   authorId: "789",
 };
-const roles = ["Member", "Officer", "GM"].map((name) => ({ id: name, name }));
+const roles = ["Member", "Officer", "GM"].map((name) => ({
+  id: name,
+  name,
+  permissions: "0",
+}));
 async function run(
   question: string,
   role = "Officer",
@@ -17,11 +25,13 @@ async function run(
   bot = false,
   ambiguous = false,
   fail = false,
+  intent?: TimeoutIntent,
 ) {
   const patches: unknown[] = [],
     replies: string[] = [],
     reports: string[] = [];
-  let models = 0;
+  let models = 0,
+    classifications = 0;
   const target = {
     nick: "nickname!",
     user: { id: "123", username: "synthetic", bot },
@@ -31,6 +41,26 @@ async function run(
     guildId: "guild",
     now: () => 0,
     claim: async () => true,
+    context: async () => [
+      { author: "Synthetic", content: "timeout <@123> for 90 minutes" },
+    ],
+    classifyTimeout: createTimeoutIntent(async (command) => {
+      classifications++;
+      assert.equal(command.input.modelId, "us.anthropic.claude-sonnet-4-6");
+      assert.doesNotMatch(
+        JSON.stringify(command.input),
+        /Officer|permissions|roles/,
+      );
+      assert.match(JSON.stringify(command.input), /90 minutes/);
+      const text = intent ? JSON.stringify(intent) : "bad JSON";
+      return {
+        $metadata: {},
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        metrics: { latencyMs: 0 },
+        stopReason: "end_turn",
+        output: { message: { role: "assistant", content: [{ text }] } },
+      };
+    }),
     get: async (path) => {
       if (path === "/channels/channel")
         return {
@@ -44,12 +74,18 @@ async function run(
           id: "message",
           channel_id: "channel",
           author: { id: "789" },
-          mentions: [{ id: "999" }],
+          mentions: [
+            { id: "999" },
+            ...[...question.matchAll(/<@!?(\d+)>/g)].map((match) => ({
+              id: match[1],
+            })),
+          ],
           content: `<@999> ${question}`,
         };
       if (path === "/users/@me") return { id: "999" };
-      if (path === "/guilds/guild") return { owner_id: "owner" };
-      if (path.endsWith("/roles")) return roles;
+      if (path === "/guilds/guild") return { id: "guild", owner_id: "owner" };
+      if (path.endsWith("/roles"))
+        return [{ id: "guild", name: "@everyone", permissions: "0" }, ...roles];
       if (path.endsWith("/members/789"))
         return { user: { id: "789" }, roles: [role] };
       if (path.endsWith("/members/123")) return target;
@@ -75,7 +111,7 @@ async function run(
     },
   })(event, signal);
   assert.deepEqual(reports, fail ? ["DISCORD_HTTP_403"] : []);
-  return { patches, replies, models };
+  return { patches, replies, models, classifications };
 }
 
 test("GM and officers timeout mentions before any model call; durations default and clamp", async () => {
@@ -145,4 +181,83 @@ test("Discord refusal never confirms a timeout", async () => {
   const result = await run("timeout <@123>", "Officer", [], false, false, true);
   assert.deepEqual(result.patches, []);
   assert.match(result.replies[0] ?? "", /Couldn't land/);
+});
+
+test("loose timeout follow-ups classify only officers and preserve protections", async () => {
+  for (const role of ["Officer", "GM", "Member"]) {
+    const result = await run(
+      "take care of <@123>",
+      role,
+      [],
+      false,
+      false,
+      false,
+      { timeout: true, minutes: 90 },
+    );
+    assert.equal(result.classifications, Number(role !== "Member"));
+    assert.equal(result.models, Number(role === "Member"));
+    assert.deepEqual(
+      result.patches,
+      role === "Member"
+        ? []
+        : [
+            {
+              path: "/guilds/guild/members/123",
+              body: {
+                communication_disabled_until: new Date(600000).toISOString(),
+              },
+            },
+          ],
+    );
+  }
+  const protectedTarget = await run(
+    "take care of <@123>",
+    "Officer",
+    ["Officer"],
+    false,
+    false,
+    false,
+    { timeout: true },
+  );
+  assert.deepEqual(protectedTarget.patches, []);
+  assert.match(protectedTarget.replies[0] ?? "", /off limits/);
+});
+
+test("normal questions and malformed classification chat; moderation gets a hint", async () => {
+  for (const intent of [undefined, { timeout: false }]) {
+    const result = await run(
+      "how is <@123> doing?",
+      "Officer",
+      [],
+      false,
+      false,
+      false,
+      intent,
+    );
+    assert.equal(result.classifications, 1);
+    assert.deepEqual(result.replies, ["Chat"]);
+    assert.deepEqual(result.patches, []);
+  }
+  const hint = await run(
+    "take care of <@123>",
+    "Officer",
+    [],
+    false,
+    false,
+    false,
+    { timeout: false },
+  );
+  assert.match(hint.replies[0] ?? "", /timeout @name for 5 minutes/);
+  assert.equal(hint.models, 0);
+});
+
+test("classification requires exactly one mentioned target", async () => {
+  for (const question of [
+    "take care of them",
+    "take care of <@123> and <@456>",
+  ]) {
+    const result = await run(question);
+    assert.equal(result.classifications, 0);
+    assert.deepEqual(result.replies, ["Chat"]);
+  }
 });

@@ -15,6 +15,7 @@ import {
 } from "./core.mts";
 import { runtimeMemoryReplies } from "./memory-replies.mts";
 import { createSpend, spendMetric, spendTotalMetric } from "./spend.mts";
+import { createTimeoutIntent } from "./timeout-intent.mts";
 
 export function assistantRoleIds(roles: unknown) {
   if (!Array.isArray(roles)) throw new Error("INVALID_ROLES");
@@ -171,7 +172,7 @@ export async function runtimeAssistant(
   const metered = spend.bedrock((command, options) =>
     bedrock.send(command, options),
   );
-  return createAssistant({
+  const assistant = createAssistant({
     checkSpend: spend.check,
     guildId,
     data: createDynamoDataAccess({
@@ -206,5 +207,8 @@ export async function runtimeAssistant(
           .filter(Boolean),
       ];
     },
+  });
+  return Object.assign(assistant, {
+    classifyTimeout: createTimeoutIntent(metered),
   });
 }

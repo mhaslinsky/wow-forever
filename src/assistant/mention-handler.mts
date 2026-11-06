@@ -38,6 +38,7 @@ export async function handler(event: Mention) {
     get: request,
     patch: (path, body, abortSignal) =>
       request(path, body, abortSignal, "PATCH"),
+    classifyTimeout: answer.classifyTimeout,
     claim: claimDelivery,
     now: Date.now,
     context: (channelId, abortSignal) =>

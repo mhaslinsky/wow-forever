@@ -1,9 +1,11 @@
 import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
-import { capToMember } from "../auth/index.mts";
+import { authority, capToMember } from "../auth/index.mts";
 import type { ChannelContext } from "./context.mts";
 import { type createAssistant, REFUSAL } from "./core.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
 import { timeoutReply } from "./timeout.mts";
+import type { createTimeoutIntent } from "./timeout-intent.mts";
+import { moderationRequest } from "./timeout-intent.mts";
 
 export type Mention = {
   guildId: string;
@@ -121,6 +123,7 @@ export function createMention(ports: {
   claim(key: string, expiresAt: number, signal: AbortSignal): Promise<boolean>;
   now(): number;
   context?(channelId: string, signal: AbortSignal): ReturnType<ChannelContext>;
+  classifyTimeout?: ReturnType<typeof createTimeoutIntent>;
   answer: ReturnType<typeof createAssistant>;
   reply(event: Mention, content: string, signal: AbortSignal): Promise<void>;
   report(reason: string): void;
@@ -266,7 +269,7 @@ export function createMention(ports: {
         event.authorId,
         ports.get,
       );
-      const timeout = await timeoutReply(
+      let timeout = await timeoutReply(
         principal,
         question,
         {
@@ -278,6 +281,42 @@ export function createMention(ports: {
         },
         signal,
       );
+      const targets = [
+        ...new Set(
+          message.mentions
+            .map((user) => id(object(user).id))
+            .filter((target) => target !== botId),
+        ),
+      ];
+      if (
+        timeout === undefined &&
+        authority(principal).roles.includes("Officer") &&
+        targets.length === 1 &&
+        ports.classifyTimeout
+      ) {
+        const access = await audience(event.channelId);
+        const history =
+          access.history && ports.context
+            ? await ports.context(event.channelId, signal)
+            : [];
+        const intent = await ports.classifyTimeout(question, history, signal);
+        if (intent.timeout) {
+          timeout = await timeoutReply(
+            principal,
+            `timeout <@${targets[0]}> for ${Math.max(1, Math.min(10, intent.minutes ?? 5))} minutes`,
+            {
+              guildId: ports.guildId,
+              get: ports.get,
+              patch: ports.patch,
+              report: ports.report,
+              now: ports.now,
+            },
+            signal,
+          );
+        } else if (moderationRequest(question)) {
+          timeout = "Use `timeout @name for 5 minutes`, then I'll bench them.";
+        }
+      }
       if (timeout !== undefined) {
         await ports.reply(event, timeout, signal);
         return;
