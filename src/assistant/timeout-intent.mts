@@ -69,5 +69,13 @@ export function createTimeoutIntent(
 }
 
 export function moderationRequest(question: string) {
-  return /\b(?:timeout|time\s+out|mute|slap)\b/i.test(question);
+  return /^(?:please\s+)?(?:timeout|time\s+out|mute|slap)\b/i.test(
+    question.trim(),
+  );
+}
+
+export function naturalDuration(question: string) {
+  return /^(?:please\s+)?(?:timeout|time\s+out)\s+<@!?\d+>\s+for\s+(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+minutes?[.!?]*$/i.test(
+    question.trim(),
+  );
 }

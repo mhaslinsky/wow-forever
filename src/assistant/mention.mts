@@ -1,12 +1,16 @@
 import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
 import { authority, capToMember } from "../auth/index.mts";
-import type { ChannelContext, ChannelMessage } from "./context.mts";
+import {
+  type ChannelContext,
+  type ChannelMessage,
+  rememberRequest,
+} from "./context.mts";
 import { COOLDOWN, type createAssistant, FAILURE, REFUSAL } from "./core.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
 import { PAUSED, SpendError, SpendPaused } from "./spend.mts";
 import { timeoutReply } from "./timeout.mts";
 import type { createTimeoutIntent } from "./timeout-intent.mts";
-import { moderationRequest } from "./timeout-intent.mts";
+import { moderationRequest, naturalDuration } from "./timeout-intent.mts";
 
 export type Mention = {
   guildId: string;
@@ -272,18 +276,21 @@ export function createMention(ports: {
         event.authorId,
         ports.get,
       );
-      let timeout = await timeoutReply(
-        principal,
-        question,
-        {
-          guildId: ports.guildId,
-          get: ports.get,
-          patch: ports.patch,
-          report: ports.report,
-          now: ports.now,
-        },
-        signal,
-      );
+      const looseDuration = naturalDuration(question);
+      let timeout = looseDuration
+        ? undefined
+        : await timeoutReply(
+            principal,
+            question,
+            {
+              guildId: ports.guildId,
+              get: ports.get,
+              patch: ports.patch,
+              report: ports.report,
+              now: ports.now,
+            },
+            signal,
+          );
       const targets = [
         ...new Set(
           [...question.matchAll(/<@!?(\d+)>/g)]
@@ -294,6 +301,7 @@ export function createMention(ports: {
       let assistantClaimed = false;
       if (
         timeout === undefined &&
+        !rememberRequest(question) &&
         authority(principal).roles.includes("Officer") &&
         targets.length === 1 &&
         ports.classifyTimeout
@@ -312,7 +320,8 @@ export function createMention(ports: {
             : [];
         const ownHistory = history.filter((entry) =>
           entry.bot
-            ? entry.replyToAuthorId === event.authorId
+            ? entry.authorId === botId &&
+              entry.replyToAuthorId === event.authorId
             : entry.authorId === event.authorId,
         );
         const filtered = ports.filterHistory

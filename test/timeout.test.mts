@@ -66,7 +66,8 @@ async function run(
       {
         author: "Bot",
         bot: true,
-        replyToAuthorId: "456",
+        authorId: "888",
+        replyToAuthorId: "789",
         content: "hostile reply",
       },
     ],
@@ -297,6 +298,7 @@ test("normal questions and malformed classification chat; moderation gets a hint
 
 test("classification requires exactly one mentioned target", async () => {
   for (const question of [
+    "remember <@123> plays a mage",
     "take care of them",
     "take care of <@123> and <@456>",
   ]) {
@@ -349,6 +351,22 @@ test("fractional minutes round before clamping and loose false requests chat", a
       body: { communication_disabled_until: new Date(180000).toISOString() },
     },
   ]);
-  const chat = await classify("take care of <@123>", { timeout: false });
-  assert.deepEqual(chat.replies, ["Chat"]);
+  for (const question of [
+    "take care of <@123>",
+    "why is <@123> on mute?",
+    "how do timeouts work for <@123>?",
+  ]) {
+    assert.deepEqual((await classify(question, { timeout: false })).replies, [
+      "Chat",
+    ]);
+  }
+  assert.equal(
+    (
+      await classify("please timeout <@123> for five minutes", {
+        timeout: true,
+        minutes: 5,
+      })
+    ).patches.length,
+    1,
+  );
 });
