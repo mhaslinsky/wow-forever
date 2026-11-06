@@ -69,7 +69,5 @@ export function createTimeoutIntent(
 }
 
 export function moderationRequest(question: string) {
-  return /\b(?:timeout|time\s+out|mute|silence|shut\s+up|take\s+care\s+of|do\s+it|quiet|moderate|kick|ban)\b/i.test(
-    question,
-  );
+  return /\b(?:timeout|time\s+out|mute|slap)\b/i.test(question);
 }

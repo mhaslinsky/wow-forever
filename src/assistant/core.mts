@@ -27,7 +27,7 @@ export const SEARCH_UNAVAILABLE =
   "Web search didn't work, so this is from guild info only.";
 export const REFUSAL = "Sorry, this one's for guild members.";
 export const COOLDOWN = "Give it a few seconds and try again.";
-const FAILURE = "Couldn't come up with an answer, try again in a bit.";
+export const FAILURE = "Couldn't come up with an answer, try again in a bit.";
 export type Evidence = { url: string; title: string; excerpts: string[] };
 export type SearchResult =
   | { status: "found"; results: Evidence[] }
@@ -444,6 +444,7 @@ export function createAssistant(ports: {
     context?: ChannelContext,
     audience?: AssistantAudience,
     memoryUsed?: () => Promise<void>,
+    claimed = false,
   ) => {
     const identity = authority(actor);
     if (identity.mode !== "user" || !identity.roles.includes("Member"))
@@ -501,7 +502,8 @@ export function createAssistant(ports: {
         return "Remembered.";
       }
       await ports.checkSpend(signal);
-      if (!(await ports.claim(identity.userId, signal))) return COOLDOWN;
+      if (!claimed && !(await ports.claim(identity.userId, signal)))
+        return COOLDOWN;
       const access = audience
         ? await audience()
         : { guildRecords: true, history: true };

@@ -1,8 +1,9 @@
 import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
 import { authority, capToMember } from "../auth/index.mts";
-import type { ChannelContext } from "./context.mts";
-import { type createAssistant, REFUSAL } from "./core.mts";
+import type { ChannelContext, ChannelMessage } from "./context.mts";
+import { COOLDOWN, type createAssistant, FAILURE, REFUSAL } from "./core.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
+import { PAUSED, SpendError, SpendPaused } from "./spend.mts";
 import { timeoutReply } from "./timeout.mts";
 import type { createTimeoutIntent } from "./timeout-intent.mts";
 import { moderationRequest } from "./timeout-intent.mts";
@@ -123,6 +124,8 @@ export function createMention(ports: {
   claim(key: string, expiresAt: number, signal: AbortSignal): Promise<boolean>;
   now(): number;
   context?(channelId: string, signal: AbortSignal): ReturnType<ChannelContext>;
+  claimAssistant?(userId: string, signal: AbortSignal): Promise<boolean>;
+  filterHistory?(messages: ChannelMessage[]): Promise<ChannelMessage[]>;
   classifyTimeout?: ReturnType<typeof createTimeoutIntent>;
   answer: ReturnType<typeof createAssistant>;
   reply(event: Mention, content: string, signal: AbortSignal): Promise<void>;
@@ -283,27 +286,43 @@ export function createMention(ports: {
       );
       const targets = [
         ...new Set(
-          message.mentions
-            .map((user) => id(object(user).id))
+          [...question.matchAll(/<@!?(\d+)>/g)]
+            .map((match) => match[1] as string)
             .filter((target) => target !== botId),
         ),
       ];
+      let assistantClaimed = false;
       if (
         timeout === undefined &&
         authority(principal).roles.includes("Officer") &&
         targets.length === 1 &&
         ports.classifyTimeout
       ) {
+        if (ports.claimAssistant) {
+          assistantClaimed = await ports.claimAssistant(event.authorId, signal);
+          if (!assistantClaimed) {
+            await ports.reply(event, COOLDOWN, signal);
+            return;
+          }
+        }
         const access = await audience(event.channelId);
         const history =
           access.history && ports.context
             ? await ports.context(event.channelId, signal)
             : [];
-        const intent = await ports.classifyTimeout(question, history, signal);
+        const ownHistory = history.filter((entry) =>
+          entry.bot
+            ? entry.replyToAuthorId === event.authorId
+            : entry.authorId === event.authorId,
+        );
+        const filtered = ports.filterHistory
+          ? await ports.filterHistory(ownHistory)
+          : [];
+        const intent = await ports.classifyTimeout(question, filtered, signal);
         if (intent.timeout) {
           timeout = await timeoutReply(
             principal,
-            `timeout <@${targets[0]}> for ${Math.max(1, Math.min(10, intent.minutes ?? 5))} minutes`,
+            `timeout <@${targets[0]}> for ${Math.max(1, Math.min(10, Math.round(intent.minutes ?? 5)))} minutes`,
             {
               guildId: ports.guildId,
               get: ports.get,
@@ -331,10 +350,20 @@ export function createMention(ports: {
           ? (abortSignal) => context(event.channelId, abortSignal)
           : undefined,
         () => audience(event.channelId),
+        undefined,
+        assistantClaimed,
       );
       if (answer === REFUSAL) return;
       await ports.reply(event, answer, signal);
     } catch (error) {
+      if (error instanceof SpendError) {
+        await ports.reply(
+          event,
+          error instanceof SpendPaused ? PAUSED : FAILURE,
+          signal,
+        );
+        return;
+      }
       const reason = error instanceof Error ? error.message : "MENTION_FAILED";
       ports.report(reason);
     }

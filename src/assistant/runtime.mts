@@ -1,11 +1,20 @@
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { REST } from "discord.js";
-import { authority, createPrincipalFactory } from "../auth/index.mts";
+import {
+  authority,
+  createPrincipalFactory,
+  createSystemPrincipal,
+} from "../auth/index.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
+import { recordKey } from "../data/records.mts";
 import { createSpendStore } from "../data/spend.mts";
 import { clock, type Interaction } from "../interactions/core.mts";
 import { discordAlerts } from "../recruiting/alerts.mts";
-import { createChannelContext, interactionHistoryChannel } from "./context.mts";
+import {
+  createChannelContext,
+  filterForgottenContext,
+  interactionHistoryChannel,
+} from "./context.mts";
 import {
   createAssistant,
   createConverse,
@@ -172,6 +181,12 @@ export async function runtimeAssistant(
   const metered = spend.bedrock((command, options) =>
     bedrock.send(command, options),
   );
+  const data = createDynamoDataAccess({
+    tableName: process.env.GUILD_TABLE ?? "wow-forever",
+    region: "us-east-1",
+  });
+  const claim = (asker: string, abortSignal: AbortSignal) =>
+    claimAssistant(guildId, asker, abortSignal);
   const assistant = createAssistant({
     checkSpend: spend.check,
     guildId,
@@ -210,5 +225,14 @@ export async function runtimeAssistant(
   });
   return Object.assign(assistant, {
     classifyTimeout: createTimeoutIntent(metered),
+    claim,
+    filterHistory: (messages: Parameters<typeof filterForgottenContext>[0]) =>
+      filterForgottenContext(messages, async (userId) => {
+        const rows = await data
+          .forSystem(createSystemPrincipal([]))
+          .get(recordKey("fact", userId, "forget"));
+        const marker = rows[0];
+        return marker?.kind === "fact" ? (marker.forgetAt ?? 0) : 0;
+      }),
   });
 }
