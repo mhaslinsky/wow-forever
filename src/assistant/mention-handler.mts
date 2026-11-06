@@ -14,9 +14,10 @@ export async function handler(event: Mention) {
     path: string,
     body?: unknown,
     abortSignal = signal,
+    method = body === undefined ? "GET" : "POST",
   ): Promise<unknown> => {
     const response = await fetch(`https://discord.com/api/v10${path}`, {
-      method: body === undefined ? "GET" : "POST",
+      method,
       signal: abortSignal,
       headers: {
         authorization: `Bot ${token}`,
@@ -35,6 +36,8 @@ export async function handler(event: Mention) {
   return createMention({
     guildId,
     get: request,
+    patch: (path, body, abortSignal) =>
+      request(path, body, abortSignal, "PATCH"),
     claim: claimDelivery,
     now: Date.now,
     context: (channelId, abortSignal) =>

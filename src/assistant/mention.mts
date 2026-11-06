@@ -3,6 +3,7 @@ import { capToMember } from "../auth/index.mts";
 import type { ChannelContext } from "./context.mts";
 import { type createAssistant, REFUSAL } from "./core.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
+import { timeoutReply } from "./timeout.mts";
 
 export type Mention = {
   guildId: string;
@@ -116,6 +117,7 @@ function channel(value: unknown, expectedId: string, guildId: string): Channel {
 export function createMention(ports: {
   guildId: string;
   get(path: string): Promise<unknown>;
+  patch?(path: string, body: unknown, signal: AbortSignal): Promise<unknown>;
   claim(key: string, expiresAt: number, signal: AbortSignal): Promise<boolean>;
   now(): number;
   context?(channelId: string, signal: AbortSignal): ReturnType<ChannelContext>;
@@ -259,9 +261,28 @@ export function createMention(ports: {
         .split(`<@!${botId}>`)
         .join("")
         .trim();
-      const actor = capToMember(
-        await assistantPrincipal(event.guildId, event.authorId, ports.get),
+      const principal = await assistantPrincipal(
+        event.guildId,
+        event.authorId,
+        ports.get,
       );
+      const timeout = await timeoutReply(
+        principal,
+        question,
+        {
+          guildId: ports.guildId,
+          get: ports.get,
+          patch: ports.patch,
+          report: ports.report,
+          now: ports.now,
+        },
+        signal,
+      );
+      if (timeout !== undefined) {
+        await ports.reply(event, timeout, signal);
+        return;
+      }
+      const actor = capToMember(principal);
       const context = ports.context;
       const answer = await ports.answer(
         actor,
