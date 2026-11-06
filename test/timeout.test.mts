@@ -36,6 +36,7 @@ async function run(
     reports: string[] = [];
   let models = 0,
     classifications = 0;
+  const inputs: { modelId?: string }[] = [];
   const target = {
     nick: "nickname!",
     user: { id: "123", username: "synthetic", bot },
@@ -72,19 +73,9 @@ async function run(
     classifyTimeout: createTimeoutIntent(async (command) => {
       classifications++;
       if (mode === "paused") throw new SpendPaused(PAUSED);
-      if (mode === "spend-error") throw new SpendError("unavailable");
-      assert.equal(command.input.modelId, "us.anthropic.claude-sonnet-4-6");
-      assert.doesNotMatch(
-        JSON.stringify(command.input),
-        /Officer|permissions|roles/,
-      );
-      assert.doesNotMatch(
-        JSON.stringify(command.input),
-        /classify this|hostile reply/,
-      );
-      if (mode === "forgotten")
-        assert.doesNotMatch(JSON.stringify(command.input), /90 minutes/);
-      else assert.match(JSON.stringify(command.input), /90 minutes/);
+      if (["spend-error", "reply-fail"].includes(mode))
+        throw new SpendError("unavailable");
+      inputs.push(command.input);
       const text = intent ? JSON.stringify(intent) : "bad JSON";
       return {
         $metadata: {},
@@ -147,13 +138,25 @@ async function run(
       return "Chat";
     },
     reply: async (_event, content) => {
+      if (mode === "reply-fail") throw new Error("REPLY_FAILED");
       replies.push(content);
     },
     report: (reason) => {
       reports.push(reason);
     },
   })(event, signal);
-  assert.deepEqual(reports, fail ? ["DISCORD_HTTP_403"] : []);
+  for (const input of inputs) {
+    assert.equal(input.modelId, "us.anthropic.claude-sonnet-4-6");
+    assert.doesNotMatch(JSON.stringify(input), /Officer|permissions|roles/);
+    assert.doesNotMatch(JSON.stringify(input), /classify this|hostile reply/);
+    if (mode === "forgotten")
+      assert.doesNotMatch(JSON.stringify(input), /90 minutes/);
+    else assert.match(JSON.stringify(input), /90 minutes/);
+  }
+  assert.deepEqual(
+    reports,
+    mode === "reply-fail" ? ["REPLY_FAILED"] : fail ? ["DISCORD_HTTP_403"] : [],
+  );
   return { patches, replies, models, classifications };
 }
 
@@ -317,6 +320,7 @@ test("classifier filters hostile and forgotten context, replies on spend errors,
     ["forgotten", "Chat"],
     ["paused", PAUSED],
     ["spend-error", FAILURE],
+    ["reply-fail", ""],
     ["cooldown", COOLDOWN],
     ["reply-ping", "Chat"],
   ]) {
@@ -330,7 +334,7 @@ test("classifier filters hostile and forgotten context, replies on spend errors,
       result.classifications,
       Number(!["cooldown", "reply-ping"].includes(mode)),
     );
-    assert.deepEqual(result.replies, [expected]);
+    assert.deepEqual(result.replies, expected ? [expected] : []);
   }
 });
 

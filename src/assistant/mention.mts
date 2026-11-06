@@ -357,11 +357,19 @@ export function createMention(ports: {
       await ports.reply(event, answer, signal);
     } catch (error) {
       if (error instanceof SpendError) {
-        await ports.reply(
-          event,
-          error instanceof SpendPaused ? PAUSED : FAILURE,
-          signal,
-        );
+        try {
+          await ports.reply(
+            event,
+            error instanceof SpendPaused ? PAUSED : FAILURE,
+            signal,
+          );
+        } catch (replyError) {
+          ports.report(
+            replyError instanceof Error
+              ? replyError.message
+              : "MENTION_REPLY_FAILED",
+          );
+        }
         return;
       }
       const reason = error instanceof Error ? error.message : "MENTION_FAILED";
