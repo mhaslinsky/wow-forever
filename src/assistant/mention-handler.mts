@@ -38,6 +38,9 @@ export async function handler(event: Mention) {
     get: request,
     patch: (path, body, abortSignal) =>
       request(path, body, abortSignal, "PATCH"),
+    classifyTimeout: answer.classifyTimeout,
+    claimAssistant: answer.claim,
+    filterHistory: answer.filterHistory,
     claim: claimDelivery,
     now: Date.now,
     context: (channelId, abortSignal) =>
@@ -49,10 +52,23 @@ export async function handler(event: Mention) {
         },
         channelId,
       )(abortSignal),
-    answer: (actor, question, abortSignal, context, audience) =>
-      answer(actor, question, abortSignal, context, audience, () =>
-        // Mark the source first so history cannot read a reply before its ID is saved.
-        memory.mark(event.authorId, event.messageId, 60000),
+    answer: (
+      actor,
+      question,
+      abortSignal,
+      context,
+      audience,
+      _memoryUsed,
+      claimed,
+    ) =>
+      answer(
+        actor,
+        question,
+        abortSignal,
+        context,
+        audience,
+        () => memory.mark(event.authorId, event.messageId, 60000),
+        claimed,
       ),
     async reply(message, content) {
       const reply = await request(

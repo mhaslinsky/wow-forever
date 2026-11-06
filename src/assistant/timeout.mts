@@ -49,7 +49,14 @@ export async function timeoutReply(
   const path = `/guilds/${encodeURIComponent(ports.guildId)}`;
   try {
     const roleId = assistantRoleIds(await ports.get(`${path}/roles`));
-    const protectedRoles = [roleId("GM"), roleId("Officer")];
+    const requesterId = authority(actor).userId;
+    const requester = member(
+      await ports.get(`${path}/members/${encodeURIComponent(requesterId)}`),
+    );
+    if (requester.user.id !== requesterId) throw new Error("INVALID_MEMBER");
+    const gmRole = roleId("GM");
+    const officerRole = roleId("Officer");
+    const requesterIsGM = requester.roles.includes(gmRole);
     const guild = await ports.get(path);
     if (
       !guild ||
@@ -103,7 +110,8 @@ export async function timeoutReply(
       selected.user.id === guild.owner_id ||
       selected.user.bot ||
       selected.user.id === authority(actor).userId ||
-      selected.roles.some((role) => protectedRoles.includes(role))
+      selected.roles.includes(gmRole) ||
+      (!requesterIsGM && selected.roles.includes(officerRole))
     )
       return "Nice try. That one's off limits.";
     if (!ports.patch) throw new Error("TIMEOUT_UNAVAILABLE");

@@ -1,9 +1,16 @@
 import { PermissionFlagsBits as flags, PermissionsBitField } from "discord.js";
-import { capToMember } from "../auth/index.mts";
-import type { ChannelContext } from "./context.mts";
-import { type createAssistant, REFUSAL } from "./core.mts";
+import { authority, capToMember } from "../auth/index.mts";
+import {
+  type ChannelContext,
+  type ChannelMessage,
+  rememberRequest,
+} from "./context.mts";
+import { COOLDOWN, type createAssistant, FAILURE, REFUSAL } from "./core.mts";
 import { assistantPrincipal, assistantRoleIds } from "./runtime.mts";
+import { PAUSED, SpendError, SpendPaused } from "./spend.mts";
 import { timeoutReply } from "./timeout.mts";
+import type { createTimeoutIntent } from "./timeout-intent.mts";
+import { moderationRequest, naturalDuration } from "./timeout-intent.mts";
 
 export type Mention = {
   guildId: string;
@@ -121,6 +128,9 @@ export function createMention(ports: {
   claim(key: string, expiresAt: number, signal: AbortSignal): Promise<boolean>;
   now(): number;
   context?(channelId: string, signal: AbortSignal): ReturnType<ChannelContext>;
+  claimAssistant?(userId: string, signal: AbortSignal): Promise<boolean>;
+  filterHistory?(messages: ChannelMessage[]): Promise<ChannelMessage[]>;
+  classifyTimeout?: ReturnType<typeof createTimeoutIntent>;
   answer: ReturnType<typeof createAssistant>;
   reply(event: Mention, content: string, signal: AbortSignal): Promise<void>;
   report(reason: string): void;
@@ -266,18 +276,75 @@ export function createMention(ports: {
         event.authorId,
         ports.get,
       );
-      const timeout = await timeoutReply(
-        principal,
-        question,
-        {
-          guildId: ports.guildId,
-          get: ports.get,
-          patch: ports.patch,
-          report: ports.report,
-          now: ports.now,
-        },
-        signal,
-      );
+      const looseDuration = naturalDuration(question);
+      let timeout = looseDuration
+        ? undefined
+        : await timeoutReply(
+            principal,
+            question,
+            {
+              guildId: ports.guildId,
+              get: ports.get,
+              patch: ports.patch,
+              report: ports.report,
+              now: ports.now,
+            },
+            signal,
+          );
+      const targets = [
+        ...new Set(
+          [...question.matchAll(/<@!?(\d+)>/g)]
+            .map((match) => match[1] as string)
+            .filter((target) => target !== botId),
+        ),
+      ];
+      let assistantClaimed = false;
+      if (
+        timeout === undefined &&
+        !rememberRequest(question) &&
+        authority(principal).roles.includes("Officer") &&
+        targets.length === 1 &&
+        ports.classifyTimeout
+      ) {
+        if (ports.claimAssistant) {
+          assistantClaimed = await ports.claimAssistant(event.authorId, signal);
+          if (!assistantClaimed) {
+            await ports.reply(event, COOLDOWN, signal);
+            return;
+          }
+        }
+        const access = await audience(event.channelId);
+        const history =
+          access.history && ports.context
+            ? await ports.context(event.channelId, signal)
+            : [];
+        const ownHistory = history.filter((entry) =>
+          entry.bot
+            ? entry.authorId === botId &&
+              entry.replyToAuthorId === event.authorId
+            : entry.authorId === event.authorId,
+        );
+        const filtered = ports.filterHistory
+          ? await ports.filterHistory(ownHistory)
+          : [];
+        const intent = await ports.classifyTimeout(question, filtered, signal);
+        if (intent.timeout) {
+          timeout = await timeoutReply(
+            principal,
+            `timeout <@${targets[0]}> for ${Math.max(1, Math.min(10, Math.round(intent.minutes ?? 5)))} minutes`,
+            {
+              guildId: ports.guildId,
+              get: ports.get,
+              patch: ports.patch,
+              report: ports.report,
+              now: ports.now,
+            },
+            signal,
+          );
+        } else if (moderationRequest(question)) {
+          timeout = "Use `timeout @name for 5 minutes`, then I'll bench them.";
+        }
+      }
       if (timeout !== undefined) {
         await ports.reply(event, timeout, signal);
         return;
@@ -292,10 +359,28 @@ export function createMention(ports: {
           ? (abortSignal) => context(event.channelId, abortSignal)
           : undefined,
         () => audience(event.channelId),
+        undefined,
+        assistantClaimed,
       );
       if (answer === REFUSAL) return;
       await ports.reply(event, answer, signal);
     } catch (error) {
+      if (error instanceof SpendError) {
+        try {
+          await ports.reply(
+            event,
+            error instanceof SpendPaused ? PAUSED : FAILURE,
+            signal,
+          );
+        } catch (replyError) {
+          ports.report(
+            replyError instanceof Error
+              ? replyError.message
+              : "MENTION_REPLY_FAILED",
+          );
+        }
+        return;
+      }
       const reason = error instanceof Error ? error.message : "MENTION_FAILED";
       ports.report(reason);
     }
