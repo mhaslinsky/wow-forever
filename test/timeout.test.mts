@@ -261,3 +261,14 @@ test("classification requires exactly one mentioned target", async () => {
     assert.deepEqual(result.replies, ["Chat"]);
   }
 });
+
+test("only the real GM role permits timing out an officer", async () => {
+  for (const role of ["GM", "Officer"]) {
+    const result = await run("timeout <@123> for 5 minutes", role, ["Officer"]);
+    assert.equal(result.patches.length, Number(role === "GM"));
+    assert.match(
+      result.replies[0] ?? "",
+      role === "GM" ? /quiet corner/ : /off limits/,
+    );
+  }
+});
