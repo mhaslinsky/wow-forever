@@ -54,7 +54,8 @@ export async function timeoutReply(
       !guild ||
       typeof guild !== "object" ||
       !("owner_id" in guild) ||
-      typeof guild.owner_id !== "string"
+      typeof guild.owner_id !== "string" ||
+      !guild.owner_id
     )
       throw new Error("INVALID_GUILD");
     let selected: Member;
@@ -90,8 +91,7 @@ export async function timeoutReply(
         if (next === after) throw new Error("INVALID_PAGINATION");
         after = next;
       }
-      if (matches.size !== 1)
-        return "Give me an @mention.";
+      if (matches.size !== 1) return "Give me an @mention.";
       selected = [...matches.values()][0] as Member;
     }
     if (
