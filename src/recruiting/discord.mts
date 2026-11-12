@@ -21,6 +21,14 @@ import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
 type AppliedTagsChange = { key: "applied_tags"; old?: unknown; new?: unknown };
 
+// Withdrawing a deleted thread's candidate never touches the forum, so every
+// thread delete in the guild must not depend on the forum being healthy.
+const noForum = new Proxy({} as ForumPort, {
+  get: () => async () => {
+    throw new Error("FORUM_UNUSED_ON_DELETE");
+  },
+});
+
 function tagList(value: unknown): string[] {
   const list = value === undefined ? [] : value;
   if (!Array.isArray(list) || !list.every((tag) => typeof tag === "string"))
@@ -211,12 +219,11 @@ export function recruitingHandlers(
       if (!deleted && !change) return;
       const previous = pending.get(guild.id) ?? Promise.resolve();
       const processDelete = async () => {
-        const { forum } = await recruitingContext(guild);
         await createRecruiting(
           data,
           principal,
           guild.id,
-          discordForum(forum),
+          noForum,
           reportRecruitingFailure,
         ).threadDeleted({
           threadId: entry.targetId as string,
