@@ -467,7 +467,11 @@ test("old audit corrections preserve the current officer edit", async () => {
     (await setup.core.candidate(threadId))?.recruiting?.stage,
     "Trial",
   );
-  assert.deepEqual(setup.applied(), ["TAG_APPLY FORM_ID", "TAG_TRIAL_ID"]);
+  assert.deepEqual(setup.applied(), [
+    "TAG_TRIAL_ID",
+    "TAG_APPLY FORM_ID",
+    "TAG_OFFICER LEAD_ID",
+  ]);
   setup.port.setTags = async () => assert.fail("Old event wrote tags");
   await reconcile([], "2098-01-01T00:00:00.000Z");
 });
@@ -476,7 +480,7 @@ test("concurrent correction keeps the newer edit through the Discord adapter", a
   const setup = fixture();
   await seed(setup);
   const trial = ["TAG_TRIAL_ID", "TAG_APPLY FORM_ID"];
-  let current = ["TAG_INTERVIEW_ID"];
+  let current = ["TAG_NEW_ID", "TAG_INTERVIEW_ID"];
   let reads = 0;
   let writes = 0;
   const forum = {
@@ -484,7 +488,7 @@ test("concurrent correction keeps the newer edit through the Discord adapter", a
     fetch: async () => ({ availableTags: setup.tags }),
     threads: {
       fetch: async () => {
-        if (++reads === 3) current = [...trial];
+        if (++reads === 2) current = [...trial];
         return {
           parentId: "forum",
           appliedTags: [...current],
@@ -497,15 +501,18 @@ test("concurrent correction keeps the newer edit through the Discord adapter", a
     },
   } as unknown as ForumChannel;
   Object.assign(setup.port, discordForum(forum));
-  const edit = (tags: string[], at: string) =>
+  const edit = (tags: string[], at: string, added?: string[]) =>
     setup.core.officerTags({
       threadId,
       tags,
+      added,
       actor: setup.actor,
       eventId: at,
       at,
     });
-  await edit(["TAG_INTERVIEW_ID"], "2099-01-01T00:00:00.000Z");
+  await edit(["TAG_NEW_ID", "TAG_INTERVIEW_ID"], "2099-01-01T00:00:00.000Z", [
+    "TAG_INTERVIEW_ID",
+  ]);
   assert.deepEqual(current, trial);
   await edit(trial, "2099-01-02T00:00:00.000Z");
   assert.equal(
@@ -513,6 +520,69 @@ test("concurrent correction keeps the newer edit through the Discord adapter", a
     "Trial",
   );
   assert.equal(writes, 0);
+});
+
+test("officer stage swaps follow the added tag and never fight the officer", async () => {
+  const setup = fixture();
+  await seed(setup);
+  let at = Date.parse("2099-01-01T00:00:00.000Z");
+  const click = async (next: string[]) => {
+    const previous = setup.applied();
+    await setup.port.setTags(threadId, next, previous);
+    const stamp = new Date(at++).toISOString();
+    await setup.core.officerTags({
+      threadId,
+      tags: next,
+      added: next.filter((tag) => !previous.includes(tag)),
+      actor: setup.actor,
+      eventId: stamp,
+      at: stamp,
+    });
+  };
+  const stage = async () =>
+    (await setup.core.candidate(threadId))?.recruiting?.stage;
+  await click(["TAG_APPLY FORM_ID", "TAG_NEW_ID", "TAG_CONTACTED_ID"]);
+  assert.equal(await stage(), "Contacted");
+  assert.deepEqual(setup.applied(), ["TAG_APPLY FORM_ID", "TAG_CONTACTED_ID"]);
+  await click(["TAG_APPLY FORM_ID"]);
+  await click([]);
+  assert.deepEqual(setup.applied(), []);
+  assert.equal(await stage(), "Contacted");
+  await click(["TAG_TRIAL_ID"]);
+  assert.equal(await stage(), "Trial");
+  assert.deepEqual(setup.applied(), ["TAG_TRIAL_ID"]);
+});
+
+test("deleting an open candidate's thread withdraws it once", async () => {
+  const setup = fixture();
+  await seed(setup);
+  const remove = (eventId: string) =>
+    setup.core.threadDeleted({
+      threadId,
+      actorId: "officer",
+      eventId,
+      at: "2099-01-01T00:00:00.000Z",
+    });
+  await remove("delete");
+  const candidate = await setup.core.candidate(threadId);
+  assert.equal(candidate?.recruiting?.stage, "Withdrawn");
+  assert.equal(candidate?.recruiting?.changedBy, "officer");
+  await remove("again");
+  await setup.core.threadDeleted({
+    threadId: "OTHER_THREAD_ID",
+    actorId: "officer",
+    eventId: "unrelated",
+    at: "2099-01-01T00:00:00.000Z",
+  });
+  const notes = [...setup.items.values()].filter(
+    (item) => item.kind === "officerNote" && item.sk.includes("#delete"),
+  );
+  assert.equal(notes.length, 1);
+  assert.equal(
+    [...setup.items.values()].filter((item) => item.sk.includes("#again"))
+      .length,
+    0,
+  );
 });
 
 test("failed acceptance preserves stage, restores tags and grants on retry", async () => {
