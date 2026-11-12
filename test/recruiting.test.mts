@@ -381,6 +381,44 @@ test("officer tag change updates the stored stage with actor", async (context) =
   const candidate = await setup.core.candidate(threadId);
   assert.equal(candidate?.recruiting?.stage, "Interview");
   assert.equal(candidate?.recruiting?.changedBy, "ACTOR_USER_ID");
+  const later = (raw: Record<string, unknown>, offset: number) =>
+    Reflect.construct(AuditEntry, [
+      guild,
+      {
+        ...raw,
+        user_id: "ACTOR_USER_ID",
+        target_id: threadId,
+        id: ((BigInt(Date.now() + offset) - 1420070400000n) << 22n).toString(),
+      },
+    ]) as AuditEntry;
+  const swap = ["TAG_INTERVIEW_ID", "TAG_TRIAL_ID"];
+  await setup.port.setTags(threadId, swap, setup.applied());
+  await handler(
+    later(
+      {
+        action_type: 111,
+        changes: [
+          {
+            key: "applied_tags",
+            old_value: ["TAG_INTERVIEW_ID"],
+            new_value: swap,
+          },
+        ],
+      },
+      1000,
+    ),
+    guild,
+  );
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.stage,
+    "Trial",
+  );
+  assert.deepEqual(setup.applied(), ["TAG_TRIAL_ID"]);
+  await handler(later({ action_type: 112, changes: [] }, 2000), guild);
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.stage,
+    "Withdrawn",
+  );
   setup.items.clear();
   const errorLog = context.mock.method(console, "error", () => {});
   await assert.rejects(handler(entry, guild), /CANDIDATE_NOT_FOUND:THREAD_ID/);
@@ -579,9 +617,23 @@ test("deleting an open candidate's thread withdraws it once", async () => {
   );
   assert.equal(notes.length, 1);
   assert.equal(
-    [...setup.items.values()].filter((item) => item.sk.includes("#again"))
-      .length,
+    [...setup.items.values()].filter(
+      (item) => item.sk.includes("#again") || item.sk.includes("#unrelated"),
+    ).length,
     0,
+  );
+  const closed = fixture();
+  await seed(closed);
+  await closed.core.setStage(threadId, "Declined", "officer", "decline");
+  await closed.core.threadDeleted({
+    threadId,
+    actorId: "officer",
+    eventId: "closed",
+    at: "2099-01-01T00:00:00.000Z",
+  });
+  assert.equal(
+    (await closed.core.candidate(threadId))?.recruiting?.stage,
+    "Declined",
   );
 });
 
