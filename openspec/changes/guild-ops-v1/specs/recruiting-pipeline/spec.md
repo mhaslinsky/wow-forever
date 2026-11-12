@@ -29,9 +29,13 @@ The system SHALL apply an officer's decision on a Guilds of WoW application to i
 - **WHEN** a polled application's status text changes to `Rejected` or `Accepted`
 - **THEN** its candidate moves to Declined or Accepted once, as a Discord change would; a closed candidate is not moved
 
-#### Scenario: Unrecognised status
-- **WHEN** a polled application's status text is one the system does not recognise
-- **THEN** the officers get one alert carrying that status text, and the candidate is unchanged
+#### Scenario: Unrecognised or missing status
+- **WHEN** a polled application's status text is one the system does not recognise, or it has none
+- **THEN** the officers get one notice naming that status, and the candidate is unchanged
+
+#### Scenario: Officer changed the candidate meanwhile
+- **WHEN** an officer changes the candidate between the poll reading it and the move being saved
+- **THEN** the move is not saved, and the next poll leaves the officer's decision in place
 
 ### Requirement: Deduplication
 Candidates SHALL be merged when they share a Discord account or a character name and realm-free Forever name.
