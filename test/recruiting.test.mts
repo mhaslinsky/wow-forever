@@ -1026,7 +1026,7 @@ test("release dedupe consumes the grant on both submission-note paths", async ()
   }
 });
 
-test("released retry refuses a stale candidate write and recovers after a failed post", async () => {
+test("released retry merges onto a follow-up edit made during it", async () => {
   const setup = await blockedFixture();
   await setup.core.create({ ...setup.input, source: "Officer lead" });
   await setup.resolve();
@@ -1042,19 +1042,27 @@ test("released retry refuses a stale candidate write and recovers after a failed
     }
     await put(item, condition);
   };
-  const stale = setup.core.create(setup.input).catch((error: unknown) => error);
+  const merged = setup.core.create(setup.input);
   await entered.promise;
   await setup.core.setFollowUp(threadId, setup.actor, {
     owner: "edited-owner",
   });
   resume.resolve();
-  const result = await stale;
+  await merged;
   assert.equal(
     (await setup.core.candidate(threadId))?.recruiting?.owner,
     "edited-owner",
   );
-  assert.ok(result instanceof Error && /WRITE_CONFLICT/.test(result.message));
-  assert.equal(setup.state()?.state, "released");
+  assert.equal(setup.state()?.state, "done");
+});
+
+test("released retry recovers after a failed post", async () => {
+  const setup = await blockedFixture();
+  await setup.core.create({ ...setup.input, source: "Officer lead" });
+  await setup.resolve();
+  await setup.core.setFollowUp(threadId, setup.actor, {
+    owner: "edited-owner",
+  });
   const post = setup.port.post;
   setup.port.post = async () => {
     throw new Error("post failed");
