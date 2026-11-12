@@ -644,13 +644,13 @@ test("deleting an open candidate's thread withdraws it once", async () => {
   );
 });
 
-test("failed acceptance preserves stage, restores tags and grants on retry", async () => {
+test("failed acceptance preserves stage, restores tags and accepts on retry", async () => {
   for (const newerEdit of [false, true]) {
     let attempts = 0;
     const setup = fixture(async () => {
       if (++attempts > 1) return;
       if (newerEdit) await setup.port.setTags(threadId, ["TAG_TRIAL_ID"], []);
-      throw new Error("MEMBER_ROLE_GRANT_FAILED");
+      throw new Error("ROSTER_SAVE_FAILED");
     });
     await seed(setup);
     const tags = ["TAG_ACCEPTED_ID", "TAG_APPLY FORM_ID"];

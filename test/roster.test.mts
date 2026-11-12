@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Client, Routes } from "discord.js";
 import {
   createPrincipalFactory,
   createSystemPrincipal,
@@ -8,6 +9,10 @@ import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import type { CharacterDeclaration } from "../src/data/recruiting.mts";
 import { createRecruiting } from "../src/recruiting/core.mts";
+import {
+  APPROVAL_MESSAGE,
+  acceptForGuild,
+} from "../src/recruiting/discord.mts";
 import { createRoster } from "../src/roster/core.mts";
 import { createRegisterRoutes } from "../src/roster/interactions.mts";
 
@@ -21,11 +26,14 @@ const main: CharacterDeclaration = {
 const alt: CharacterDeclaration = { ...main, name: "Example", main: false };
 function fixture() {
   const items = new Map<string, GuildRecord>();
+  let memberWriteFails = 0;
   const data = createDataAccess({
     get: async (key) => items.get(`${key.pk}/${key.sk}`),
     query: async () => ({ items: [] }),
     batch: async () => [],
     put: async (item) => {
+      if (item.kind === "member" && memberWriteFails-- > 0)
+        throw new Error("storage unavailable");
       items.set(`${item.pk}/${item.sk}`, item);
     },
   });
@@ -89,6 +97,9 @@ function fixture() {
     closeDms: () => {
       approvalFails = true;
     },
+    failMemberWrite: () => {
+      memberWriteFails = 1;
+    },
   };
 }
 
@@ -116,6 +127,59 @@ test("Accepted DMs the approval once and creates the roster entry", async () => 
       "Accepted",
     );
   }
+});
+
+test("a failed roster save sends no DM and the retry sends exactly one", async () => {
+  const setup = fixture();
+  await setup.core.create({
+    name: main.name,
+    source: "Apply form",
+    actorId: "officer",
+    discordUserId: "user",
+    characters: [main],
+  });
+  setup.failMemberWrite();
+  await assert.rejects(
+    setup.core.setStage("thread", "Accepted", "officer", "first"),
+  );
+  assert.deepEqual(setup.approvals, []);
+  assert.equal(
+    (await setup.core.candidate("thread"))?.recruiting?.stage,
+    "New",
+  );
+  await setup.core.setStage("thread", "Accepted", "officer", "retry");
+  assert.deepEqual(setup.approvals, ["user"]);
+});
+
+test("acceptForGuild DMs over REST on a client that never logged in", async () => {
+  const setup = fixture();
+  const client = new Client({ intents: [] });
+  const posts: { route: string; body: unknown }[] = [];
+  client.rest.post = (async (route: string, options?: { body?: unknown }) => {
+    posts.push({ route, body: options?.body });
+    return { id: "DM_CHANNEL_ID" };
+  }) as typeof client.rest.post;
+  assert.equal(client.user, null);
+  const accept = acceptForGuild(
+    { id: "guild", client } as unknown as Parameters<typeof acceptForGuild>[0],
+    setup.data,
+  );
+  await accept({
+    ...recordKey("candidate", "guild", "thread"),
+    kind: "candidate",
+    ownerId: "guild",
+    name: main.name,
+    discordUserId: "user",
+    characters: [main],
+  } as Parameters<typeof accept>[0]);
+  assert.deepEqual(posts, [
+    { route: Routes.userChannels(), body: { recipient_id: "user" } },
+    {
+      route: Routes.channelMessages("DM_CHANNEL_ID"),
+      body: { content: APPROVAL_MESSAGE, allowed_mentions: { parse: [] } },
+    },
+  ]);
+  assert.equal(setup.member()?.name, main.name);
 });
 
 test("/register creates and updates mains and alts", async () => {
