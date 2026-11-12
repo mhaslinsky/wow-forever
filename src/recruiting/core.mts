@@ -168,12 +168,14 @@ export function createRecruiting(
     actorId: string,
     eventId: string,
     at: string,
-    acceptanceFailed?: () => Promise<void>,
+    acceptanceFailed?: (restored: RecruitingState) => Promise<void>,
   ) {
     const saved = await saveCandidate(threadId, (record) => {
       if (!record.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
       const stage = stageFor(record.recruiting);
-      if (stage === undefined) return;
+      // Rewriting the same stage would replace the marker a pending
+      // acceptance needs to roll itself back.
+      if (stage === undefined || stage === record.recruiting.stage) return;
       if (!STAGES.includes(stage)) throw new Error("INVALID_RECRUITING_STAGE");
       return {
         ...record,
@@ -196,7 +198,7 @@ export function createRecruiting(
       } catch (cause) {
         // Put back only the stage this save wrote, so another acceptance can
         // retry it without undoing a follow-up edit made in between.
-        await saveCandidate(threadId, (current) =>
+        const rollback = await saveCandidate(threadId, (current) =>
           current.recruiting?.stage === "Accepted" &&
           current.recruiting.changedBy === actorId &&
           current.recruiting.changedAt === at
@@ -210,8 +212,11 @@ export function createRecruiting(
                 },
               }
             : undefined,
-        );
-        await acceptanceFailed?.();
+        ).catch(() => {
+          report({ code: "CANDIDATE_SAVE_FAILED", threadId });
+          return undefined;
+        });
+        if (rollback?.updated) await acceptanceFailed?.(before);
         throw cause;
       }
     }
@@ -496,7 +501,8 @@ export function createRecruiting(
           actor.userId,
           input.eventId,
           input.at,
-          () => syncTags(input.threadId, state.stage, state.source, current),
+          (restored) =>
+            syncTags(input.threadId, restored.stage, restored.source, current),
         );
         // A change saved after this edit was made wins, tags included.
         const fresh = saved.record.recruiting;
@@ -515,6 +521,7 @@ export function createRecruiting(
       stage: Stage,
       actorId: string,
       eventId: string,
+      from?: Stage,
     ) {
       if (!STAGES.includes(stage) || !actorId)
         throw new Error("INVALID_RECRUITING_STAGE");
@@ -522,15 +529,19 @@ export function createRecruiting(
       if (!record?.recruiting) throw new Error("CANDIDATE_NOT_FOUND");
       const source = record.recruiting.source;
       return saving(threadId, async () => {
+        // With `from`, the move applies only to the stage the caller expects,
+        // so it never overwrites a stage saved since the caller looked.
         const saved = await saveStage(
           threadId,
-          () => stage,
+          (state) => (from && state.stage !== from ? undefined : stage),
           actorId,
           eventId,
           new Date().toISOString(),
         );
-        await syncTags(threadId, stage, source);
-        return saved.updated ?? saved.record;
+        const current = saved.updated ?? saved.record;
+        if (current.recruiting?.stage === stage)
+          await syncTags(threadId, stage, source);
+        return current;
       });
     },
   };

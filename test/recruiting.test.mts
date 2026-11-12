@@ -1209,3 +1209,30 @@ test("a failed acceptance puts back only the stage it saved", async () => {
   assert.equal(saved?.stage, "New");
   assert.equal(saved?.owner, "edited");
 });
+
+test("a repeat acceptance during a failing one still lets it roll back", async () => {
+  let setup: ReturnType<typeof fixture> | undefined;
+  setup = fixture(async () => {
+    await setup?.core.setStage(threadId, "Accepted", "officer", "repeat");
+    throw new Error("roster unavailable");
+  });
+  await seed(setup);
+  await assert.rejects(
+    setup.core.setStage(threadId, "Accepted", "officer", "accept"),
+    /SAVE_FAILED/,
+  );
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.stage,
+    "New",
+  );
+});
+
+test("an expected-stage move leaves a stage saved before it", async () => {
+  const setup = fixture();
+  await seed(setup);
+  await setup.core.setStage(threadId, "Declined", "officer", "decline");
+  await setup.core.setStage(threadId, "Applied", "applicant", "apply", "New");
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "Declined");
+  assert.ok(setup.applied().includes("TAG_DECLINED_ID"));
+});
