@@ -72,31 +72,29 @@ export function createRoster(
     async accept(
       candidate: Candidate,
       principal: Principal<"system">,
-      grantMember: (userId: string) => Promise<void>,
+      sendApproval: (userId: string) => Promise<void>,
       report: (failure: RecruitingFailure) => void = reportRecruitingFailure,
     ) {
+      const threadId = candidate.recruiting?.threadId ?? candidate.sk;
       if (!candidate.discordUserId) {
-        report({
-          code: "MEMBER_GRANT_SKIPPED",
-          threadId: candidate.recruiting?.threadId ?? candidate.sk,
-        });
+        report({ code: "APPROVAL_DM_SKIPPED", threadId });
         return;
       }
-      try {
-        await grantMember(candidate.discordUserId);
-      } catch (cause) {
-        report({
-          code: "MEMBER_ROLE_GRANT_FAILED",
-          threadId: candidate.recruiting?.threadId ?? candidate.sk,
-        });
-        throw new Error("MEMBER_ROLE_GRANT_FAILED", { cause });
-      }
+      // A failed save rolls the acceptance back, so it runs before the DM
+      // that a retry would otherwise send twice.
       await save(
         principal,
         candidate.discordUserId,
         candidate.characters ?? [],
         candidate.name,
       );
+      // Members join only after the in-game invite and proof, so acceptance
+      // grants no role and a closed DM must not undo the decision.
+      try {
+        await sendApproval(candidate.discordUserId);
+      } catch {
+        report({ code: "APPROVAL_DM_FAILED", threadId });
+      }
     },
   };
 }

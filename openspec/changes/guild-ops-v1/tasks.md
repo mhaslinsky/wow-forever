@@ -39,6 +39,7 @@
 
 - [x] 4.1 Roster model, `/register` for mains and alts, Accepted stage grants Member and creates the roster entry (depends on: 1.3, 1.4, 3.1) (complexity: standard) (gate: none)
   Done in PR #33 (PER-318). Accepted grants Member; candidates without a Discord account alarm for a manual grant.
+  Changed by PER-464: Accepted now sends an approval DM and grants no role. Member comes from in-game proof (roster-identity-v1, PER-373).
 - [x] 4.2 Departure flags from member-leave events and two-snapshot absence, with Confirm and Keep buttons for officers (depends on: 4.1, 5.3) (complexity: standard) (gate: none)
 - [x] 4.3 Raid targets per team, pinned needs board, `/needs message` recruiting text (depends on: 4.1) (complexity: standard) (gate: none)
 

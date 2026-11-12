@@ -19,6 +19,9 @@ import { reportRecruitingFailure } from "./alarm.mts";
 import { discordAlerts } from "./alerts.mts";
 import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
+export const APPROVAL_MESSAGE =
+  "Hey, you've been approved! Hop on and whisper any officer in game for a guild invite. Once you're in we'll get your Discord access sorted.";
+
 type AppliedTagsChange = { key: "applied_tags"; old?: unknown; new?: unknown };
 
 // Withdrawing a deleted thread's candidate never touches the forum, so every
@@ -161,15 +164,16 @@ export function acceptForGuild(
     roster.accept(
       candidate,
       createSystemPrincipal(["member"]),
+      // Plain REST calls: user.send reads client.user, which is null on the
+      // Lambdas' clients that never log in.
       async (userId) => {
-        const roles = (await guild.roles.fetch()).filter(
-          (role) => role.name === "Member",
-        );
-        const memberRole = roles.first();
-        if (roles.size !== 1 || !memberRole)
-          throw new Error("MEMBER_ROLE_MISSING_OR_AMBIGUOUS");
-        const member = await guild.members.fetch({ user: userId, force: true });
-        await member.roles.add(memberRole);
+        const channel = (await guild.client.rest.post(Routes.userChannels(), {
+          body: { recipient_id: userId },
+        })) as { id?: string };
+        if (!channel?.id) throw new Error("APPROVAL_DM_CHANNEL_MISSING");
+        await guild.client.rest.post(Routes.channelMessages(channel.id), {
+          body: { content: APPROVAL_MESSAGE, allowed_mentions: { parse: [] } },
+        });
       },
     );
 }
