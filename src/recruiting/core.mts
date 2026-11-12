@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { authority, type Principal } from "../auth/index.mts";
 import { type Application, applicationAnswers } from "../data/application.mts";
-import type { createDataAccess } from "../data/index.mts";
+import type { createDataAccess, WriteCondition } from "../data/index.mts";
 import { type GuildRecord, recordKey } from "../data/records.mts";
 import {
   type CharacterDeclaration,
+  type RecruitingState,
   SOURCES,
   type Source,
   STAGES,
@@ -57,6 +58,9 @@ export function sameTags(
     actual.every((tag) => expected.includes(tag))
   );
 }
+
+const CLOSED_STAGES: readonly Stage[] = ["Accepted", "Declined", "Withdrawn"];
+const SAVE_ATTEMPTS = 3;
 
 function tagId(tags: readonly ForumTag[], name: string): string {
   const matches = tags.filter((tag) => tag.name === name);
@@ -128,60 +132,111 @@ export function createRecruiting(
     if (sameTags(tags, next)) return;
     await forum.setTags(threadId, next, tags);
   }
+  /**
+   * Saves a change to the candidate as it is stored now. The gateway and the
+   * Lambdas write the same record, so a save that finds the candidate changed
+   * since its read reads again and reapplies the change instead of overwriting.
+   */
+  async function saveCandidate(
+    threadId: string,
+    change: (record: Candidate) => Candidate | undefined,
+    condition: Omit<WriteCondition, "candidatePrevious"> = {},
+  ): Promise<{ record: Candidate; updated?: Candidate }> {
+    for (let attempt = 1; ; attempt++) {
+      const record = await candidate(threadId);
+      if (!record) throw new Error("CANDIDATE_NOT_FOUND");
+      // The store refuses any write to a purged candidate, so rereading is pointless.
+      if (record.retention) throw new Error("WRITE_CONFLICT");
+      const updated = change(record);
+      if (!updated) return { record };
+      try {
+        await records.write(updated, {
+          ...condition,
+          candidatePrevious: record,
+        });
+        return { record, updated };
+      } catch (cause) {
+        const conflict =
+          cause instanceof Error && cause.message === "WRITE_CONFLICT";
+        if (!conflict || attempt >= SAVE_ATTEMPTS) throw cause;
+      }
+    }
+  }
   async function saveStage(
-    record: Candidate,
-    stage: Stage,
+    threadId: string,
+    stageFor: (state: RecruitingState) => Stage | undefined,
     actorId: string,
     eventId: string,
     at: string,
-    acceptanceFailed?: () => Promise<void>,
+    acceptanceFailed?: (restored: RecruitingState) => Promise<void>,
   ) {
-    if (!STAGES.includes(stage)) throw new Error("INVALID_RECRUITING_STAGE");
-    if (!record.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
-    const updated: Candidate = {
-      ...record,
-      recruiting: {
-        ...record.recruiting,
-        stage,
-        changedBy: actorId,
-        changedAt: at,
-      },
-    };
-    // Run acceptance only after the candidate write clears the retention fence.
-    await records.write(updated);
+    const saved = await saveCandidate(threadId, (record) => {
+      if (!record.recruiting) throw new Error("CANDIDATE_THREAD_MISSING");
+      const stage = stageFor(record.recruiting);
+      // Rewriting the same stage would replace the marker a pending
+      // acceptance needs to roll itself back.
+      if (stage === undefined || stage === record.recruiting.stage) return;
+      if (!STAGES.includes(stage)) throw new Error("INVALID_RECRUITING_STAGE");
+      return {
+        ...record,
+        recruiting: {
+          ...record.recruiting,
+          stage,
+          changedBy: actorId,
+          changedAt: at,
+        },
+      };
+    });
+    const before = saved.record.recruiting;
+    const after = saved.updated?.recruiting;
+    if (!before || !after || !saved.updated) return saved;
     // A repeat acceptance must not send the approval DM twice.
-    if (stage === "Accepted" && record.recruiting.stage !== "Accepted") {
+    if (after.stage === "Accepted" && before.stage !== "Accepted") {
       try {
         if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
-        await accepted(updated);
+        await accepted(saved.updated);
       } catch (cause) {
-        // Restore the previous stage so another acceptance can retry it.
-        await records.write(record);
-        await acceptanceFailed?.();
+        // Put back only the stage this save wrote, so another acceptance can
+        // retry it without undoing a follow-up edit made in between.
+        const rollback = await saveCandidate(threadId, (current) =>
+          current.recruiting?.stage === "Accepted" &&
+          current.recruiting.changedBy === actorId &&
+          current.recruiting.changedAt === at
+            ? {
+                ...current,
+                recruiting: {
+                  ...current.recruiting,
+                  stage: before.stage,
+                  changedBy: before.changedBy,
+                  changedAt: before.changedAt,
+                },
+              }
+            : undefined,
+        ).catch(() => {
+          report({ code: "CANDIDATE_SAVE_FAILED", threadId });
+          return undefined;
+        });
+        if (rollback?.updated) await acceptanceFailed?.(before);
         throw cause;
       }
     }
     await records.write(
       {
-        ...recordKey(
-          "officerNote",
-          guildId,
-          `${record.recruiting.threadId}#${eventId}`,
-        ),
+        ...recordKey("officerNote", guildId, `${before.threadId}#${eventId}`),
         kind: "officerNote",
         ownerId: guildId,
         text: JSON.stringify({
-          from: record.recruiting.stage,
-          to: stage,
+          from: before.stage,
+          to: after.stage,
           actorId,
           at,
         }),
       },
       {
-        candidateThreadId: record.recruiting.threadId,
+        candidateThreadId: before.threadId,
       },
     );
-    return updated;
+    return saved;
   }
   return {
     candidate,
@@ -281,29 +336,25 @@ export function createRecruiting(
         return saving(threadId, async () => {
           const [previous] = await records.get(note(threadId));
           if (previous) return intake.finishReleased(replay.released, existing);
-          const enriched: Candidate = {
-            ...existing,
-            ...(!existing.discordUserId && input.discordUserId
-              ? { discordUserId: input.discordUserId }
-              : {}),
-            ...(!existing.characters && input.characters
-              ? {
-                  characters: input.characters,
-                  ...(input.application
-                    ? { application: input.application }
-                    : {}),
-                }
-              : {}),
-          };
-          await records.write(
-            enriched,
-            replay.released
-              ? {
-                  candidatePrevious: existing,
-                  releasedIntake: replay.released,
-                }
-              : undefined,
+          const saved = await saveCandidate(
+            threadId,
+            (current) => ({
+              ...current,
+              ...(!current.discordUserId && input.discordUserId
+                ? { discordUserId: input.discordUserId }
+                : {}),
+              ...(!current.characters && input.characters
+                ? {
+                    characters: input.characters,
+                    ...(input.application
+                      ? { application: input.application }
+                      : {}),
+                  }
+                : {}),
+            }),
+            replay.released ? { releasedIntake: replay.released } : {},
           );
+          const enriched = saved.updated ?? saved.record;
           await records.write(note(threadId), {
             candidateThreadId: threadId,
           });
@@ -362,12 +413,15 @@ export function createRecruiting(
         throw new Error("INVALID_FOLLOW_UP");
       const record = await candidate(threadId);
       if (!record?.recruiting) throw new Error("CANDIDATE_NOT_FOUND");
-      const updated: Candidate = {
-        ...record,
-        recruiting: { ...record.recruiting, ...update },
-      };
-      await saving(threadId, () => records.write(updated));
-      return updated;
+      const saved = await saving(threadId, () =>
+        saveCandidate(threadId, (current) =>
+          current.recruiting
+            ? { ...current, recruiting: { ...current.recruiting, ...update } }
+            : undefined,
+        ),
+      );
+      if (!saved.updated) throw new Error("CANDIDATE_NOT_FOUND");
+      return saved.updated;
     },
     async threadDeleted(input: {
       threadId: string;
@@ -378,12 +432,20 @@ export function createRecruiting(
       const record = await candidate(input.threadId);
       if (
         !record?.recruiting ||
-        ["Accepted", "Declined", "Withdrawn"].includes(record.recruiting.stage)
+        CLOSED_STAGES.includes(record.recruiting.stage)
       )
         return;
-      return saving(input.threadId, () =>
-        saveStage(record, "Withdrawn", input.actorId, input.eventId, input.at),
+      const saved = await saving(input.threadId, () =>
+        saveStage(
+          input.threadId,
+          (state) =>
+            CLOSED_STAGES.includes(state.stage) ? undefined : "Withdrawn",
+          input.actorId,
+          input.eventId,
+          input.at,
+        ),
       );
+      return saved.updated;
     },
     async officerTags(input: {
       threadId: string;
@@ -430,18 +492,22 @@ export function createRecruiting(
           return;
         }
         const stage = chosen.name as Stage;
-        const updated =
-          state.stage === stage
-            ? record
-            : await saveStage(
-                record,
-                stage,
-                actor.userId,
-                input.eventId,
-                input.at,
-                () =>
-                  syncTags(input.threadId, state.stage, state.source, current),
-              );
+        const newer = (fresh: RecruitingState) =>
+          Date.parse(input.at) < Date.parse(fresh.changedAt);
+        const saved = await saveStage(
+          input.threadId,
+          (fresh) =>
+            newer(fresh) || fresh.stage === stage ? undefined : stage,
+          actor.userId,
+          input.eventId,
+          input.at,
+          (restored) =>
+            syncTags(input.threadId, restored.stage, restored.source, current),
+        );
+        // A change saved after this edit was made wins, tags included.
+        const fresh = saved.record.recruiting;
+        if (!saved.updated && fresh && newer(fresh)) return;
+        const updated = saved.updated ?? saved.record;
         const next = current.filter(
           (id) => id === chosen.id || !stageTags.some((tag) => tag.id === id),
         );
@@ -455,6 +521,7 @@ export function createRecruiting(
       stage: Stage,
       actorId: string,
       eventId: string,
+      from?: Stage,
     ) {
       if (!STAGES.includes(stage) || !actorId)
         throw new Error("INVALID_RECRUITING_STAGE");
@@ -462,15 +529,19 @@ export function createRecruiting(
       if (!record?.recruiting) throw new Error("CANDIDATE_NOT_FOUND");
       const source = record.recruiting.source;
       return saving(threadId, async () => {
-        const updated = await saveStage(
-          record,
-          stage,
+        // With `from`, the move applies only to the stage the caller expects,
+        // so it never overwrites a stage saved since the caller looked.
+        const saved = await saveStage(
+          threadId,
+          (state) => (from && state.stage !== from ? undefined : stage),
           actorId,
           eventId,
           new Date().toISOString(),
         );
-        await syncTags(threadId, stage, source);
-        return updated;
+        const current = saved.updated ?? saved.record;
+        if (current.recruiting?.stage === stage)
+          await syncTags(threadId, stage, source);
+        return current;
       });
     },
   };
