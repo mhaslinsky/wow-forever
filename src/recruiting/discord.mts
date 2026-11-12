@@ -20,7 +20,7 @@ import { discordAlerts } from "./alerts.mts";
 import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
 export const APPROVAL_MESSAGE =
-  "You've been approved to join the guild! Log in and whisper any officer for an invite. Once you're in, we'll get your Discord access sorted. See you in game.";
+  "Hey, you've been approved! Hop on and whisper any officer in game for a guild invite. Once you're in we'll get your Discord access sorted.";
 
 type AppliedTagsChange = { key: "applied_tags"; old?: unknown; new?: unknown };
 
