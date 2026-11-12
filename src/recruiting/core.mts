@@ -58,6 +58,8 @@ export function sameTags(
   );
 }
 
+const CLOSED_STAGES: readonly Stage[] = ["Accepted", "Declined", "Withdrawn"];
+
 function tagId(tags: readonly ForumTag[], name: string): string {
   const matches = tags.filter((tag) => tag.name === name);
   if (matches.length !== 1)
@@ -148,7 +150,9 @@ export function createRecruiting(
       },
     };
     // Run acceptance only after the candidate write clears the retention fence.
-    await records.write(updated);
+    // The Guilds of WoW sync writes from another process, so a stage written
+    // since this read must fail the write rather than be overwritten.
+    await records.write(updated, { candidatePrevious: record });
     // A repeat acceptance must not send the approval DM twice.
     if (stage === "Accepted" && record.recruiting.stage !== "Accepted") {
       try {
@@ -156,7 +160,7 @@ export function createRecruiting(
         await accepted(updated);
       } catch (cause) {
         // Restore the previous stage so another acceptance can retry it.
-        await records.write(record);
+        await records.write(record, { candidatePrevious: updated });
         await acceptanceFailed?.();
         throw cause;
       }
@@ -378,7 +382,7 @@ export function createRecruiting(
       const record = await candidate(input.threadId);
       if (
         !record?.recruiting ||
-        ["Accepted", "Declined", "Withdrawn"].includes(record.recruiting.stage)
+        CLOSED_STAGES.includes(record.recruiting.stage)
       )
         return;
       return saving(input.threadId, () =>
@@ -472,6 +476,36 @@ export function createRecruiting(
         await syncTags(threadId, stage, source);
         return updated;
       });
+    },
+    /**
+     * Applies an outside decision to an open candidate. A candidate this actor
+     * already moved to the same stage is finished again, so a move that failed
+     * after its stage was saved still gets its officer note and tags.
+     */
+    async applyDecision(
+      threadId: string,
+      stage: Stage,
+      actorId: string,
+      eventId: string,
+    ): Promise<"moved" | "resumed" | "closed" | "missing"> {
+      if (!STAGES.includes(stage) || !actorId)
+        throw new Error("INVALID_RECRUITING_STAGE");
+      const record = await candidate(threadId);
+      if (!record?.recruiting || record.retention) return "missing";
+      const state = record.recruiting;
+      const resuming = state.stage === stage && state.changedBy === actorId;
+      if (CLOSED_STAGES.includes(state.stage) && !resuming) return "closed";
+      await saving(threadId, async () => {
+        await saveStage(
+          record,
+          stage,
+          actorId,
+          eventId,
+          new Date().toISOString(),
+        );
+        await syncTags(threadId, stage, state.source);
+      });
+      return resuming ? "resumed" : "moved";
     },
   };
 }

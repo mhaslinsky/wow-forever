@@ -3,6 +3,7 @@ import { createSystemPrincipal } from "../auth/index.mts";
 import { createGowStore } from "../data/gow-applications.mts";
 import { createDynamoDataAccess } from "../data/index.mts";
 import { readSecret } from "../interactions/index.mts";
+import { discordAlerts } from "../recruiting/alerts.mts";
 import { recruitingForGuild } from "../recruiting/discord.mts";
 import { captureApplications } from "./core.mts";
 import { mapApplications } from "./mapping.mts";
@@ -57,18 +58,25 @@ export async function handler() {
         data,
         principal,
       );
-      const mapped = await mapApplications({
+      // One application that cannot be mapped must not hold up decisions on
+      // the ones already mapped, so sync runs before the mapping error is raised.
+      const mapping = await mapApplications({
         guildId: required("GUILD_ID"),
         records: data.forSystem(principal),
         create: core.create,
-      });
+      }).then(
+        (value) => ({ value }),
+        (reason: unknown) => ({ reason }),
+      );
       const synced = await syncStatuses({
         guildId: required("GUILD_ID"),
         recruits,
         records: data.forSystem(principal),
         recruiting: core,
+        notify: discordAlerts(client.rest, required("GUILD_ID")),
       });
-      return { ...captured, ...mapped, ...synced };
+      if ("reason" in mapping) throw mapping.reason;
+      return { ...captured, ...mapping.value, ...synced };
     } finally {
       client.destroy();
     }
