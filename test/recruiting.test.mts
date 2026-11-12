@@ -1139,3 +1139,65 @@ test("supplied-thread verifier checks authenticated ownership and the final star
   }
   assert.equal(await setup.resolve(adoptedLink), "adopted");
 });
+
+test("an officer tag edit keeps a follow-up saved while it runs", async () => {
+  const setup = fixture();
+  await seed(setup);
+  const tags = setup.port.tags;
+  let interrupt = true;
+  setup.port.tags = async () => {
+    if (interrupt) {
+      interrupt = false;
+      await setup.core.setFollowUp(threadId, setup.actor, { owner: "edited" });
+    }
+    return tags();
+  };
+  const edited = ["TAG_APPLY FORM_ID", "TAG_TRIAL_ID"];
+  await setup.port.setTags(threadId, edited, setup.applied());
+  const at = "2099-01-01T00:00:00.000Z";
+  await setup.core.officerTags({
+    threadId,
+    tags: edited,
+    added: ["TAG_TRIAL_ID"],
+    actor: setup.actor,
+    eventId: at,
+    at,
+  });
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "Trial");
+  assert.equal(saved?.owner, "edited");
+});
+
+test("a follow-up does not undo a stage saved while it runs", async () => {
+  const setup = fixture();
+  await seed(setup);
+  const put = setup.storage.put;
+  let interrupt = true;
+  setup.storage.put = async (item, condition) => {
+    if (interrupt && item.kind === "candidate") {
+      interrupt = false;
+      await setup.core.setStage(threadId, "Declined", "officer", "decline");
+    }
+    await put(item, condition);
+  };
+  await setup.core.setFollowUp(threadId, setup.actor, { owner: "edited" });
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "Declined");
+  assert.equal(saved?.owner, "edited");
+});
+
+test("a failed acceptance puts back only the stage it saved", async () => {
+  let setup: ReturnType<typeof fixture> | undefined;
+  setup = fixture(async () => {
+    await setup?.core.setFollowUp(threadId, setup.actor, { owner: "edited" });
+    throw new Error("roster unavailable");
+  });
+  await seed(setup);
+  await assert.rejects(
+    setup.core.setStage(threadId, "Accepted", "officer", "accept"),
+    /SAVE_FAILED/,
+  );
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "New");
+  assert.equal(saved?.owner, "edited");
+});
