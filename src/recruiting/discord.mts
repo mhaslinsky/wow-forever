@@ -164,11 +164,15 @@ export function acceptForGuild(
     roster.accept(
       candidate,
       createSystemPrincipal(["member"]),
+      // Plain REST calls: user.send reads client.user, which is null on the
+      // Lambdas' clients that never log in.
       async (userId) => {
-        const user = await guild.client.users.fetch(userId, { force: true });
-        await user.send({
-          content: APPROVAL_MESSAGE,
-          allowedMentions: { parse: [] },
+        const channel = (await guild.client.rest.post(Routes.userChannels(), {
+          body: { recipient_id: userId },
+        })) as { id?: string };
+        if (!channel?.id) throw new Error("APPROVAL_DM_CHANNEL_MISSING");
+        await guild.client.rest.post(Routes.channelMessages(channel.id), {
+          body: { content: APPROVAL_MESSAGE, allowed_mentions: { parse: [] } },
         });
       },
     );

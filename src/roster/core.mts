@@ -80,6 +80,14 @@ export function createRoster(
         report({ code: "APPROVAL_DM_SKIPPED", threadId });
         return;
       }
+      // A failed save rolls the acceptance back, so it runs before the DM
+      // that a retry would otherwise send twice.
+      await save(
+        principal,
+        candidate.discordUserId,
+        candidate.characters ?? [],
+        candidate.name,
+      );
       // Members join only after the in-game invite and proof, so acceptance
       // grants no role and a closed DM must not undo the decision.
       try {
@@ -87,12 +95,6 @@ export function createRoster(
       } catch {
         report({ code: "APPROVAL_DM_FAILED", threadId });
       }
-      await save(
-        principal,
-        candidate.discordUserId,
-        candidate.characters ?? [],
-        candidate.name,
-      );
     },
   };
 }
