@@ -45,6 +45,8 @@ function fixture() {
     "recruitingIntake",
   ]);
   const failures: string[] = [];
+  const approvals: string[] = [];
+  let approvalFails = false;
   const roster = createRoster(data, "guild");
   const member = () =>
     [...items.values()].find((item) => item.kind === "member");
@@ -69,32 +71,51 @@ function fixture() {
         candidate,
         principal,
         async (userId) => {
-          assert.equal(userId, "user");
+          if (approvalFails) throw new Error("DMs closed");
+          approvals.push(userId);
         },
         (failure) => failures.push(failure.code),
       ),
   );
-  return { data, actor, principal, roster, member, core, failures };
+  return {
+    data,
+    actor,
+    principal,
+    roster,
+    member,
+    core,
+    failures,
+    approvals,
+    closeDms: () => {
+      approvalFails = true;
+    },
+  };
 }
 
-test("Accepted grants Member and creates the roster entry", async () => {
-  const setup = fixture();
-  await setup.core.create({
-    name: main.name,
-    source: "Apply form",
-    actorId: "officer",
-    discordUserId: "user",
-    characters: [main, alt],
-  });
-  await setup.core.setStage("thread", "Accepted", "officer", "event");
-  assert.deepEqual(
-    setup.member()?.roster,
-    [main, alt].map((character) => ({ ...character, confirmed: false })),
-  );
-  assert.equal(
-    (await setup.core.candidate("thread"))?.recruiting?.stage,
-    "Accepted",
-  );
+test("Accepted DMs the approval once and creates the roster entry", async () => {
+  for (const dmsClosed of [false, true]) {
+    const setup = fixture();
+    if (dmsClosed) setup.closeDms();
+    await setup.core.create({
+      name: main.name,
+      source: "Apply form",
+      actorId: "officer",
+      discordUserId: "user",
+      characters: [main, alt],
+    });
+    await setup.core.setStage("thread", "Accepted", "officer", "event");
+    await setup.core.setStage("thread", "Accepted", "officer", "repeat");
+    assert.deepEqual(setup.approvals, dmsClosed ? [] : ["user"]);
+    assert.deepEqual(setup.failures, dmsClosed ? ["APPROVAL_DM_FAILED"] : []);
+    assert.deepEqual(
+      setup.member()?.roster,
+      [main, alt].map((character) => ({ ...character, confirmed: false })),
+    );
+    assert.equal(
+      (await setup.core.candidate("thread"))?.recruiting?.stage,
+      "Accepted",
+    );
+  }
 });
 
 test("/register creates and updates mains and alts", async () => {
@@ -163,7 +184,7 @@ test("Accepted permits leads without a Discord account or declared characters", 
     assert.deepEqual(setup.member()?.roster, discordUserId ? [] : undefined);
     assert.deepEqual(
       setup.failures,
-      discordUserId ? [] : ["MEMBER_GRANT_SKIPPED"],
+      discordUserId ? [] : ["APPROVAL_DM_SKIPPED"],
     );
   }
 });
