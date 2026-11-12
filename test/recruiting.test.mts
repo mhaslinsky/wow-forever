@@ -414,7 +414,14 @@ test("officer tag change updates the stored stage with actor", async (context) =
     "Trial",
   );
   assert.deepEqual(setup.applied(), ["TAG_TRIAL_ID"]);
+  const healthyRoles = guild.roles.fetch;
+  Object.assign(guild.roles, {
+    fetch: async () => {
+      throw new Error("roles unavailable");
+    },
+  });
   await handler(later({ action_type: 112, changes: [] }, 2000), guild);
+  Object.assign(guild.roles, { fetch: healthyRoles });
   assert.equal(
     (await setup.core.candidate(threadId))?.recruiting?.stage,
     "Withdrawn",
