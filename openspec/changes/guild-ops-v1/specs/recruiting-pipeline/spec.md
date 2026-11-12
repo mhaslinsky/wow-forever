@@ -36,6 +36,18 @@ A candidate's stage SHALL be one of New, Contacted, Applied, Interview, Trial, A
 - **WHEN** an officer changes a thread's tag from Interview to Trial
 - **THEN** the candidate's stage becomes Trial and the change is recorded with who made it
 
+#### Scenario: Officer adds the new stage before removing the old one
+- **WHEN** an officer adds the Trial tag while the Interview tag is still on the thread
+- **THEN** the candidate's stage becomes Trial and the bot removes the Interview tag
+
+#### Scenario: Officer removes the old stage before adding the new one
+- **WHEN** an officer removes the only stage tag from a thread
+- **THEN** the stored stage and the thread's tags are left alone until the officer adds the next stage
+
+#### Scenario: Thread deleted
+- **WHEN** an open candidate's thread is deleted
+- **THEN** the candidate becomes Withdrawn and drops out of the overdue digest
+
 ### Requirement: Overdue digest
 Each candidate SHALL carry an owner and a next-action date, and a daily digest in the officers' channel SHALL list candidates whose next action is overdue.
 

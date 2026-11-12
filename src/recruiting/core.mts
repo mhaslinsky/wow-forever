@@ -368,9 +368,26 @@ export function createRecruiting(
       await saving(threadId, () => records.write(updated));
       return updated;
     },
+    async threadDeleted(input: {
+      threadId: string;
+      actorId: string;
+      eventId: string;
+      at: string;
+    }) {
+      const record = await candidate(input.threadId);
+      if (
+        !record?.recruiting ||
+        ["Accepted", "Declined", "Withdrawn"].includes(record.recruiting.stage)
+      )
+        return;
+      return saving(input.threadId, () =>
+        saveStage(record, "Withdrawn", input.actorId, input.eventId, input.at),
+      );
+    },
     async officerTags(input: {
       threadId: string;
       tags: readonly string[];
+      added?: readonly string[];
       actor: Principal<"user">;
       eventId: string;
       at: string;
@@ -393,28 +410,42 @@ export function createRecruiting(
         // A newer Discord edit must keep its own actor.
         if (!sameTags(current, input.tags)) return;
         const available = await forum.tags();
-        const stages = STAGES.filter((stage) =>
-          available.some(
-            (tag) => tag.name === stage && current.includes(tag.id),
-          ),
+        const stageTags = available.filter((tag) =>
+          STAGES.some((stage) => stage === tag.name),
         );
-        if (stages.length !== 1) {
+        const present = stageTags.filter((tag) => current.includes(tag.id));
+        // Discord saves each tag click separately, so an officer swapping
+        // stages passes through zero or two stage tags on the way.
+        if (!present.length) return;
+        const added = present.filter((tag) => input.added?.includes(tag.id));
+        const chosen =
+          present.length === 1
+            ? present[0]
+            : added.length === 1
+              ? added[0]
+              : undefined;
+        if (!chosen) {
           await syncTags(input.threadId, state.stage, state.source, current);
           return;
         }
+        const stage = chosen.name as Stage;
         const updated =
-          state.stage === stages[0]
+          state.stage === stage
             ? record
             : await saveStage(
                 record,
-                stages[0],
+                stage,
                 actor.userId,
                 input.eventId,
                 input.at,
                 () =>
                   syncTags(input.threadId, state.stage, state.source, current),
               );
-        await syncTags(input.threadId, stages[0], state.source, current);
+        const next = current.filter(
+          (id) => id === chosen.id || !stageTags.some((tag) => tag.id === id),
+        );
+        if (!sameTags(current, next))
+          await forum.setTags(input.threadId, next, current);
         return updated;
       });
     },

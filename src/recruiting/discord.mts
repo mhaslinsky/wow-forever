@@ -19,7 +19,22 @@ import { reportRecruitingFailure } from "./alarm.mts";
 import { discordAlerts } from "./alerts.mts";
 import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
-type AppliedTagsChange = { key: "applied_tags"; new?: unknown };
+type AppliedTagsChange = { key: "applied_tags"; old?: unknown; new?: unknown };
+
+// Withdrawing a deleted thread's candidate never touches the forum, so every
+// thread delete in the guild must not depend on the forum being healthy.
+const noForum = new Proxy({} as ForumPort, {
+  get: () => async () => {
+    throw new Error("FORUM_UNUSED_ON_DELETE");
+  },
+});
+
+function tagList(value: unknown): string[] {
+  const list = value === undefined ? [] : value;
+  if (!Array.isArray(list) || !list.every((tag) => typeof tag === "string"))
+    throw new Error("RECRUITING_AUDIT_TAGS_INVALID");
+  return list;
+}
 
 export async function recruitingContext(guild: Guild) {
   const roles = await guild.roles.fetch();
@@ -188,26 +203,40 @@ export function recruitingHandlers(
     async guildAuditLogEntryCreate(entry, guild) {
       if (
         guild.id !== guildId ||
-        entry.action !== AuditLogEvent.ThreadUpdate ||
         !entry.targetId ||
         !entry.executorId ||
         entry.executorId === client.user?.id
       )
         return;
-      const change = (entry.changes as unknown as AppliedTagsChange[]).find(
-        (value) => value.key === "applied_tags",
-      );
-      if (!change) return;
+      const deleted = entry.action === AuditLogEvent.ThreadDelete;
+      const change = deleted
+        ? undefined
+        : entry.action === AuditLogEvent.ThreadUpdate
+          ? (entry.changes as unknown as AppliedTagsChange[]).find(
+              (value) => value.key === "applied_tags",
+            )
+          : undefined;
+      if (!deleted && !change) return;
       const previous = pending.get(guild.id) ?? Promise.resolve();
+      const processDelete = async () => {
+        await createRecruiting(
+          data,
+          principal,
+          guild.id,
+          noForum,
+          reportRecruitingFailure,
+        ).threadDeleted({
+          threadId: entry.targetId as string,
+          actorId: entry.executorId as string,
+          eventId: entry.id,
+          at: entry.createdAt.toISOString(),
+        });
+      };
       const processEntry = async () => {
         const thread = await guild.channels.fetch(entry.targetId as string);
         if (!thread?.isThread() || thread.parent?.name !== "recruiting") return;
-        const next = change.new === undefined ? [] : change.new;
-        if (
-          !Array.isArray(next) ||
-          !next.every((tag) => typeof tag === "string")
-        )
-          throw new Error("RECRUITING_AUDIT_TAGS_INVALID");
+        const next = tagList(change?.new);
+        const previousTags = tagList(change?.old);
         const { forum, factory } = await recruitingContext(guild);
         const fetchMember = () =>
           guild.members.fetch({
@@ -243,12 +272,14 @@ export function recruitingHandlers(
         await core.officerTags({
           threadId: thread.id,
           tags: next,
+          added: next.filter((tag) => !previousTags.includes(tag)),
           actor,
           eventId: entry.id,
           at: entry.createdAt.toISOString(),
         });
       };
-      const operation = previous.then(processEntry, processEntry);
+      const work = deleted ? processDelete : processEntry;
+      const operation = previous.then(work, work);
       pending.set(guild.id, operation);
       try {
         await operation;
