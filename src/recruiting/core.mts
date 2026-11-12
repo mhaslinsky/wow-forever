@@ -147,14 +147,15 @@ export function createRecruiting(
         changedAt: at,
       },
     };
-    // Grant membership only after the candidate write clears the retention fence.
+    // Run acceptance only after the candidate write clears the retention fence.
     await records.write(updated);
-    if (stage === "Accepted") {
+    // A repeat acceptance must not send the approval DM twice.
+    if (stage === "Accepted" && record.recruiting.stage !== "Accepted") {
       try {
         if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
         await accepted(updated);
       } catch (cause) {
-        // Restore the previous stage so another acceptance can retry the grant.
+        // Restore the previous stage so another acceptance can retry it.
         await records.write(record);
         await acceptanceFailed?.();
         throw cause;

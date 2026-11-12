@@ -5,7 +5,15 @@ The roster SHALL link each Discord account to one or more characters, with class
 
 #### Scenario: Recruit accepted
 - **WHEN** an officer moves a candidate to Accepted
-- **THEN** the bot grants the Member role and creates a roster entry from the candidate's declared characters
+- **THEN** the bot DMs the candidate once that they are approved and should ask an officer for an in-game invite, creates a roster entry from the candidate's declared characters, and grants no Discord role
+
+#### Scenario: Approval DM cannot be sent
+- **WHEN** the accepted candidate has no linked Discord account or their DMs are closed
+- **THEN** the candidate stays Accepted and the officers are alerted to contact them by hand
+
+#### Scenario: Member role
+- **WHEN** a candidate is accepted
+- **THEN** they do not get the Member role until they are in the guild in-game and have proved which character is theirs
 
 #### Scenario: Existing friend registers
 - **WHEN** a member runs `/register` with their main and alts

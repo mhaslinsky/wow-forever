@@ -19,6 +19,9 @@ import { reportRecruitingFailure } from "./alarm.mts";
 import { discordAlerts } from "./alerts.mts";
 import { createRecruiting, type ForumPort, sameTags } from "./core.mts";
 
+export const APPROVAL_MESSAGE =
+  "You've been approved to join the guild! Log in and whisper any officer for an invite. Once you're in, we'll get your Discord access sorted. See you in game.";
+
 type AppliedTagsChange = { key: "applied_tags"; old?: unknown; new?: unknown };
 
 // Withdrawing a deleted thread's candidate never touches the forum, so every
@@ -162,14 +165,11 @@ export function acceptForGuild(
       candidate,
       createSystemPrincipal(["member"]),
       async (userId) => {
-        const roles = (await guild.roles.fetch()).filter(
-          (role) => role.name === "Member",
-        );
-        const memberRole = roles.first();
-        if (roles.size !== 1 || !memberRole)
-          throw new Error("MEMBER_ROLE_MISSING_OR_AMBIGUOUS");
-        const member = await guild.members.fetch({ user: userId, force: true });
-        await member.roles.add(memberRole);
+        const user = await guild.client.users.fetch(userId, { force: true });
+        await user.send({
+          content: APPROVAL_MESSAGE,
+          allowedMentions: { parse: [] },
+        });
       },
     );
 }
