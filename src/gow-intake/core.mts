@@ -33,6 +33,7 @@ export async function captureApplications(input: {
   save: (record: ReturnType<typeof applicationRecord>) => Promise<boolean>;
   fetch?: typeof fetch;
   report?: typeof reportCapture;
+  fetched?: (recruits: readonly unknown[]) => void;
 }): Promise<{ captured: number }> {
   const response = await (input.fetch ?? fetch)(APPLICATIONS_URL, {
     headers: { Authorization: `Bearer ${input.apiKey}` },
@@ -53,6 +54,7 @@ export async function captureApplications(input: {
     !Array.isArray(payload.data.recruits)
   )
     throw new Error("GOW_API_RESPONSE_INVALID");
+  input.fetched?.(payload.data.recruits);
   let captured = 0;
   for (const recruit of payload.data.recruits) {
     const record = applicationRecord(input.guildId, recruit);

@@ -22,6 +22,17 @@ The system SHALL create candidates from Guilds of WoW applications polled from i
 - **WHEN** the bot cannot tell whether an applicant's thread was created
 - **THEN** it holds the intake, creates no second thread, and posts one officer notice with a reference
 
+### Requirement: Guilds of WoW decisions
+The system SHALL apply an officer's decision on a Guilds of WoW application to its open candidate. The Guilds of WoW API is read-only, so decisions flow one way, from Guilds of WoW to the candidate.
+
+#### Scenario: Application rejected or accepted on Guilds of WoW
+- **WHEN** a polled application's status text changes to `Rejected` or `Accepted`
+- **THEN** its candidate moves to Declined or Accepted once, as a Discord change would; a closed candidate is not moved
+
+#### Scenario: Unrecognised status
+- **WHEN** a polled application's status text is one the system does not recognise
+- **THEN** the officers get one alert carrying that status text, and the candidate is unchanged
+
 ### Requirement: Deduplication
 Candidates SHALL be merged when they share a Discord account or a character name and realm-free Forever name.
 

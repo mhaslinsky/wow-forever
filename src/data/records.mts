@@ -140,7 +140,7 @@ export type GuildRecord = {
                         characters?: CharacterDeclaration[];
                       }
                     : Current extends "gowApplication"
-                      ? { mappedThreadId?: string }
+                      ? { mappedThreadId?: string; gowStatus?: string }
                       : Current extends "member"
                         ? {
                             roster?: (CharacterDeclaration & {
@@ -410,6 +410,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
   if (kind === "gowApplication" && item.mappedThreadId !== undefined) {
     if (typeof item.mappedThreadId !== "string" || !item.mappedThreadId) return;
     output.mappedThreadId = item.mappedThreadId;
+  }
+  if (kind === "gowApplication" && item.gowStatus !== undefined) {
+    if (typeof item.gowStatus !== "string" || !item.gowStatus) return;
+    output.gowStatus = item.gowStatus;
   }
   if (kind === "attendance") {
     if (item.attemptId !== undefined) {

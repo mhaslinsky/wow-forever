@@ -6,6 +6,7 @@ import { readSecret } from "../interactions/index.mts";
 import { recruitingForGuild } from "../recruiting/discord.mts";
 import { captureApplications } from "./core.mts";
 import { mapApplications } from "./mapping.mts";
+import { syncStatuses } from "./status.mts";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -15,7 +16,11 @@ function required(name: string): string {
 
 export async function handler() {
   try {
+    let recruits: readonly unknown[] = [];
     const captured = await captureApplications({
+      fetched: (live) => {
+        recruits = live;
+      },
       guildId: required("GUILD_ID"),
       apiKey: await readSecret(
         "/wow-forever/guildsofwow_api_key",
@@ -57,7 +62,13 @@ export async function handler() {
         records: data.forSystem(principal),
         create: core.create,
       });
-      return { ...captured, ...mapped };
+      const synced = await syncStatuses({
+        guildId: required("GUILD_ID"),
+        recruits,
+        records: data.forSystem(principal),
+        recruiting: core,
+      });
+      return { ...captured, ...mapped, ...synced };
     } finally {
       client.destroy();
     }

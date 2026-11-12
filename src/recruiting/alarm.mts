@@ -1,5 +1,7 @@
 export type RecruitingFailure =
   | { code: "GOW_APPLICATION_PARSE_FAILED"; recordKey: string }
+  | { code: "GOW_STATUS_UNMAPPED"; recordKey: string; status: string }
+  | { code: "GOW_STATUS_SYNC_FAILED"; recordKey: string }
   | { code: "RECRUITING_DIGEST_FAILED" }
   | { code: "RECRUITING_RETENTION_FAILED"; key?: { pk: string; sk: string } }
   | {

@@ -25,6 +25,21 @@ data "aws_iam_policy_document" "gow_intake" {
       values   = ["GOW_APPLICATION#${var.guild_id}", "CANDIDATE#${var.guild_id}", "OFFICER_NOTE#${var.guild_id}", "RECRUITING_INTAKE#${var.guild_id}"]
     }
   }
+  # Accepting a candidate from Guilds of WoW saves the applicant's roster entry.
+  statement {
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.guild.arn]
+    condition {
+      test     = "ForAllValues:StringLike"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["MEMBER#*"]
+    }
+    condition {
+      test     = "Null"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["false"]
+    }
+  }
   statement {
     actions   = ["dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.guild.arn]
