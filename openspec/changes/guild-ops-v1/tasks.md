@@ -30,6 +30,7 @@
 - [x] 3.2 `/apply` modal for people in the server and officer `/lead` command (depends on: 1.3, 3.1) (complexity: standard) (gate: none)
   Done in PR #35 (PER-313), with the class and spec picker from PR #36 (PER-347). Live /apply on Nov 3 created a thread tagged Applied and Apply form.
 - [x] 3.3 Guilds of WoW intake: poll the Management API for applications, keep each raw application, map them into candidates (design decision 4) (depends on: 3.1) (complexity: standard) (gate: none)
+  Changed by PER-465: each run also applies an officer's Guilds of WoW decision (Rejected or Accepted) to the open candidate.
 - [x] 3.4 Candidate deduplication by Discord account or character name, merging into the existing thread (depends on: 3.1) (complexity: standard) (gate: none)
 - [x] 3.5 Owner and next-action date per candidate, daily overdue digest on a schedule (depends on: 3.1) (complexity: standard) (gate: none)
   Done in PR #34 (PER-316). Daily digest at 10 AM ET deployed Nov 3.
