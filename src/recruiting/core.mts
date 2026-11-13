@@ -625,7 +625,19 @@ export function createRecruiting(
             actorId,
             eventId,
             new Date().toISOString(),
-          );
+          ).catch(async (cause: unknown) => {
+            // An officer move made while the acceptance failed is the newer
+            // decision; the rollback already left it in place.
+            const latest = (await candidate(threadId))?.recruiting;
+            const officer =
+              latest &&
+              latest.changedBy !== actorId &&
+              (latest.changedBy !== read.changedBy ||
+                latest.changedAt !== read.changedAt);
+            if (officer) return undefined;
+            throw cause;
+          });
+          if (!saved) return "kept";
           const current = saved.updated ?? saved.record;
           const state = current.recruiting;
           if (!state) throw new Error("CANDIDATE_NOT_FOUND");

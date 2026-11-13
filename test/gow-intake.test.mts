@@ -527,3 +527,22 @@ test("a decision on a mapped candidate that no longer exists fails without recor
   await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
   await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
 });
+
+test("an officer move made while an acceptance fails is kept", async (context) => {
+  context.mock.method(console, "error", () => {});
+  const { setup, run, stage } = await mapStatuses(["Accepted"]);
+  setup.hooks.accept = async () => {
+    await setup.core.setStage(
+      "synthetic-thread",
+      "Contacted",
+      "officer",
+      "manual",
+    );
+    throw new Error("synthetic roster failure");
+  };
+  assert.deepEqual(await run(), { synced: 0 });
+  setup.hooks.accept = async () => {};
+  assert.deepEqual(await run(), { synced: 0 });
+  assert.equal((await stage("synthetic-thread"))?.stage, "Contacted");
+  assert.equal(setup.hooks.accepted, 1);
+});
