@@ -93,7 +93,11 @@ test("empty recruit list stores nothing", async () => {
 
 function mappingFixture() {
   const items = new Map<string, GuildRecord>();
-  const hooks = { afterGet: () => {}, setTags: async (_tags: string[]) => {} };
+  const hooks = {
+    afterGet: () => {},
+    setTags: async (_tags: string[]) => {},
+    accepted: 0,
+  };
   const data = createDataAccess({
     get: async (key) => {
       const item = items.get(`${key.pk}/${key.sk}`);
@@ -113,7 +117,9 @@ function mappingFixture() {
         JSON.stringify(stored.recruiting) !==
           JSON.stringify(previous.recruiting)
       )
-        throw new Error("WRITE_CONFLICT");
+        throw Object.assign(new Error("condition failed"), {
+          name: "ConditionalCheckFailedException",
+        });
       items.set(`${item.pk}/${item.sk}`, item);
     },
   });
@@ -163,6 +169,10 @@ function mappingFixture() {
       },
       tagsFor: async () => [],
       setTags: async (_threadId: string, tags: string[]) => hooks.setTags(tags),
+    },
+    undefined,
+    async () => {
+      hooks.accepted++;
     },
   );
   return { items, records, threads, core, hooks };
@@ -360,17 +370,20 @@ test("Guilds of WoW decisions move open candidates once and alert once on status
     "Invited",
     " ",
     "Accepted",
-    "toString",
+    "Hold\n`x`",
+    "Accepted",
   ]);
   await setup.core.setStage("thread-4", "Declined", "officer", "manual");
-  assert.deepEqual(await run(), { synced: 1 });
+  assert.deepEqual(await run(), { synced: 2 });
   assert.deepEqual(await run(), { synced: 0 });
   assert.equal((await stage("synthetic-thread"))?.stage, "Declined");
   assert.equal((await stage("thread-4"))?.changedBy, "officer");
+  assert.equal((await stage("thread-6"))?.stage, "Accepted");
+  assert.equal(setup.hooks.accepted, 1);
   assert.deepEqual(notices, [
-    "Guilds of WoW marked <#thread-2> as `Invited`, which I don't handle yet, so I left it as is.",
-    "Guilds of WoW sent no status for <#thread-3>, so I left it as is.",
-    "Guilds of WoW marked <#thread-5> as `toString`, which I don't handle yet, so I left it as is.",
+    "Guilds of WoW status `Invited` on <#thread-2> isn't one I handle.",
+    "Guilds of WoW sent no status for <#thread-3>.",
+    "Guilds of WoW status `Hold x` on <#thread-5> isn't one I handle.",
   ]);
 });
 
@@ -384,10 +397,10 @@ test("a decision is not applied over an officer change made after it was read", 
     raced = true;
     void officer("synthetic-thread", "Declined", "officer", "manual");
   };
-  await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
-  setup.hooks.afterGet = () => {};
   assert.deepEqual(await run(), { synced: 0 });
+  assert.equal((await stage("synthetic-thread"))?.changedBy, "officer");
   assert.equal((await stage("synthetic-thread"))?.stage, "Declined");
+  assert.equal(setup.hooks.accepted, 0);
 });
 
 test("a decision whose tag update failed is finished on the next run", async (context) => {

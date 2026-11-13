@@ -18,20 +18,20 @@ const MISSING = "(none)";
 
 function liveStatus(recruit: unknown): string {
   if (!recruit || typeof recruit !== "object") return MISSING;
-  if ("statusText" in recruit && typeof recruit.statusText === "string") {
-    const text = recruit.statusText.trim();
-    if (text) return text;
-  }
-  if ("status" in recruit && Number.isFinite(recruit.status))
-    return `code:${recruit.status}`;
-  return MISSING;
+  if (!("statusText" in recruit) || typeof recruit.statusText !== "string")
+    return MISSING;
+  return recruit.statusText.trim() || MISSING;
 }
 
 export function unmappedNotice(threadId: string, status: string): string {
-  if (status === MISSING)
-    return `Guilds of WoW sent no status for <#${threadId}>, so I left it as is.`;
-  const shown = status.replaceAll("`", "").slice(0, 40);
-  return `Guilds of WoW marked <#${threadId}> as \`${shown}\`, which I don't handle yet, so I left it as is.`;
+  // The text comes from an outside API, so it is flattened to stay inside its code span.
+  const shown = status
+    .replace(/[`\p{Cc}\s]+/gu, " ")
+    .trim()
+    .slice(0, 40);
+  if (status === MISSING || !shown)
+    return `Guilds of WoW sent no status for <#${threadId}>.`;
+  return `Guilds of WoW status \`${shown}\` on <#${threadId}> isn't one I handle.`;
 }
 
 /** Applies officers' Guilds of WoW decisions to the candidates they map to. */
@@ -62,7 +62,9 @@ export async function syncStatuses(input: {
         const outcome = await input.recruiting.applyDecision(
           threadId,
           stage,
-          "gow-sync",
+          // One actor per application, so a later application merged into
+          // the same thread never resumes a move an earlier one made.
+          `gow-sync:${key.sk}`,
           `gow-${key.sk}-${status}`,
         );
         if (outcome === "moved") synced++;
