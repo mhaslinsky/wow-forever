@@ -1026,7 +1026,7 @@ test("release dedupe consumes the grant on both submission-note paths", async ()
   }
 });
 
-test("released retry refuses a stale candidate write and recovers after a failed post", async () => {
+test("released retry merges onto a follow-up edit made during it", async () => {
   const setup = await blockedFixture();
   await setup.core.create({ ...setup.input, source: "Officer lead" });
   await setup.resolve();
@@ -1042,19 +1042,27 @@ test("released retry refuses a stale candidate write and recovers after a failed
     }
     await put(item, condition);
   };
-  const stale = setup.core.create(setup.input).catch((error: unknown) => error);
+  const merged = setup.core.create(setup.input);
   await entered.promise;
   await setup.core.setFollowUp(threadId, setup.actor, {
     owner: "edited-owner",
   });
   resume.resolve();
-  const result = await stale;
+  await merged;
   assert.equal(
     (await setup.core.candidate(threadId))?.recruiting?.owner,
     "edited-owner",
   );
-  assert.ok(result instanceof Error && /WRITE_CONFLICT/.test(result.message));
-  assert.equal(setup.state()?.state, "released");
+  assert.equal(setup.state()?.state, "done");
+});
+
+test("released retry recovers after a failed post", async () => {
+  const setup = await blockedFixture();
+  await setup.core.create({ ...setup.input, source: "Officer lead" });
+  await setup.resolve();
+  await setup.core.setFollowUp(threadId, setup.actor, {
+    owner: "edited-owner",
+  });
   const post = setup.port.post;
   setup.port.post = async () => {
     throw new Error("post failed");
@@ -1138,4 +1146,93 @@ test("supplied-thread verifier checks authenticated ownership and the final star
     Object.assign(thread, snapshot);
   }
   assert.equal(await setup.resolve(adoptedLink), "adopted");
+});
+
+test("an officer tag edit keeps a follow-up saved while it runs", async () => {
+  const setup = fixture();
+  await seed(setup);
+  const tags = setup.port.tags;
+  let interrupt = true;
+  setup.port.tags = async () => {
+    if (interrupt) {
+      interrupt = false;
+      await setup.core.setFollowUp(threadId, setup.actor, { owner: "edited" });
+    }
+    return tags();
+  };
+  const edited = ["TAG_APPLY FORM_ID", "TAG_TRIAL_ID"];
+  await setup.port.setTags(threadId, edited, setup.applied());
+  const at = "2099-01-01T00:00:00.000Z";
+  await setup.core.officerTags({
+    threadId,
+    tags: edited,
+    added: ["TAG_TRIAL_ID"],
+    actor: setup.actor,
+    eventId: at,
+    at,
+  });
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "Trial");
+  assert.equal(saved?.owner, "edited");
+});
+
+test("a follow-up does not undo a stage saved while it runs", async () => {
+  const setup = fixture();
+  await seed(setup);
+  const put = setup.storage.put;
+  let interrupt = true;
+  setup.storage.put = async (item, condition) => {
+    if (interrupt && item.kind === "candidate") {
+      interrupt = false;
+      await setup.core.setStage(threadId, "Declined", "officer", "decline");
+    }
+    await put(item, condition);
+  };
+  await setup.core.setFollowUp(threadId, setup.actor, { owner: "edited" });
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "Declined");
+  assert.equal(saved?.owner, "edited");
+});
+
+test("a failed acceptance puts back only the stage it saved", async () => {
+  let setup: ReturnType<typeof fixture> | undefined;
+  setup = fixture(async () => {
+    await setup?.core.setFollowUp(threadId, setup.actor, { owner: "edited" });
+    throw new Error("roster unavailable");
+  });
+  await seed(setup);
+  await assert.rejects(
+    setup.core.setStage(threadId, "Accepted", "officer", "accept"),
+    /SAVE_FAILED/,
+  );
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "New");
+  assert.equal(saved?.owner, "edited");
+});
+
+test("a repeat acceptance during a failing one still lets it roll back", async () => {
+  let setup: ReturnType<typeof fixture> | undefined;
+  setup = fixture(async () => {
+    await setup?.core.setStage(threadId, "Accepted", "officer", "repeat");
+    throw new Error("roster unavailable");
+  });
+  await seed(setup);
+  await assert.rejects(
+    setup.core.setStage(threadId, "Accepted", "officer", "accept"),
+    /SAVE_FAILED/,
+  );
+  assert.equal(
+    (await setup.core.candidate(threadId))?.recruiting?.stage,
+    "New",
+  );
+});
+
+test("an expected-stage move leaves a stage saved before it", async () => {
+  const setup = fixture();
+  await seed(setup);
+  await setup.core.setStage(threadId, "Declined", "officer", "decline");
+  await setup.core.setStage(threadId, "Applied", "applicant", "apply", "New");
+  const saved = (await setup.core.candidate(threadId))?.recruiting;
+  assert.equal(saved?.stage, "Declined");
+  assert.ok(setup.applied().includes("TAG_DECLINED_ID"));
 });

@@ -212,8 +212,7 @@ function intakeFixture(context: TestContext, reapply = false) {
           Item:
             command.input.Key?.pk === "RECRUITING_INTAKE#guild"
               ? intakes.get(command.input.Key?.sk)
-              : command.input.Key?.sk === stored.sk &&
-                  stored.sk === "CANDIDATE#fresh"
+              : command.input.Key?.sk === stored.sk
                 ? stored
                 : undefined,
         };

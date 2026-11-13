@@ -352,6 +352,7 @@ export function createRecruitingRoutes(
             "Applied",
             actorId,
             interaction.id,
+            "New",
           );
         return message("Got it! An officer will reach out soon.");
       },
