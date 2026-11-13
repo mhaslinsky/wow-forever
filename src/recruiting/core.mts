@@ -11,7 +11,7 @@ import {
   STAGES,
   type Stage,
 } from "../data/recruiting.mts";
-import { createRoster } from "../roster/core.mts";
+import { acceptanceStamp, createRoster } from "../roster/core.mts";
 import { type RecruitingFailure, reportRecruitingFailure } from "./alarm.mts";
 import { createIntake } from "./intake.mts";
 import { type IntakeResolution, resolutionThread } from "./resolve.mts";
@@ -240,28 +240,22 @@ export function createRecruiting(
   }
   /**
    * Finishes a saved move whose officer note is missing. The acceptance runs
-   * again only without a roster entry, which it saves before the approval DM.
+   * again unless the roster entry carries this move's stamp, which it saves
+   * before the approval DM.
    */
   async function finishDecision(
     current: Candidate,
     state: RecruitingState,
-    eventId: string,
+    note: ReturnType<typeof recordKey>,
   ) {
-    const note = recordKey(
-      "officerNote",
-      guildId,
-      `${state.threadId}#${eventId}`,
-    );
-    if ((await records.get(note))[0]) return;
     if (state.stage === "Accepted") {
-      const member = current.discordUserId
-        ? (
-            await records.get(
-              recordKey("member", current.discordUserId, guildId),
-            )
-          )[0]
-        : undefined;
-      if (!member) {
+      const [member] = current.discordUserId
+        ? await records.get(recordKey("member", current.discordUserId, guildId))
+        : [];
+      if (
+        member?.kind !== "member" ||
+        member.accepted !== acceptanceStamp(current)
+      ) {
         if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
         await accepted(current);
       }
@@ -596,38 +590,54 @@ export function createRecruiting(
       stage: Stage,
       actorId: string,
       eventId: string,
-    ): Promise<"moved" | "resumed" | "kept" | "missing"> {
+    ): Promise<"moved" | "resumed" | "kept"> {
       if (!STAGES.includes(stage) || !actorId)
         throw new Error("INVALID_RECRUITING_STAGE");
       const record = await candidate(threadId);
-      const read = record?.recruiting;
-      if (!read || record.retention) return "missing";
+      if (record?.retention) return "kept";
       return saving(threadId, async () => {
-        // Any stage change since the read, open stages included, is an
-        // officer decision and wins.
-        const saved = await saveStage(
-          threadId,
-          (state) =>
-            CLOSED_STAGES.includes(state.stage) ||
-            state.stage !== read.stage ||
-            state.changedBy !== read.changedBy ||
-            state.changedAt !== read.changedAt
-              ? undefined
-              : stage,
-          actorId,
-          eventId,
-          new Date().toISOString(),
+        const read = record?.recruiting;
+        if (!read) throw new Error("CANDIDATE_NOT_FOUND");
+        const ours = (state: RecruitingState) =>
+          state.stage === stage && state.changedBy === actorId;
+        const note = recordKey(
+          "officerNote",
+          guildId,
+          `${read.threadId}#${eventId}`,
         );
-        const current = saved.updated ?? saved.record;
-        const state = current.recruiting;
-        if (!state) return "missing";
-        if (!saved.updated) {
-          if (state.stage !== stage || state.changedBy !== actorId)
-            return "kept";
-          await finishDecision(current, state, eventId);
+        let outcome: "moved" | "resumed" = "resumed";
+        // The note means this decision already moved the candidate once, so
+        // a stage change since then is an officer's and must not be undone.
+        if ((await records.get(note))[0]) {
+          if (!ours(read)) return "kept";
+        } else {
+          // Any stage change since the read, open stages included, is an
+          // officer decision and wins.
+          const saved = await saveStage(
+            threadId,
+            (state) =>
+              CLOSED_STAGES.includes(state.stage) ||
+              state.stage !== read.stage ||
+              state.changedBy !== read.changedBy ||
+              state.changedAt !== read.changedAt
+                ? undefined
+                : stage,
+            actorId,
+            eventId,
+            new Date().toISOString(),
+          );
+          const current = saved.updated ?? saved.record;
+          const state = current.recruiting;
+          if (!state) throw new Error("CANDIDATE_NOT_FOUND");
+          if (saved.updated) outcome = "moved";
+          else if (!ours(state)) return "kept";
+          else await finishDecision(current, state, note);
         }
-        await syncTags(threadId, stage, state.source);
-        return saved.updated ? "moved" : "resumed";
+        // An officer change made during the acceptance keeps its own tags.
+        const latest = (await candidate(threadId))?.recruiting;
+        if (latest && ours(latest))
+          await syncTags(threadId, stage, latest.source);
+        return outcome;
       });
     },
   };

@@ -92,7 +92,11 @@ export async function mapThenSync<Mapped, Synced>(
     (value) => ({ value }),
     (reason: unknown) => ({ reason }),
   );
-  const synced = await sync();
+  const synced = await sync().then(
+    (value) => ({ value }),
+    (reason: unknown) => ({ reason }),
+  );
   if ("reason" in mapping) throw mapping.reason;
-  return { ...mapping.value, ...synced };
+  if ("reason" in synced) throw synced.reason;
+  return { ...mapping.value, ...synced.value };
 }

@@ -11,6 +11,11 @@ import {
 } from "../recruiting/alarm.mts";
 import type { Candidate } from "../recruiting/core.mts";
 
+/** Ties a roster entry to the stage move that accepted it. */
+export function acceptanceStamp(candidate: Candidate): string {
+  return `${candidate.recruiting?.threadId ?? candidate.sk}#${candidate.recruiting?.changedAt ?? ""}`;
+}
+
 export function createRoster(
   data: ReturnType<typeof createDataAccess>,
   guildId: string,
@@ -20,6 +25,7 @@ export function createRoster(
     userId: string,
     characters: CharacterDeclaration[],
     name?: string,
+    accepted?: string,
   ) {
     if (
       !userId.trim() ||
@@ -53,6 +59,11 @@ export function createRoster(
       ...(previous?.kind === "member" && previous.active !== undefined
         ? { active: previous.active }
         : {}),
+      ...(accepted
+        ? { accepted }
+        : previous?.kind === "member" && previous.accepted !== undefined
+          ? { accepted: previous.accepted }
+          : {}),
       roster: characters.map((character) => ({
         ...character,
         confirmed: confirmed.has(character.name.toLowerCase()),
@@ -87,6 +98,7 @@ export function createRoster(
         candidate.discordUserId,
         candidate.characters ?? [],
         candidate.name,
+        acceptanceStamp(candidate),
       );
       // Members join only after the in-game invite and proof, so acceptance
       // grants no role and a closed DM must not undo the decision.

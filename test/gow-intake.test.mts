@@ -14,6 +14,7 @@ import { mapApplications } from "../src/gow-intake/mapping.mts";
 import { mapThenSync, syncStatuses } from "../src/gow-intake/status.mts";
 import { createRecruiting } from "../src/recruiting/core.mts";
 import { discordForum } from "../src/recruiting/discord.mts";
+import { acceptanceStamp } from "../src/roster/core.mts";
 
 test("unseen recruit is stored once across polls and alerts without its payload", async (context) => {
   const records = new Map<string, unknown>();
@@ -189,6 +190,7 @@ function mappingFixture() {
           kind: "member",
           ownerId: accepted.discordUserId,
           name: accepted.name,
+          accepted: acceptanceStamp(accepted),
         } as GuildRecord);
       }
     },
@@ -429,13 +431,20 @@ test("a decision is not applied over an officer change made after it was read", 
 test("an acceptance interrupted after its stage was saved is finished once on the next run", async (context) => {
   context.mock.method(console, "error", () => {});
   const { setup, run } = await mapStatuses(["Accepted", "Accepted"]);
-  const linked = setup.items.get(
-    `${recordKey("candidate", "synthetic-guild", "thread-2").pk}/${recordKey("candidate", "synthetic-guild", "thread-2").sk}`,
-  );
-  assert.equal(linked?.kind, "candidate");
-  setup.items.set(`${linked.pk}/${linked.sk}`, {
-    ...linked,
-    discordUserId: "synthetic-user",
+  const link = (threadId: string, discordUserId: string) => {
+    const key = recordKey("candidate", "synthetic-guild", threadId);
+    const stored = setup.items.get(`${key.pk}/${key.sk}`);
+    assert.equal(stored?.kind, "candidate");
+    setup.items.set(`${key.pk}/${key.sk}`, { ...stored, discordUserId });
+  };
+  link("synthetic-thread", "returning-user");
+  link("thread-2", "synthetic-user");
+  const returning = recordKey("member", "returning-user", "synthetic-guild");
+  setup.items.set(`${returning.pk}/${returning.sk}`, {
+    ...returning,
+    kind: "member",
+    ownerId: "returning-user",
+    name: "Returning",
   });
   let failures = 0;
   setup.hooks.accept = async () => {
@@ -489,4 +498,32 @@ test("status sync still runs when mapping fails, and the mapping error is raised
     /synthetic mapping failure/,
   );
   assert.deepEqual(ran, ["sync"]);
+});
+
+test("a finished decision is not applied again over an officer's later change", async (context) => {
+  context.mock.method(console, "error", () => {});
+  const { setup, run, stage } = await mapStatuses(["Accepted"]);
+  let tagFailures = 1;
+  setup.hooks.setTags = async () => {
+    if (tagFailures-- > 0) throw new Error("synthetic Discord failure");
+  };
+  await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
+  await setup.core.setStage(
+    "synthetic-thread",
+    "Contacted",
+    "officer",
+    "manual",
+  );
+  assert.deepEqual(await run(), { synced: 0 });
+  assert.equal((await stage("synthetic-thread"))?.stage, "Contacted");
+  assert.equal(setup.hooks.accepted, 1);
+});
+
+test("a decision on a mapped candidate that no longer exists fails without recording it", async (context) => {
+  context.mock.method(console, "error", () => {});
+  const { setup, run } = await mapStatuses(["Rejected"]);
+  const key = recordKey("candidate", "synthetic-guild", "synthetic-thread");
+  setup.items.delete(`${key.pk}/${key.sk}`);
+  await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
+  await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
 });

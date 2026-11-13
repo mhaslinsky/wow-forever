@@ -148,6 +148,7 @@ export type GuildRecord = {
                             })[];
                             raidTeam?: string;
                             active?: boolean;
+                            accepted?: string;
                           }
                         : Current extends "attendance"
                           ? { attemptId?: string }
@@ -506,6 +507,10 @@ export function decode(raw: unknown): GuildRecord | undefined {
     if (item.active !== undefined) {
       if (typeof item.active !== "boolean") return;
       output.active = item.active;
+    }
+    if (item.accepted !== undefined) {
+      if (typeof item.accepted !== "string" || !item.accepted) return;
+      output.accepted = item.accepted;
     }
   }
   if (kind === "member" && item.roster !== undefined) {
