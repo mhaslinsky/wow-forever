@@ -79,3 +79,20 @@ export async function syncStatuses(input: {
   if (failed) throw new Error("GOW_STATUS_SYNC_FAILED");
   return { synced };
 }
+
+/**
+ * One application that cannot be mapped must not hold up decisions on the
+ * ones already mapped, so the sync runs before the mapping error is raised.
+ */
+export async function mapThenSync<Mapped, Synced>(
+  map: () => Promise<Mapped>,
+  sync: () => Promise<Synced>,
+): Promise<Mapped & Synced> {
+  const mapping = await map().then(
+    (value) => ({ value }),
+    (reason: unknown) => ({ reason }),
+  );
+  const synced = await sync();
+  if ("reason" in mapping) throw mapping.reason;
+  return { ...mapping.value, ...synced };
+}

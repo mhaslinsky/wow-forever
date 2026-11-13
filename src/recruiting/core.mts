@@ -238,6 +238,48 @@ export function createRecruiting(
     );
     return saved;
   }
+  /**
+   * Finishes a saved move whose officer note is missing. The acceptance runs
+   * again only without a roster entry, which it saves before the approval DM.
+   */
+  async function finishDecision(
+    current: Candidate,
+    state: RecruitingState,
+    eventId: string,
+  ) {
+    const note = recordKey(
+      "officerNote",
+      guildId,
+      `${state.threadId}#${eventId}`,
+    );
+    if ((await records.get(note))[0]) return;
+    if (state.stage === "Accepted") {
+      const member = current.discordUserId
+        ? (
+            await records.get(
+              recordKey("member", current.discordUserId, guildId),
+            )
+          )[0]
+        : undefined;
+      if (!member) {
+        if (!accepted) throw new Error("ROSTER_ACCEPTANCE_UNAVAILABLE");
+        await accepted(current);
+      }
+    }
+    await records.write(
+      {
+        ...note,
+        kind: "officerNote",
+        ownerId: guildId,
+        text: JSON.stringify({
+          to: state.stage,
+          actorId: state.changedBy,
+          at: state.changedAt,
+        }),
+      },
+      { candidateThreadId: state.threadId },
+    );
+  }
   return {
     candidate,
     async resolveIntake(actor: Principal<"user">, input: IntakeResolution) {
@@ -545,32 +587,45 @@ export function createRecruiting(
       });
     },
     /**
-     * Applies an outside decision to an open candidate. A candidate this actor
-     * already moved to the same stage gets its tags finished, so a move whose
-     * tag update failed is completed on the next run.
+     * Applies an outside decision to the candidate as it was read, if still
+     * open. A rerun finishes a move this actor already saved: the acceptance,
+     * the officer note and the tags.
      */
     async applyDecision(
       threadId: string,
       stage: Stage,
       actorId: string,
       eventId: string,
-    ): Promise<"moved" | "resumed" | "closed" | "missing"> {
+    ): Promise<"moved" | "resumed" | "kept" | "missing"> {
       if (!STAGES.includes(stage) || !actorId)
         throw new Error("INVALID_RECRUITING_STAGE");
       const record = await candidate(threadId);
-      if (!record?.recruiting || record.retention) return "missing";
+      const read = record?.recruiting;
+      if (!read || record.retention) return "missing";
       return saving(threadId, async () => {
+        // Any stage change since the read, open stages included, is an
+        // officer decision and wins.
         const saved = await saveStage(
           threadId,
-          (state) => (CLOSED_STAGES.includes(state.stage) ? undefined : stage),
+          (state) =>
+            CLOSED_STAGES.includes(state.stage) ||
+            state.stage !== read.stage ||
+            state.changedBy !== read.changedBy ||
+            state.changedAt !== read.changedAt
+              ? undefined
+              : stage,
           actorId,
           eventId,
           new Date().toISOString(),
         );
-        const state = (saved.updated ?? saved.record).recruiting;
+        const current = saved.updated ?? saved.record;
+        const state = current.recruiting;
         if (!state) return "missing";
-        const ours = state.stage === stage && state.changedBy === actorId;
-        if (!saved.updated && !ours) return "closed";
+        if (!saved.updated) {
+          if (state.stage !== stage || state.changedBy !== actorId)
+            return "kept";
+          await finishDecision(current, state, eventId);
+        }
         await syncTags(threadId, stage, state.source);
         return saved.updated ? "moved" : "resumed";
       });

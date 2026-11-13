@@ -7,7 +7,7 @@ import { discordAlerts } from "../recruiting/alerts.mts";
 import { recruitingForGuild } from "../recruiting/discord.mts";
 import { captureApplications } from "./core.mts";
 import { mapApplications } from "./mapping.mts";
-import { syncStatuses } from "./status.mts";
+import { mapThenSync, syncStatuses } from "./status.mts";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -58,25 +58,23 @@ export async function handler() {
         data,
         principal,
       );
-      // One application that cannot be mapped must not hold up decisions on
-      // the ones already mapped, so sync runs before the mapping error is raised.
-      const mapping = await mapApplications({
-        guildId: required("GUILD_ID"),
-        records: data.forSystem(principal),
-        create: core.create,
-      }).then(
-        (value) => ({ value }),
-        (reason: unknown) => ({ reason }),
+      const result = await mapThenSync(
+        () =>
+          mapApplications({
+            guildId: required("GUILD_ID"),
+            records: data.forSystem(principal),
+            create: core.create,
+          }),
+        () =>
+          syncStatuses({
+            guildId: required("GUILD_ID"),
+            recruits,
+            records: data.forSystem(principal),
+            recruiting: core,
+            notify: discordAlerts(client.rest, required("GUILD_ID")),
+          }),
       );
-      const synced = await syncStatuses({
-        guildId: required("GUILD_ID"),
-        recruits,
-        records: data.forSystem(principal),
-        recruiting: core,
-        notify: discordAlerts(client.rest, required("GUILD_ID")),
-      });
-      if ("reason" in mapping) throw mapping.reason;
-      return { ...captured, ...mapping.value, ...synced };
+      return { ...captured, ...result };
     } finally {
       client.destroy();
     }

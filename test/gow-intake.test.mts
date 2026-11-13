@@ -11,7 +11,7 @@ import { createDataAccess } from "../src/data/index.mts";
 import { type GuildRecord, recordKey } from "../src/data/records.mts";
 import { captureApplications } from "../src/gow-intake/core.mts";
 import { mapApplications } from "../src/gow-intake/mapping.mts";
-import { syncStatuses } from "../src/gow-intake/status.mts";
+import { mapThenSync, syncStatuses } from "../src/gow-intake/status.mts";
 import { createRecruiting } from "../src/recruiting/core.mts";
 import { discordForum } from "../src/recruiting/discord.mts";
 
@@ -94,14 +94,16 @@ test("empty recruit list stores nothing", async () => {
 function mappingFixture() {
   const items = new Map<string, GuildRecord>();
   const hooks = {
-    afterGet: () => {},
+    afterGet: async (_key: { pk: string; sk: string }) => {},
+    beforePut: (_item: GuildRecord) => {},
     setTags: async (_tags: string[]) => {},
+    accept: async () => {},
     accepted: 0,
   };
   const data = createDataAccess({
     get: async (key) => {
       const item = items.get(`${key.pk}/${key.sk}`);
-      hooks.afterGet();
+      await hooks.afterGet(key);
       return item;
     },
     query: async (partition) => ({
@@ -109,6 +111,7 @@ function mappingFixture() {
     }),
     batch: async () => [],
     put: async (item, condition) => {
+      hooks.beforePut(item);
       const stored = items.get(`${item.pk}/${item.sk}`);
       const previous = condition?.candidatePrevious;
       if (
@@ -139,6 +142,7 @@ function mappingFixture() {
     {
       tags: async () => [
         { id: "new", name: "New" },
+        { id: "contacted", name: "Contacted" },
         { id: "declined", name: "Declined" },
         { id: "accepted", name: "Accepted" },
         { id: "gow", name: "Guilds of WoW" },
@@ -171,8 +175,22 @@ function mappingFixture() {
       setTags: async (_threadId: string, tags: string[]) => hooks.setTags(tags),
     },
     undefined,
-    async () => {
+    async (accepted) => {
       hooks.accepted++;
+      await hooks.accept();
+      if (accepted.discordUserId) {
+        const key = recordKey(
+          "member",
+          accepted.discordUserId,
+          "synthetic-guild",
+        );
+        items.set(`${key.pk}/${key.sk}`, {
+          ...key,
+          kind: "member",
+          ownerId: accepted.discordUserId,
+          name: accepted.name,
+        } as GuildRecord);
+      }
     },
   );
   return { items, records, threads, core, hooks };
@@ -390,17 +408,56 @@ test("Guilds of WoW decisions move open candidates once and alert once on status
 test("a decision is not applied over an officer change made after it was read", async (context) => {
   context.mock.method(console, "error", () => {});
   const { setup, run, stage } = await mapStatuses(["Accepted"]);
-  const officer = setup.core.setStage.bind(setup.core);
+  const read = recordKey("candidate", "synthetic-guild", "synthetic-thread");
   let raced = false;
-  setup.hooks.afterGet = () => {
-    if (raced) return;
+  setup.hooks.afterGet = async (key) => {
+    if (raced || key.sk !== read.sk) return;
     raced = true;
-    void officer("synthetic-thread", "Declined", "officer", "manual");
+    await setup.core.setStage(
+      "synthetic-thread",
+      "Contacted",
+      "officer",
+      "manual",
+    );
   };
   assert.deepEqual(await run(), { synced: 0 });
-  assert.equal((await stage("synthetic-thread"))?.changedBy, "officer");
-  assert.equal((await stage("synthetic-thread"))?.stage, "Declined");
+  assert.deepEqual(await run(), { synced: 0 });
+  assert.equal((await stage("synthetic-thread"))?.stage, "Contacted");
   assert.equal(setup.hooks.accepted, 0);
+});
+
+test("an acceptance interrupted after its stage was saved is finished once on the next run", async (context) => {
+  context.mock.method(console, "error", () => {});
+  const { setup, run } = await mapStatuses(["Accepted", "Accepted"]);
+  const linked = setup.items.get(
+    `${recordKey("candidate", "synthetic-guild", "thread-2").pk}/${recordKey("candidate", "synthetic-guild", "thread-2").sk}`,
+  );
+  assert.equal(linked?.kind, "candidate");
+  setup.items.set(`${linked.pk}/${linked.sk}`, {
+    ...linked,
+    discordUserId: "synthetic-user",
+  });
+  let failures = 0;
+  setup.hooks.accept = async () => {
+    if (failures++ === 0) throw new Error("synthetic roster failure");
+  };
+  setup.hooks.beforePut = (item) => {
+    const rollback =
+      item.kind === "candidate" && item.recruiting?.stage === "New";
+    const note =
+      item.kind === "officerNote" && item.sk.includes("thread-2#gow-");
+    if (failures < 3 && (rollback || note))
+      throw new Error("synthetic write failure");
+  };
+  await assert.rejects(run(), /GOW_STATUS_SYNC_FAILED/);
+  failures = 3;
+  assert.deepEqual(await run(), { synced: 0 });
+  assert.deepEqual(await run(), { synced: 0 });
+  assert.equal(setup.hooks.accepted, 3);
+  const notes = await setup.records.query(
+    recordKey("officerNote", "synthetic-guild", "x").pk,
+  );
+  assert.equal(notes.filter((note) => note.sk.includes("#gow-")).length, 2);
 });
 
 test("a decision whose tag update failed is finished on the next run", async (context) => {
@@ -418,4 +475,18 @@ test("a decision whose tag update failed is finished on the next run", async (co
     ["gow", "declined"],
     ["gow", "declined"],
   ]);
+});
+
+test("status sync still runs when mapping fails, and the mapping error is raised after", async () => {
+  const ran: string[] = [];
+  await assert.rejects(
+    mapThenSync(
+      async () => {
+        throw new Error("synthetic mapping failure");
+      },
+      async () => void ran.push("sync"),
+    ),
+    /synthetic mapping failure/,
+  );
+  assert.deepEqual(ran, ["sync"]);
 });
